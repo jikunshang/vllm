@@ -35,6 +35,7 @@ class EngineArgs:
     quantization: Optional[str] = None
     enforce_eager: bool = False
     max_context_len_to_capture: int = 8192
+    device: str = 'cuda'
 
     def __post_init__(self):
         if self.tokenizer is None:
@@ -202,6 +203,12 @@ class EngineArgs:
                             help='maximum context length covered by CUDA '
                             'graphs. When a sequence has context length '
                             'larger than this, we fall back to eager mode.')
+        parser.add_argument(
+            "--device",
+            type=str,
+            default="cuda",
+            choices=["cuda"],
+            help='device type for vLLM execution, supporting CUDA only currently.')                        
         return parser
 
     @classmethod
@@ -221,7 +228,7 @@ class EngineArgs:
                                    self.dtype, self.seed, self.revision,
                                    self.tokenizer_revision, self.max_model_len,
                                    self.quantization, self.enforce_eager,
-                                   self.max_context_len_to_capture)
+                                   self.max_context_len_to_capture, self.device)
         cache_config = CacheConfig(self.block_size,
                                    self.gpu_memory_utilization,
                                    self.swap_space,
