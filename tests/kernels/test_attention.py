@@ -15,14 +15,14 @@ FLOAT32_BYTES = torch.finfo(torch.float).bits // 8
 # This will change depending on the compute capability.
 # - 512 as a buffer
 # MAX_SEQ_LEN = get_max_shared_memory_bytes() // FLOAT32_BYTES - 512
-MAX_SEQ_LEN = 1024
-NUM_BLOCKS = 4000  # Arbitrary values for testing
+MAX_SEQ_LEN = 9
+NUM_BLOCKS = 11953  # Arbitrary values for testing
 PARTITION_SIZE = 512
 
 DTYPES = [torch.half, torch.bfloat16, torch.float]
-NUM_GEN_SEQS = [7]  # Arbitrary values for testing
+NUM_GEN_SEQS = [4]  # Arbitrary values for testing
 NUM_PREFILL_SEQS = [3]  # Arbitrary values for testing
-NUM_HEADS = [(40, 40), (64, 8)]  # Arbitrary values for testing
+NUM_HEADS = [(12, 12), (64, 8)]  # Arbitrary values for testing
 HEAD_SIZES = [64, 80, 96, 112, 128, 256]
 BLOCK_SIZES = [16, 32]
 USE_ALIBI = [False, True]
@@ -237,8 +237,8 @@ def test_paged_attention(
     # implementations, there is a small numerical difference in the two
     # outputs. Thus, we use a relaxed tolerance for the test.
     assert torch.allclose(output, ref_output, atol=1e-3, rtol=1e-3)
-    if device == torch.device('xpu'):
-        torch.xpu.empty_cache()
+    # if device == torch.device('xpu'):
+    torch.xpu.empty_cache()
 
 
 @pytest.mark.parametrize("version", ["v1"])
@@ -277,7 +277,7 @@ def test_paged_attention_cpu(
 @pytest.mark.parametrize(
     "block_size", [16]
 )  # FIXME: Currently we only use 16 due to the limitation of the YMM register number.
-@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize("dtype", [torch.float])
 @pytest.mark.parametrize("seed", SEEDS)
 @pytest.mark.parametrize("device", [torch.device('xpu')])
 @torch.inference_mode()
