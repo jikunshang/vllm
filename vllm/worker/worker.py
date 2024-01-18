@@ -55,21 +55,23 @@ class Worker:
         self.gpu_cache = None
 
     def init_model(self) -> None:
-        # torch.distributed.all_reduce does not free the input tensor until
-        # the synchronization point. This causes the memory usage to grow
-        # as the number of all_reduce calls increases. This env var disables
-        # this behavior.
-        # Related issue:
-        # https://discuss.pytorch.org/t/cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/191573
-        os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
+        if self.model_config.device.type == "cuda":
+            # torch.distributed.all_reduce does not free the input tensor   until
+            # the synchronization point. This causes the memory usage to grow
+            # as the number of all_reduce calls increases. This env var     disables
+            # this behavior.
+            # Related issue:
+            # https://discuss.pytorch.org/t/    cuda-allocation-lifetime-for-inputs-to-distributed-all-reduce/  191573
+            os.environ["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "1"
 
-        # This env var set by Ray causes exceptions with graph building.
-        os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-        self.device = torch.device(f"cuda:{self.local_rank}")
-        torch.cuda.set_device(self.device)
+            # This env var set by Ray causes exceptions with graph building.
+            os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
+            self.device = torch.device(f"cuda:{self.local_rank}")
+            torch.cuda.set_device(self.device)
 
-        _check_if_gpu_supports_dtype(self.model_config.dtype)
-
+            _check_if_gpu_supports_dtype(self.model_config.dtype)
+        else:
+            raise RuntimeError("Not support device type: " + str(self.model_config.device))
         # Initialize the distributed environment.
         _init_distributed_environment(self.parallel_config, self.rank,
                                       self.distributed_init_method)
