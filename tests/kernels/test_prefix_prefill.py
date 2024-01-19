@@ -27,7 +27,7 @@ def test_contexted_kv_attention(
     random.seed(0)
     torch.manual_seed(0)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed(0)
     MAX_SEQ_LEN = 1024
     MAX_CTX_LEN = 1024
     BS = 10
