@@ -45,6 +45,7 @@ def test_copy_blocks(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+    torch.set_default_device(device)
     # Generate random block mappings where each source block is mapped to two
     # destination blocks.
     assert 2 * num_mappings <= num_blocks
@@ -110,17 +111,17 @@ def test_reshape_and_cache(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+    torch.set_default_device(device)
     # Create a random slot mapping.
     num_slots = block_size * num_blocks
     slot_mapping = random.sample(range(num_slots), num_tokens)
-    slot_mapping = torch.tensor(slot_mapping, dtype=torch.long, device=device)
+    slot_mapping = torch.tensor(slot_mapping, dtype=torch.long)
 
     qkv = torch.randn(num_tokens,
                       3,
                       num_heads,
                       head_size,
-                      dtype=dtype,
-                      device=device)
+                      dtype=dtype)
     _, key, value = qkv.unbind(dim=1)
 
     # Create the KV caches.

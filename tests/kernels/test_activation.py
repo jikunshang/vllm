@@ -28,7 +28,8 @@ def test_silu_and_mul(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-    x = torch.randn(num_tokens, 2 * d, dtype=dtype, device=device)
+    torch.set_default_device(device)
+    x = torch.randn(num_tokens, 2 * d, dtype=dtype)
     layer = SiluAndMul()
     out = layer(x)
     ref_out = layer._forward(x)
@@ -51,7 +52,8 @@ def test_gelu_new(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-    x = torch.randn(num_tokens, d, dtype=dtype, device=device)
+    torch.set_default_device(device)
+    x = torch.randn(num_tokens, d, dtype=dtype)
     layer = NewGELU()
     out = layer(x)
     ref_out = layer._forward(x)
@@ -73,7 +75,8 @@ def test_gelu_fast(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-    x = torch.randn(num_tokens, d, dtype=dtype, device=device)
+    torch.set_default_device(device)
+    x = torch.randn(num_tokens, d, dtype=dtype)
     layer = FastGELU()
     out = layer(x)
     ref_out = layer._forward(x)

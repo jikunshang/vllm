@@ -31,6 +31,7 @@ def test_contexted_kv_attention(
     torch.manual_seed(0)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(0)
+    torch.set_default_device(device)
     MAX_SEQ_LEN = 1024
     MAX_CTX_LEN = 1024
     BS = 10
@@ -45,21 +46,18 @@ def test_contexted_kv_attention(
     query = torch.empty(num_tokens,
                         num_heads,
                         head_size,
-                        dtype=dtype,
-                        device=device)
+                        dtype=dtype)
     query.uniform_(-1e-3, 1e-3)
     output = torch.empty(num_tokens,
                          num_heads,
                          head_size,
-                         dtype=dtype,
-                         device=device)
+                         dtype=dtype)
 
     kv = torch.empty(sum(seq_lens),
                      2,
                      num_heads,
                      head_size,
-                     dtype=dtype,
-                     device=device)
+                     dtype=dtype)
     kv.uniform_(-1e-3, 1e-3)
     key, value = kv.unbind(dim=1)
 
@@ -67,39 +65,33 @@ def test_contexted_kv_attention(
                           block_size,
                           num_heads,
                           head_size,
-                          dtype=dtype,
-                          device=device)
+                          dtype=dtype)
     v_cache = torch.zeros(cache_size,
                           block_size,
                           num_heads,
                           head_size,
-                          dtype=dtype,
-                          device=device)
+                          dtype=dtype)
     k = torch.zeros(sum(subquery_lens),
                     num_heads,
                     head_size,
-                    dtype=dtype,
-                    device=device)
+                    dtype=dtype)
     v = torch.zeros(sum(subquery_lens),
                     num_heads,
                     head_size,
-                    dtype=dtype,
-                    device=device)
-    values = torch.arange(0, cache_size, dtype=torch.long, device=device)
+                    dtype=dtype)
+    values = torch.arange(0, cache_size, dtype=torch.long)
     values = values[torch.randperm(cache_size)]
     block_table = values[:BS * max_block_per_request].view(
         BS, max_block_per_request)
-    b_seq_len = torch.tensor(seq_lens, dtype=torch.long, device=device)
-    b_ctx_len = torch.tensor(ctx_lens, dtype=torch.long, device=device)
+    b_seq_len = torch.tensor(seq_lens, dtype=torch.long)
+    b_ctx_len = torch.tensor(ctx_lens, dtype=torch.long)
     b_start_loc = torch.cumsum(torch.tensor([0] + subquery_lens[:-1],
-                                            dtype=torch.long,
-                                            device=device),
+                                            dtype=torch.long),
                                dim=0)
     max_input_len = MAX_SEQ_LEN
     # copy kv to cache
     b_seq_start_loc = torch.cumsum(torch.tensor([0] + seq_lens[:-1],
-                                                dtype=torch.long,
-                                                device=device),
+                                                dtype=torch.long),
                                    dim=0)
     for i in range(BS):
         for j in range(subquery_lens[i]):

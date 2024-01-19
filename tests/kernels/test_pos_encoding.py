@@ -46,19 +46,18 @@ def test_rotary_embedding(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+    torch.set_default_device(device)
     if rotary_dim is None:
         rotary_dim = head_size
     rope = get_rope(head_size, rotary_dim, max_position, base, is_neox_style)
-    rope = rope.to(dtype=dtype, device=device)
+    rope = rope.to(dtype=dtype)
 
     positions = torch.randint(0,
-                              max_position, (batch_size, seq_len),
-                              device=device)
+                              max_position, (batch_size, seq_len))
     query = torch.randn(batch_size,
                         seq_len,
                         num_heads * head_size,
-                        dtype=dtype,
-                        device=device)
+                        dtype=dtype)
     key = torch.randn_like(query)
 
     # NOTE(woosuk): The reference implementation should be executed first
