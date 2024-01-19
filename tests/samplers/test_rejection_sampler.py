@@ -13,6 +13,7 @@ CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
 ]
 
+
 def mock_causal_accepted_tensor(
         k: int, last_accepted_indices: torch.Tensor) -> torch.Tensor:
     """Generate an "accepted" tensor which should yield causally-accepted tokens
@@ -44,7 +45,8 @@ def mock_causal_accepted_tensor(
     ["all_tokens_accepted", "no_tokens_accepted", "some_tokens_accepted"])
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 @torch.inference_mode()
-def test_correct_output_format(which_tokens_accepted: str, seed: int, device: str):
+def test_correct_output_format(which_tokens_accepted: str, seed: int,
+                               device: str):
     """Verify the output has correct format given predetermined accepted matrix.
     """
     set_random_seed(seed)
@@ -124,19 +126,14 @@ def test_correct_output_format(which_tokens_accepted: str, seed: int, device: st
 @pytest.mark.parametrize("batch_size", list(range(1, 32)))
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 @torch.inference_mode()
-def test_no_crash_with_varying_dims(k: int, vocab_size: int, batch_size: int, device: str):
+def test_no_crash_with_varying_dims(k: int, vocab_size: int, batch_size: int,
+                                    device: str):
     torch.set_default_device(device)
     rejection_sampler = RejectionSampler()
     rejection_sampler.init_gpu_tensors(rank=0)
 
-    draft_probs = torch.rand(batch_size,
-                             k,
-                             vocab_size,
-                             dtype=torch.float32)
-    target_probs = torch.rand(batch_size,
-                              k,
-                              vocab_size,
-                              dtype=torch.float32)
+    draft_probs = torch.rand(batch_size, k, vocab_size, dtype=torch.float32)
+    target_probs = torch.rand(batch_size, k, vocab_size, dtype=torch.float32)
     bonus_token_ids = torch.randint(low=0,
                                     high=vocab_size,
                                     size=(batch_size, 1),
@@ -165,14 +162,8 @@ def test_raises_when_vocab_oob(above_or_below_vocab_range: str,
     rejection_sampler = RejectionSampler(strict_mode=True)
     rejection_sampler.init_gpu_tensors(rank=0)
 
-    draft_probs = torch.rand(batch_size,
-                             k,
-                             vocab_size,
-                             dtype=torch.float32)
-    target_probs = torch.rand(batch_size,
-                              k,
-                              vocab_size,
-                              dtype=torch.float32)
+    draft_probs = torch.rand(batch_size, k, vocab_size, dtype=torch.float32)
+    target_probs = torch.rand(batch_size, k, vocab_size, dtype=torch.float32)
     bonus_token_ids = torch.randint(low=0,
                                     high=vocab_size,
                                     size=(batch_size, 1),
@@ -369,13 +360,13 @@ class _CorrectnessTestHelper:
                                                 num_samples, self.k)
 
         # Bonus tokens not used but required.
-        bonus_token_ids = torch.zeros((1, self.num_bonus_tokens),
-                                      dtype=torch.int64).repeat(num_samples, 1)
+        bonus_token_ids = torch.zeros(
+            (1, self.num_bonus_tokens),
+            dtype=torch.int64).repeat(num_samples, 1)
 
         # Get output tokens via rejection sampling.
         output_token_ids = self.rejection_sampler(target_probs,
-                                                  bonus_token_ids,
-                                                  draft_probs,
+                                                  bonus_token_ids, draft_probs,
                                                   draft_token_ids)
 
         # Remove bonus tokens

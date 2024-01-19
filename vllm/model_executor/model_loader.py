@@ -41,7 +41,8 @@ def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
         f"Supported architectures: {ModelRegistry.get_supported_archs()}")
 
 
-def get_model(model_config: ModelConfig, device_config: DeviceConfig) -> nn.Module:
+def get_model(model_config: ModelConfig,
+              device_config: DeviceConfig) -> nn.Module:
     model_class = _get_model_architecture(model_config.hf_config)
 
     # Get the (maybe quantized) linear method.
