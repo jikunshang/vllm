@@ -30,8 +30,7 @@ def _prepare_test(
     batch_size: int
 ) -> Tuple[torch.Tensor, torch.Tensor, MockLogitsSampler, ModelRunner]:
     vocab_size = 32000
-    input_tensor = torch.rand((batch_size, 1024),
-                              dtype=torch.float16)
+    input_tensor = torch.rand((batch_size, 1024), dtype=torch.float16)
     fake_logits = torch.full((batch_size, vocab_size),
                              1e-2,
                              dtype=input_tensor.dtype)
@@ -44,6 +43,7 @@ RANDOM_SEEDS = list(range(128))
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
 ]
+
 
 @pytest.mark.parametrize("seed", RANDOM_SEEDS)
 @pytest.mark.parametrize("device", CUDA_DEVICES)
@@ -269,8 +269,7 @@ def test_sampler_top_k_top_p(seed: int, device: str):
     top_k = random.randint(100, 500)
     top_p = random.random() * 0.1
     vocab_size = 32000
-    input_tensor = torch.rand((batch_size, 1024),
-                              dtype=torch.float16)
+    input_tensor = torch.rand((batch_size, 1024), dtype=torch.float16)
     fake_logits = torch.normal(0,
                                5,
                                size=(batch_size, vocab_size),

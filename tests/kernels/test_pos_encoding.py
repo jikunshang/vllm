@@ -52,8 +52,7 @@ def test_rotary_embedding(
     rope = get_rope(head_size, rotary_dim, max_position, base, is_neox_style)
     rope = rope.to(dtype=dtype)
 
-    positions = torch.randint(0,
-                              max_position, (batch_size, seq_len))
+    positions = torch.randint(0, max_position, (batch_size, seq_len))
     query = torch.randn(batch_size,
                         seq_len,
                         num_heads * head_size,

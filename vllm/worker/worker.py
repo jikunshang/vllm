@@ -5,8 +5,8 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.distributed
 
-from vllm.config import (CacheConfig, DeviceConfig, ModelConfig, ParallelConfig,
-                         SchedulerConfig)
+from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
+                         ParallelConfig, SchedulerConfig)
 from vllm.model_executor import set_random_seed
 from vllm.model_executor.parallel_utils.communication_op import (
     broadcast_tensor_dict)
@@ -48,7 +48,8 @@ class Worker:
             assert self.rank == 0, "The driver worker must have rank 0."
 
         self.model_runner = ModelRunner(model_config, parallel_config,
-                                        scheduler_config, device_config, is_driver_worker)
+                                        scheduler_config, device_config,
+                                        is_driver_worker)
         # Uninitialized cache engine. Will be initialized by
         # self.init_cache_engine().
         self.cache_config = None
@@ -57,7 +58,7 @@ class Worker:
         self.gpu_cache = None
 
     def init_model(self) -> None:
-        if self.device_config.device.type == "cuda" :
+        if self.device_config.device.type == "cuda":
             # torch.distributed.all_reduce does not free the input tensor until
             # the synchronization point. This causes the memory usage to grow
             # as the number of all_reduce calls increases. This env var disables
@@ -73,7 +74,8 @@ class Worker:
 
             _check_if_gpu_supports_dtype(self.model_config.dtype)
         else:
-            raise RuntimeError(f"Not support device type: {self.device_config.device}")
+            raise RuntimeError(
+                f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
         _init_distributed_environment(self.parallel_config, self.rank,
                                       self.distributed_init_method)

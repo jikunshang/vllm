@@ -47,7 +47,8 @@ class ModelRunner:
 
         self.graph_runners: Dict[int, CUDAGraphRunner] = {}
         self.graph_memory_pool = None  # Set during graph capture.
-        self.device_config = device_config if device_config is not None else DeviceConfig()
+        self.device_config = device_config if device_config is not None else DeviceConfig(
+        )
         torch.set_default_device(device_config.device)
 
         self.max_context_len_to_capture = (
@@ -159,8 +160,7 @@ class ModelRunner:
                                              max_prompt_len,
                                              pad=_PAD_SLOT_ID,
                                              dtype=torch.long)
-        context_lens_tensor = torch.tensor(context_lens,
-                                           dtype=torch.int)
+        context_lens_tensor = torch.tensor(context_lens, dtype=torch.int)
         # Prepare prefix block tables
         max_prompt_block_table_len = max(len(t) for t in prefix_block_tables)
         block_tables = _make_tensor_with_pad(
@@ -173,8 +173,7 @@ class ModelRunner:
                                         len(prompt_lens) * max_prompt_len,
                                         max_prompt_len,
                                         dtype=torch.long)
-        prompt_lens_tensor = torch.tensor(prompt_lens,
-                                          dtype=torch.long)
+        prompt_lens_tensor = torch.tensor(prompt_lens, dtype=torch.long)
 
         input_metadata = InputMetadata(
             is_prompt=True,
@@ -261,8 +260,7 @@ class ModelRunner:
                                              max_len=1,
                                              pad=_PAD_SLOT_ID,
                                              dtype=torch.long)
-        context_lens = torch.tensor(context_lens,
-                                    dtype=torch.int)
+        context_lens = torch.tensor(context_lens, dtype=torch.int)
 
         if use_captured_graph:
             # The shape of graph_block_tables is
@@ -642,16 +640,13 @@ def _pad_to_max(x: List[int], max_len: int, pad: int) -> List[int]:
     assert len(x) <= max_len
     return x + [pad] * (max_len - len(x))
 
+
 # All caller of this function use 'cuda' or empty as device,
-def _make_tensor_with_pad(
-    x: List[List[int]],
-    max_len: int,
-    pad: int,
-    dtype: torch.dtype
-) -> torch.Tensor:
+def _make_tensor_with_pad(x: List[List[int]], max_len: int, pad: int,
+                          dtype: torch.dtype) -> torch.Tensor:
     padded_x = [_pad_to_max(x_i, max_len, pad) for x_i in x]
-    return torch.tensor(padded_x,
-                        dtype=dtype)
+    return torch.tensor(padded_x, dtype=dtype)
+
 
 # device have to be 'cpu' so it can pin memory.
 def _make_pin_tensor_with_pad(
@@ -667,6 +662,7 @@ def _make_pin_tensor_with_pad(
                         dtype=dtype,
                         device=device,
                         pin_memory=pin_memory and str(device) == "cpu")
+
 
 def _get_graph_batch_size(batch_size: int) -> int:
     if batch_size <= 2:

@@ -43,21 +43,11 @@ def test_contexted_kv_attention(
     seq_lens = [a + b for a, b in zip(subquery_lens, ctx_lens)]
 
     num_tokens = sum(subquery_lens)
-    query = torch.empty(num_tokens,
-                        num_heads,
-                        head_size,
-                        dtype=dtype)
+    query = torch.empty(num_tokens, num_heads, head_size, dtype=dtype)
     query.uniform_(-1e-3, 1e-3)
-    output = torch.empty(num_tokens,
-                         num_heads,
-                         head_size,
-                         dtype=dtype)
+    output = torch.empty(num_tokens, num_heads, head_size, dtype=dtype)
 
-    kv = torch.empty(sum(seq_lens),
-                     2,
-                     num_heads,
-                     head_size,
-                     dtype=dtype)
+    kv = torch.empty(sum(seq_lens), 2, num_heads, head_size, dtype=dtype)
     kv.uniform_(-1e-3, 1e-3)
     key, value = kv.unbind(dim=1)
 
@@ -71,14 +61,8 @@ def test_contexted_kv_attention(
                           num_heads,
                           head_size,
                           dtype=dtype)
-    k = torch.zeros(sum(subquery_lens),
-                    num_heads,
-                    head_size,
-                    dtype=dtype)
-    v = torch.zeros(sum(subquery_lens),
-                    num_heads,
-                    head_size,
-                    dtype=dtype)
+    k = torch.zeros(sum(subquery_lens), num_heads, head_size, dtype=dtype)
+    v = torch.zeros(sum(subquery_lens), num_heads, head_size, dtype=dtype)
     values = torch.arange(0, cache_size, dtype=torch.long)
     values = values[torch.randperm(cache_size)]
     block_table = values[:BS * max_block_per_request].view(
