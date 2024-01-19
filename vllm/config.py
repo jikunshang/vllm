@@ -12,6 +12,12 @@ logger = init_logger(__name__)
 
 _GB = 1 << 30
 
+class DeviceConfig:
+    def __init__(
+        self,
+        device: str = "cuda"
+    ) -> None:
+        self.device = torch.device(device)
 
 class ModelConfig:
     """Configuration for the model.
@@ -73,7 +79,6 @@ class ModelConfig:
         quantization: Optional[str] = None,
         enforce_eager: bool = False,
         max_context_len_to_capture: Optional[int] = None,
-        device: str = "cuda",
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
@@ -87,7 +92,6 @@ class ModelConfig:
         self.quantization = quantization
         self.enforce_eager = enforce_eager
         self.max_context_len_to_capture = max_context_len_to_capture
-        self.device = torch.device(device)
 
         if os.environ.get("VLLM_USE_MODELSCOPE", "False").lower() == "true":
             # download model from ModelScope hub,

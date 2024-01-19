@@ -31,10 +31,11 @@ def test_rms_norm(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
-    layer = RMSNorm(hidden_size).to(dtype=dtype, device=device)
+    torch.set_default_device(device)
+    layer = RMSNorm(hidden_size).to(dtype=dtype)
     layer.weight.data.normal_(mean=1.0, std=0.1)
     scale = 1 / (2 * hidden_size)
-    x = torch.randn(num_tokens, hidden_size, dtype=dtype, device=device)
+    x = torch.randn(num_tokens, hidden_size, dtype=dtype)
     x *= scale
     residual = torch.randn_like(x) * scale if add_residual else None
 

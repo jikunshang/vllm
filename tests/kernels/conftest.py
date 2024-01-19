@@ -17,6 +17,7 @@ def create_kv_caches(
     torch.random.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+    torch.set_default_device(device)
 
     scale = head_size**-0.5
     x = 16 // torch.tensor([], dtype=dtype).element_size()
@@ -24,8 +25,7 @@ def create_kv_caches(
     key_caches = []
     for _ in range(num_layers):
         key_cache = torch.empty(size=key_cache_shape,
-                                dtype=dtype,
-                                device=device)
+                                dtype=dtype)
         key_cache.uniform_(-scale, scale)
         key_caches.append(key_cache)
 
@@ -33,8 +33,7 @@ def create_kv_caches(
     value_caches = []
     for _ in range(num_layers):
         value_cache = torch.empty(size=value_cache_shape,
-                                  dtype=dtype,
-                                  device=device)
+                                  dtype=dtype)
         value_cache.uniform_(-scale, scale)
         value_caches.append(value_cache)
     return key_caches, value_caches
