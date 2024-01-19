@@ -20,6 +20,7 @@ def _set_default_torch_dtype(dtype: torch.dtype):
     yield
     torch.set_default_dtype(old_dtype)
 
+
 @contextlib.contextmanager
 def _set_default_torch_device(device: torch.device):
     """Sets the default torch device to the given device."""
@@ -27,6 +28,7 @@ def _set_default_torch_device(device: torch.device):
     torch.set_default_device(device)
     yield
     torch.set_default_device(old_device)
+
 
 def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
     architectures = getattr(config, "architectures", [])
@@ -65,7 +67,9 @@ def get_model(model_config: ModelConfig) -> nn.Module:
                 f"{supported_dtypes}")
         linear_method = quant_config.get_linear_method()
 
-    with _set_default_torch_dtype(model_config.dtype), _set_default_torch_device(model_config.device):
+    with _set_default_torch_dtype(
+            model_config.dtype), _set_default_torch_device(
+                model_config.device):
         # Create a model instance.
         # The weights will be initialized as empty tensors.
 

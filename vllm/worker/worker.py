@@ -71,7 +71,8 @@ class Worker:
 
             _check_if_gpu_supports_dtype(self.model_config.dtype)
         else:
-            raise RuntimeError("Not support device type: " + str(self.model_config.device))
+            raise RuntimeError("Not support device type: " +
+                               str(self.model_config.device))
         # Initialize the distributed environment.
         _init_distributed_environment(self.parallel_config, self.rank,
                                       self.distributed_init_method)
