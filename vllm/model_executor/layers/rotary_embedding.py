@@ -83,8 +83,7 @@ class RotaryEmbedding(nn.Module):
     def _compute_cos_sin_cache(self) -> torch.Tensor:
         """Compute the cos and sin cache."""
         inv_freq = self._compute_inv_freq(self.base)
-        t = torch.arange(self.max_position_embeddings,
-                         dtype=torch.float)
+        t = torch.arange(self.max_position_embeddings, dtype=torch.float)
 
         freqs = torch.einsum("i,j -> ij", t, inv_freq)
         cos = freqs.cos()
@@ -295,8 +294,9 @@ class YaRNScalingRotaryEmbedding(RotaryEmbedding):
                          is_neox_style)
 
     def _compute_inv_freq(self, scaling_factor: float) -> torch.Tensor:
-        pos_freqs = self.base**(torch.arange(
-            0, self.rotary_dim, 2, dtype=torch.float) / self.rotary_dim)
+        pos_freqs = self.base**(
+            torch.arange(0, self.rotary_dim, 2, dtype=torch.float) /
+            self.rotary_dim)
         inv_freq_extrapolation = 1.0 / pos_freqs
         inv_freq_interpolation = 1.0 / (scaling_factor * pos_freqs)
 
@@ -305,7 +305,8 @@ class YaRNScalingRotaryEmbedding(RotaryEmbedding):
                                                 self.max_position_embeddings)
         # Get n-d rotational scaling corrected for extrapolation
         inv_freq_mask = (1 - _yarn_linear_ramp_mask(
-            low, high, self.rotary_dim // 2, dtype=torch.float)) * self.extrapolation_factor
+            low, high, self.rotary_dim // 2,
+            dtype=torch.float)) * self.extrapolation_factor
         inv_freq = inv_freq_interpolation * (
             1 - inv_freq_mask) + inv_freq_extrapolation * inv_freq_mask
         return inv_freq

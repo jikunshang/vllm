@@ -360,7 +360,10 @@ class ModelRunner:
                                             device=self.device,
                                             pin_memory=not self.in_wsl)
         categorized_sample_indices = {
-            t: _async_h2d(seq_ids, dtype=torch.int, device=self.device, pin_memory=not self.in_wsl)
+            t: _async_h2d(seq_ids,
+                          dtype=torch.int,
+                          device=self.device,
+                          pin_memory=not self.in_wsl)
             for t, seq_ids in categorized_sample_indices.items()
         }
 
@@ -673,8 +676,11 @@ def _get_graph_batch_size(batch_size: int) -> int:
         return (batch_size + 7) // 8 * 8
 
 
-def _async_h2d(data: list, dtype: torch.dtype,
+def _async_h2d(
+    data: list,
+    dtype: torch.dtype,
     device: Union[str, torch.device] = "cuda",
-    pin_memory: bool = False,):
+    pin_memory: bool = False,
+):
     t = torch.tensor(data, dtype=dtype, pin_memory=pin_memory)
     return t.to(device=device, non_blocking=True)

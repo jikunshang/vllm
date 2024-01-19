@@ -11,7 +11,10 @@ from xformers.ops.fmha.attn_bias import BlockDiagonalCausalFromBottomRightMask
 NUM_HEADS = [12]
 HEAD_SIZES = [128]
 DTYPES = [torch.float16]
-CUDA_DEVICES = [f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)]
+CUDA_DEVICES = [
+    f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
+]
+
 
 @pytest.mark.parametrize("num_heads", NUM_HEADS)
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
