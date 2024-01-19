@@ -26,7 +26,7 @@ def mock_causal_accepted_tensor(
 
     accepted = (torch.arange(k).expand(batch_size, k) <=
                 last_accepted_indices.unsqueeze(-1).broadcast_to(
-                    batch_size, k))
+                    batch_size, k)).to(device="cuda")
 
     # Sprinkle accepted values after the contiguous initial accepted values.
     # This replicates the behavior of rejection sampling, which may "accept"
@@ -34,7 +34,7 @@ def mock_causal_accepted_tensor(
     sprinkle_candidates = (
         torch.arange(k).expand(batch_size, k) >
         last_accepted_indices.unsqueeze(-1).broadcast_to(batch_size, k) + 1)
-    sprinkle = torch.rand(batch_size, k) > 0.5
+    sprinkle = torch.rand(batch_size, k, device="cuda") > 0.5
     accepted[sprinkle_candidates] = sprinkle[sprinkle_candidates]
     return accepted
 
@@ -197,10 +197,9 @@ def test_raises_when_vocab_oob(above_or_below_vocab_range: str,
 
 @pytest.mark.parametrize("draft_and_target_probs_equal", [True, False])
 @pytest.mark.parametrize("seed", list(range(5)))
-@pytest.mark.parametrize("device", CUDA_DEVICES)
 @torch.inference_mode()
 def test_rejection_sampling_approximates_target_distribution(
-        seed: int, draft_and_target_probs_equal: bool, device: str):
+        seed: int, draft_and_target_probs_equal: bool):
     """Verify rejection sampling approximates target distribution,
     despite sampling from a potentially distinct draft distribution.
 
@@ -228,7 +227,6 @@ def test_rejection_sampling_approximates_target_distribution(
     still work without any NaNs or exceptions.
     """
     set_random_seed(seed)
-    torch.set_default_device(device)
 
     helper = _CorrectnessTestHelper(
         vocab_size=10,
@@ -360,14 +358,15 @@ class _CorrectnessTestHelper:
                                                 num_samples, self.k)
 
         # Bonus tokens not used but required.
-        bonus_token_ids = torch.zeros(
-            (1, self.num_bonus_tokens),
-            dtype=torch.int64).repeat(num_samples, 1)
+        bonus_token_ids = torch.zeros((1, self.num_bonus_tokens),
+                                      dtype=torch.int64,
+                                      device="cuda").repeat(num_samples, 1)
 
         # Get output tokens via rejection sampling.
-        output_token_ids = self.rejection_sampler(target_probs,
-                                                  bonus_token_ids, draft_probs,
-                                                  draft_token_ids)
+        output_token_ids = self.rejection_sampler(target_probs.to("cuda"),
+                                                  bonus_token_ids.to("cuda"),
+                                                  draft_probs.to("cuda"),
+                                                  draft_token_ids.to("cuda"))
 
         # Remove bonus tokens
         output_token_ids = output_token_ids[:, :-1].flatten()

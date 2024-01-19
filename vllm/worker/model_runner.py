@@ -49,7 +49,7 @@ class ModelRunner:
         self.graph_memory_pool = None  # Set during graph capture.
         self.device_config = device_config if device_config is not None else DeviceConfig(
         )
-        torch.set_default_device(device_config.device)
+        # torch.set_default_device(device_config.device)
 
         self.max_context_len_to_capture = (
             self.model_config.max_context_len_to_capture
