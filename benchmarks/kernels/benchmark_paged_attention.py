@@ -171,10 +171,7 @@ if __name__ == '__main__':
                         default="half")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--profile", action="store_true")
-    parser.add_argument("--device",
-                        type=str,
-                        choices=["cuda"],
-                        default="cuda")
+    parser.add_argument("--device", type=str, choices=["cuda"], default="cuda")
     args = parser.parse_args()
     print(args)
 
