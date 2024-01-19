@@ -46,7 +46,7 @@ class ModelRunner:
 
         self.graph_runners: Dict[int, CUDAGraphRunner] = {}
         self.graph_memory_pool = None  # Set during graph capture.
-        self.device = self.model_config.device
+        self.device = self.model_config.device if model_config is not None else "cuda"
 
         self.max_context_len_to_capture = (
             self.model_config.max_context_len_to_capture
