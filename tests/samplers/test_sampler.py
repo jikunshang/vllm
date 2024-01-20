@@ -264,15 +264,17 @@ def test_sampler_logits_processors(seed: int, device: str):
 @pytest.mark.parametrize("device", CUDA_DEVICES)
 def test_sampler_top_k_top_p(seed: int, device: str):
     set_random_seed(seed)
-    torch.set_default_device(device)
     batch_size = random.randint(1, 256)
     top_k = random.randint(100, 500)
     top_p = random.random() * 0.1
     vocab_size = 32000
-    input_tensor = torch.rand((batch_size, 1024), dtype=torch.float16)
+    input_tensor = torch.rand((batch_size, 1024),
+                              device=device,
+                              dtype=torch.float16)
     fake_logits = torch.normal(0,
                                5,
                                size=(batch_size, vocab_size),
+                               device=input_tensor.device,
                                dtype=input_tensor.dtype)
     sampler = MockLogitsSampler(32000, fake_logits)
     model_runner = ModelRunner(None, None, None, None)
