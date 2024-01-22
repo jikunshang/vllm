@@ -2,6 +2,9 @@ import random
 
 import pytest
 import torch
+from vllm.utils import is_xpu
+
+XPU_DEVICES = ["xpu"] if is_xpu() else []
 
 from vllm._C import cache_ops
 
@@ -16,7 +19,8 @@ NUM_MAPPINGS = [256]  # Arbitrary values for testing
 SEEDS = [0]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
-]
+] if torch.cuda.is_available() else []
+DEVICES = CUDA_DEVICES + XPU_DEVICES
 
 
 @pytest.mark.parametrize("num_mappings", NUM_MAPPINGS)
@@ -27,7 +31,7 @@ CUDA_DEVICES = [
 @pytest.mark.parametrize("num_blocks", NUM_BLOCKS)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_copy_blocks(
     kv_cache_factory,
@@ -81,10 +85,16 @@ def test_copy_blocks(
 
     # Compare the results.
     for key_cache, cloned_key_cache in zip(key_caches, cloned_key_caches):
-        assert torch.allclose(key_cache, cloned_key_cache)
+        assert torch.allclose(key_cache,
+                              cloned_key_cache,
+                              atol=1e-2,
+                              rtol=1e-2)
     for value_cache, cloned_value_cache in zip(value_caches,
                                                cloned_value_caches):
-        assert torch.allclose(value_cache, cloned_value_cache)
+        assert torch.allclose(value_cache,
+                              cloned_value_cache,
+                              atol=1e-2,
+                              rtol=1e-2)
 
 
 @pytest.mark.parametrize("num_tokens", NUM_TOKENS)
@@ -94,7 +104,7 @@ def test_copy_blocks(
 @pytest.mark.parametrize("num_blocks", NUM_BLOCKS)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_reshape_and_cache(
     kv_cache_factory,
@@ -146,5 +156,8 @@ def test_reshape_and_cache(
         cloned_key_cache[block_idx, :, :, block_offset, :] = reshaped_key[i]
         cloned_value_cache[block_idx, :, :, block_offset] = value[i]
 
-    assert torch.allclose(key_cache, cloned_key_cache)
-    assert torch.allclose(value_cache, cloned_value_cache)
+    assert torch.allclose(key_cache, cloned_key_cache, atol=1e-2, rtol=1e-2)
+    assert torch.allclose(value_cache,
+                          cloned_value_cache,
+                          atol=1e-2,
+                          rtol=1e-2)

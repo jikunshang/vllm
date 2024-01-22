@@ -3,6 +3,10 @@ import pytest
 import time
 
 import torch
+from vllm.utils import is_xpu
+
+XPU_DEVICES = ["xpu"] if is_xpu() else []
+
 from vllm.model_executor.layers.triton_kernel.prefix_prefill import (
     context_attention_fwd)
 from xformers import ops as xops
@@ -13,13 +17,15 @@ HEAD_SIZES = [128]
 DTYPES = [torch.float16]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
-]
+] if torch.cuda.is_available() else []
+
+DEVICES = CUDA_DEVICES + XPU_DEVICES
 
 
 @pytest.mark.parametrize("num_heads", NUM_HEADS)
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 @pytest.mark.parametrize("dtype", DTYPES)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_contexted_kv_attention(
     num_heads: int,

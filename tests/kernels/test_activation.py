@@ -1,5 +1,8 @@
 import pytest
 import torch
+from vllm.utils import is_xpu
+
+XPU_DEVICES = ["xpu"] if is_xpu() else []
 
 from vllm.model_executor.layers.activation import FastGELU, NewGELU, SiluAndMul
 
@@ -9,14 +12,15 @@ D = [512, 4096, 5120, 13824]  # Arbitrary values for testing
 SEEDS = [0]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
-]
+] if torch.cuda.is_available() else []
+DEVICES = CUDA_DEVICES + XPU_DEVICES
 
 
 @pytest.mark.parametrize("num_tokens", NUM_TOKENS)
 @pytest.mark.parametrize("d", D)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_silu_and_mul(
     num_tokens: int,
@@ -40,7 +44,7 @@ def test_silu_and_mul(
 @pytest.mark.parametrize("d", D)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_gelu_new(
     num_tokens: int,
@@ -64,7 +68,7 @@ def test_gelu_new(
 @pytest.mark.parametrize("d", D)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 def test_gelu_fast(
     num_tokens: int,
     d: int,

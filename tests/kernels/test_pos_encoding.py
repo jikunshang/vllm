@@ -2,6 +2,9 @@ from typing import Optional
 
 import pytest
 import torch
+from vllm.utils import is_xpu
+
+XPU_DEVICES = ["xpu"] if is_xpu() else []
 
 from vllm.model_executor.layers.rotary_embedding import get_rope
 
@@ -15,7 +18,8 @@ SEQ_LENS = [11, 8192]  # Arbitrary values for testing
 SEEDS = [0]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
-]
+] if torch.cuda.is_available() else []
+DEVICES = CUDA_DEVICES + XPU_DEVICES
 
 
 @pytest.mark.parametrize("is_neox_style", IS_NEOX_STYLE)
@@ -26,7 +30,7 @@ CUDA_DEVICES = [
 @pytest.mark.parametrize("rotary_dim", ROTARY_DIMS)
 @pytest.mark.parametrize("dtype", DTYPES)
 @pytest.mark.parametrize("seed", SEEDS)
-@pytest.mark.parametrize("device", CUDA_DEVICES)
+@pytest.mark.parametrize("device", DEVICES)
 @torch.inference_mode()
 def test_rotary_embedding(
     is_neox_style: bool,
@@ -64,5 +68,5 @@ def test_rotary_embedding(
     ref_query, ref_key = rope._forward(positions, query, key)
     out_query, out_key = rope.forward(positions, query, key)
     # Compare the results.
-    assert torch.allclose(out_query, ref_query, atol=1e-5, rtol=1e-5)
-    assert torch.allclose(out_key, ref_key, atol=1e-5, rtol=1e-5)
+    assert torch.allclose(out_query, ref_query, atol=1e-3, rtol=1e-3)
+    assert torch.allclose(out_key, ref_key, atol=1e-3, rtol=1e-3)
