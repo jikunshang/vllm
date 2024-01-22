@@ -8,7 +8,20 @@ import warnings
 from packaging.version import parse, Version
 import setuptools
 import torch
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME, ROCM_HOME
+
+BUILD_XPU_OPS = os.getenv('VLLM_BUILD_XPU_OPS', "0") == "1"
+
+
+def _is_xpu() -> bool:
+    return BUILD_XPU_OPS
+
+
+if _is_xpu():
+    import intel_extension_for_pytorch
+    from torch.utils.cpp_extension import BuildExtension, CppExtension
+    from intel_extension_for_pytorch.xpu.cpp_extension import DPCPPExtension, DpcppBuildExtension
+else:
+    from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CUDA_HOME, ROCM_HOME
 
 ROOT_DIR = os.path.dirname(__file__)
 
@@ -34,7 +47,8 @@ def _is_neuron() -> bool:
 
 
 def _is_cuda() -> bool:
-    return (torch.version.cuda is not None) and not _is_neuron()
+    return (torch.version.cuda
+            is not None) and not _is_neuron() and not _is_xpu()
 
 
 # Compiler flags.
@@ -96,10 +110,15 @@ def get_hipcc_rocm_version():
         return None
 
 
+def get_xpu_version():
+    return "0.0.1"
+
+
 def get_neuronxcc_version():
     import sysconfig
     site_dir = sysconfig.get_paths()["purelib"]
-    version_file = os.path.join(site_dir, "neuronxcc", "version", "__init__.py")
+    version_file = os.path.join(site_dir, "neuronxcc", "version",
+                                "__init__.py")
 
     # Check if the command was executed successfully
     with open(version_file, "rt") as fp:
@@ -257,7 +276,32 @@ vllm_extension_sources = [
 if _is_cuda():
     vllm_extension_sources.append("csrc/quantization/awq/gemm_kernels.cu")
 
-if not _is_neuron():
+if _is_xpu():
+    xpu_ext_module = []
+    XPU_CXX_FLAGS = ["-DVLLM_BUILD_XPU_OPS", "-fsycl", "-fsycl-targets=spir64"]
+    XPU_LD_FLAGS = [
+        f"-D_GLIBCXX_USE_CXX11_ABI={ABI}", "-fsycl", "-fsycl-targets=spir64",
+        "-lsycl"
+    ]
+    vllm_xpu_extension_sources = [
+        "csrc/xpu/activation_xpu.cpp",
+        "csrc/xpu/attention_xpu.cpp",
+        "csrc/xpu/cache_ops_xpu.cpp",
+        "csrc/xpu/layernorm_xpu.cpp",
+        "csrc/xpu/pos_encoding_xpu.cpp",
+        "csrc/pybind.cpp",
+    ]
+    vllm_xpu_extension = DPCPPExtension(
+        name="vllm._C",
+        sources=vllm_xpu_extension_sources,
+        extra_compile_args={
+            "cxx": XPU_CXX_FLAGS,
+        },
+        extra_link_args=XPU_LD_FLAGS,
+    )
+    ext_modules.append(vllm_xpu_extension)
+    build_ext_map = {"build_ext": DpcppBuildExtension}
+elif not _is_neuron():
     vllm_extension = CUDAExtension(
         name="vllm._C",
         sources=vllm_extension_sources,
@@ -267,6 +311,7 @@ if not _is_neuron():
         },
     )
     ext_modules.append(vllm_extension)
+    build_ext_map = {"build_ext": BuildExtension}
 
 
 def get_path(*filepath) -> str:
@@ -295,6 +340,9 @@ def get_vllm_version() -> str:
         if hipcc_version != MAIN_CUDA_VERSION:
             rocm_version_str = hipcc_version.replace(".", "")[:3]
             version += f"+rocm{rocm_version_str}"
+    elif _is_xpu():
+        xpu_version = get_xpu_version()
+        version += f"+xpu{xpu_version}"
     elif _is_neuron():
         # Get the Neuron version
         neuron_version = str(neuronxcc_version)
@@ -323,6 +371,9 @@ def get_requirements() -> List[str]:
     """Get Python package dependencies from requirements.txt."""
     if _is_hip():
         with open(get_path("requirements-rocm.txt")) as f:
+            requirements = f.read().strip().split("\n")
+    elif _is_xpu():
+        with open(get_path("requirements-xpu.txt")) as f:
             requirements = f.read().strip().split("\n")
     elif _is_neuron():
         with open(get_path("requirements-neuron.txt")) as f:
@@ -365,6 +416,6 @@ setuptools.setup(
     python_requires=">=3.8",
     install_requires=get_requirements(),
     ext_modules=ext_modules,
-    cmdclass={"build_ext": BuildExtension} if not _is_neuron() else {},
+    cmdclass=build_ext_map if not _is_neuron() else {},
     package_data=package_data,
 )

@@ -4,6 +4,13 @@
 #include "dispatch_utils.h"
 #include <torch/extension.h>
 
+#ifdef VLLM_BUILD_XPU_OPS
+#include "xpu/xpu_ops.h"
+int get_device_attribute(
+    int attribute,
+    int device_id) { return 94387; }
+#endif
+
 void rotary_embedding_dispatch(torch::Tensor &positions, torch::Tensor &query,
                                torch::Tensor &key, int head_size,
                                torch::Tensor &cos_sin_cache, bool is_neox) {
