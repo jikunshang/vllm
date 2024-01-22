@@ -12,7 +12,7 @@ from vllm.model_executor.parallel_utils.communication_op import (
     broadcast_tensor_dict)
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
-from vllm.utils import in_wsl
+from vllm.utils import in_wsl, is_xpu
 
 logger = init_logger(__name__)
 
@@ -152,7 +152,6 @@ class ModelRunner:
                                                   max_prompt_len,
                                                   pad=0,
                                                   dtype=torch.long)
-        print(f"input tokens device {input_tokens.device}")
 
         input_positions = self._make_tensor_with_pad(input_positions,
                                                      max_prompt_len,
@@ -491,7 +490,8 @@ class ModelRunner:
         num_layers = self.model_config.get_num_layers(self.parallel_config)
         kv_caches = [(None, None)] * num_layers
         self.execute_model(seqs, kv_caches)
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         return
 
     @torch.inference_mode()
@@ -567,6 +567,7 @@ class ModelRunner:
         return torch.tensor(padded_x,
                             dtype=dtype,
                             device=self.device_config.device)
+
 
 class CUDAGraphRunner:
 
@@ -685,5 +686,7 @@ def _async_h2d(
     device: Union[str, torch.device] = "cuda",
     pin_memory: bool = False,
 ):
+    if is_xpu():
+        pin_memory = False
     t = torch.tensor(data, dtype=dtype, pin_memory=pin_memory, device="cpu")
     return t.to(device=device, non_blocking=True)

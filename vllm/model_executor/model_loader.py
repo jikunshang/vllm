@@ -10,6 +10,7 @@ from vllm.config import DeviceConfig, ModelConfig
 from vllm.model_executor.models import ModelRegistry
 from vllm.model_executor.weight_utils import (get_quant_config,
                                               initialize_dummy_weights)
+from vllm.utils import is_xpu
 
 
 @contextlib.contextmanager
@@ -58,7 +59,6 @@ def get_model(model_config: ModelConfig,
                 f"method {model_config.quantization}. Supported dtypes: "
                 f"{supported_dtypes}")
         linear_method = quant_config.get_linear_method()
-
     with _set_default_torch_dtype(model_config.dtype):
         # Create a model instance.
         # The weights will be initialized as empty tensors.
@@ -72,4 +72,9 @@ def get_model(model_config: ModelConfig,
             # Load the weights from the cached or downloaded files.
             model.load_weights(model_config.model, model_config.download_dir,
                                model_config.load_format, model_config.revision)
-    return model.eval()
+    model = model.eval()
+
+    if is_xpu():
+        import intel_extension_for_pytorch as ipex
+        model = ipex.optimize(model)
+    return model

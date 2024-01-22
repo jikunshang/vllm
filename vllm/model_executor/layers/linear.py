@@ -13,6 +13,10 @@ from vllm.model_executor.parallel_utils.utils import (
     divide, split_tensor_along_last_dim)
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.logger import init_logger
+try:
+    import intel_extension_for_pytorch as ipex
+except ImportError:
+    pass
 
 logger = init_logger(__name__)
 
