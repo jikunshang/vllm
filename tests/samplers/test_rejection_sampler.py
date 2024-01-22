@@ -226,6 +226,7 @@ def test_rejection_sampling_approximates_target_distribution(
     probabilities are exactly equal. Rejection sampling should
     still work without any NaNs or exceptions.
     """
+    torch.set_default_device("cpu")
     set_random_seed(seed)
 
     helper = _CorrectnessTestHelper(
