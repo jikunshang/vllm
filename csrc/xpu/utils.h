@@ -2,27 +2,18 @@
 
 #include <sycl/sycl.hpp>
 #include <memory>
+#include <ipex.h>
+#include <ATen/ATen.h>
 
 namespace vllm {
 namespace xpu {
 
-static std::unique_ptr<sycl::queue> g_queue;
-
-static bool queue_init = false;
-
-static void initGlobalQueue() {
-  g_queue = std::make_unique<sycl::queue>(sycl::queue(sycl::gpu_selector_v));
-}
-
 static inline sycl::queue& vllmGetQueue() {
-  if (!queue_init) {
-    initGlobalQueue();
-
-    queue_init = true;
-
-  } else {
-    return *g_queue;
-  }
+  auto device_type = c10::DeviceType::XPU;
+  c10::impl::VirtualGuardImpl impl(device_type);
+  c10::Stream c10_stream = impl.getStream(c10::Device(device_type));
+  auto& queue = ::xpu::get_queue_from_stream(c10_stream);
+  return queue;
 }
 
 } // namespace xpu

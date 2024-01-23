@@ -9,83 +9,59 @@
 #include <torch/extension.h>
 #include "utils.h"
 
-template <typename scalar_t, typename scalar_sycl_t>
-void reshape_and_cache_xpu_impl_(
-    const scalar_t* __restrict__ key,
-    const scalar_t* __restrict__ value,
-    scalar_t* __restrict__ key_cache,
-    scalar_t* __restrict__ value_cache,
-    const int64_t* __restrict__ slot_mapping,
-    const int num_tokens,
+
+template <typename scalar_t>
+void reshape_and_cache_kernel(
+    const scalar_t* __restrict__ key, // [num_tokens, num_heads, head_size]
+    const scalar_t* __restrict__ value, // [num_tokens, num_heads, head_size]
+    scalar_t* __restrict__ key_cache, // [num_blocks, num_heads, head_size/x,
+                                      // block_size, x]
+    scalar_t* __restrict__ value_cache, // [num_blocks, num_heads, head_size,
+                                        // block_size]
+    const int64_t* __restrict__ slot_mapping, // [num_tokens]
     const int key_stride,
     const int value_stride,
     const int num_heads,
     const int head_size,
     const int block_size,
     const int x,
-    const int key_cache_stride,
-    const int key_cache_num_tokens) {
-  const int block_elem_num = num_heads * head_size * block_size;
-  sycl::queue& q = vllm::xpu::vllmGetQueue();
-  sycl::buffer<scalar_sycl_t> key_buf(
-      (scalar_sycl_t*)key, num_tokens * key_stride);
-  sycl::buffer<scalar_sycl_t> value_buf(
-      (scalar_sycl_t*)value, num_tokens * value_stride);
-  sycl::buffer<int64_t> slot_mapping_buf(slot_mapping, num_tokens);
+    const sycl::nd_item<3>& item_ct1) {
+  const int64_t token_idx = item_ct1.get_group(2);
+  const int64_t slot_idx = slot_mapping[token_idx];
+  if (slot_idx < 0) {
+    // Padding token that should be ignored.
+    return;
+  }
 
-  sycl::buffer<scalar_sycl_t> key_cache_buf(
-      (scalar_sycl_t*)key_cache, key_cache_stride * key_cache_num_tokens);
-  sycl::buffer<scalar_sycl_t> value_cache_buf(
-      (scalar_sycl_t*)value_cache, key_cache_stride * key_cache_num_tokens);
+  const int64_t block_idx = slot_idx / block_size;
+  const int64_t block_offset = slot_idx % block_size;
 
-  q.submit([&](auto& h) {
-    sycl::accessor key_acc(key_buf, h, sycl::read_only);
-    sycl::accessor value_acc(value_buf, h, sycl::read_only);
-    sycl::accessor slot_mapping_acc(slot_mapping_buf, h, sycl::read_only);
+  const int n = num_heads * head_size;
+  for (int i = item_ct1.get_local_id(2); i < n;
+       i += item_ct1.get_local_range(2)) {
+    const int64_t src_key_idx = token_idx * key_stride + i;
+    const int64_t src_value_idx = token_idx * value_stride + i;
 
-    sycl::accessor key_cache_acc(key_cache_buf, h, sycl::read_write);
-    sycl::accessor value_cache_acc(value_cache_buf, h, sycl::read_write);
+    const int head_idx = i / head_size;
+    const int head_offset = i % head_size;
+    const int x_idx = head_offset / x;
+    const int x_offset = head_offset % x;
 
-    h.parallel_for(sycl::range(num_tokens, num_heads), [=](sycl::item<2> item) {
-      size_t token_idx = item[0];
-      size_t head_idx = item[1];
-      const int64_t slot_idx = slot_mapping_acc[token_idx];
-      if (slot_idx >= 0) {
-        size_t src_key_head_idx = token_idx * key_stride + head_idx * head_size;
-        size_t src_value_head_idx =
-            token_idx * value_stride + head_idx * head_size;
-
-        const int64_t block_index = slot_idx / block_size;
-        const int64_t block_offset = slot_idx % block_size;
-
-        for (int src_key_idx = 0; src_key_idx < head_size; src_key_idx += x) {
-          const int64_t target_offset =
-              src_key_idx * block_size + block_offset * x;
-          for (int i = 0; i < x; ++i) {
-            key_cache_acc
-                [target_offset + i + block_elem_num * block_index +
-                 head_idx * block_size * head_size] =
-                    key_acc[src_key_idx + i + src_key_head_idx];
-          }
-        }
-
-        for (int src_value_idx = 0; src_value_idx < head_size;
-             ++src_value_idx) {
-          const int64_t target_offset =
-              src_value_idx * block_size + block_offset;
-          value_cache_acc
-              [target_offset + block_elem_num * block_index +
-               head_idx * block_size * head_size] =
-                  value_acc[src_value_idx + src_value_head_idx];
-        }
-      }
-    });
-  });
-  q.wait();
+    const int64_t tgt_key_idx =
+        block_idx * num_heads * (head_size / x) * block_size * x +
+        head_idx * (head_size / x) * block_size * x + x_idx * block_size * x +
+        block_offset * x + x_offset;
+    const int64_t tgt_value_idx =
+        block_idx * num_heads * head_size * block_size +
+        head_idx * head_size * block_size + head_offset * block_size +
+        block_offset;
+    key_cache[tgt_key_idx] = key[src_key_idx];
+    value_cache[tgt_value_idx] = value[src_value_idx];
+  }
 }
 
 template <typename scalar_t>
-void reshape_and_cache_xpu_impl(
+void call_reshape_and_cache_kernel(
     const scalar_t* __restrict__ key,
     const scalar_t* __restrict__ value,
     scalar_t* __restrict__ key_cache,
@@ -97,28 +73,32 @@ void reshape_and_cache_xpu_impl(
     const int num_heads,
     const int head_size,
     const int block_size,
-    const int x,
-    const int key_cache_stride,
-    const int key_cache_num_tokens) {
-  reshape_and_cache_xpu_impl_<scalar_t, scalar_t>(
-      key,
-      value,
-      key_cache,
-      value_cache,
-      slot_mapping,
-      num_tokens,
-      key_stride,
-      value_stride,
-      num_heads,
-      head_size,
-      block_size,
-      x,
-      key_cache_stride,
-      key_cache_num_tokens);
+    const int x) {
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1, 1, std::min(num_heads * head_size, 512));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          reshape_and_cache_kernel<scalar_t>(
+              key,
+              value,
+              key_cache,
+              value_cache,
+              slot_mapping,
+              key_stride,
+              value_stride,
+              num_heads,
+              head_size,
+              block_size,
+              x,
+              item_ct1);
+        });
+  });
 }
 
 template <>
-void reshape_and_cache_xpu_impl<c10::Half>(
+void call_reshape_and_cache_kernel<c10::Half>(
     const c10::Half* __restrict__ key,
     const c10::Half* __restrict__ value,
     c10::Half* __restrict__ key_cache,
@@ -130,28 +110,32 @@ void reshape_and_cache_xpu_impl<c10::Half>(
     const int num_heads,
     const int head_size,
     const int block_size,
-    const int x,
-    const int key_cache_stride,
-    const int key_cache_num_tokens) {
-  reshape_and_cache_xpu_impl_<c10::Half, sycl::half>(
-      key,
-      value,
-      key_cache,
-      value_cache,
-      slot_mapping,
-      num_tokens,
-      key_stride,
-      value_stride,
-      num_heads,
-      head_size,
-      block_size,
-      x,
-      key_cache_stride,
-      key_cache_num_tokens);
+    const int x) {
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1,1,std::min(num_heads * head_size, 512));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          reshape_and_cache_kernel<sycl::half>(
+              (sycl::half*)key,
+              (sycl::half*)value,
+              (sycl::half*)key_cache,
+              (sycl::half*)value_cache,
+              slot_mapping,
+              key_stride,
+              value_stride,
+              num_heads,
+              head_size,
+              block_size,
+              x,
+              item_ct1);
+        });
+  });
 }
 
 template <>
-void reshape_and_cache_xpu_impl<c10::BFloat16>(
+void call_reshape_and_cache_kernel<c10::BFloat16>(
     const c10::BFloat16* __restrict__ key,
     const c10::BFloat16* __restrict__ value,
     c10::BFloat16* __restrict__ key_cache,
@@ -163,24 +147,28 @@ void reshape_and_cache_xpu_impl<c10::BFloat16>(
     const int num_heads,
     const int head_size,
     const int block_size,
-    const int x,
-    const int key_cache_stride,
-    const int key_cache_num_tokens) {
-  reshape_and_cache_xpu_impl_<c10::BFloat16, sycl::ext::oneapi::bfloat16>(
-      key,
-      value,
-      key_cache,
-      value_cache,
-      slot_mapping,
-      num_tokens,
-      key_stride,
-      value_stride,
-      num_heads,
-      head_size,
-      block_size,
-      x,
-      key_cache_stride,
-      key_cache_num_tokens);
+    const int x) {
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1,1,std::min(num_heads * head_size, 512));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          reshape_and_cache_kernel<sycl::ext::oneapi::bfloat16>(
+              (sycl::ext::oneapi::bfloat16*)key,
+              (sycl::ext::oneapi::bfloat16*)value,
+              (sycl::ext::oneapi::bfloat16*)key_cache,
+              (sycl::ext::oneapi::bfloat16*)value_cache,
+              slot_mapping,
+              key_stride,
+              value_stride,
+              num_heads,
+              head_size,
+              block_size,
+              x,
+              item_ct1);
+        });
+  });
 }
 
 void reshape_and_cache_xpu(
@@ -198,12 +186,9 @@ void reshape_and_cache_xpu(
   int key_stride = key.stride(0);
   int value_stride = value.stride(0);
 
-  int key_cache_stride = key_cache.stride(0);
-  int key_cache_num_tokens = key_cache.size(0);
-
   VLLM_XPU_DISPATCH_FLOATING_TYPES(
-      key.scalar_type(), "reshape_and_cache_xpu_impl", [&] {
-        reshape_and_cache_xpu_impl<scalar_t>(
+      key.scalar_type(), "call_reshape_and_cache_kernel", [&] {
+        call_reshape_and_cache_kernel<scalar_t>(
             key.data_ptr<scalar_t>(),
             value.data_ptr<scalar_t>(),
             key_cache.data_ptr<scalar_t>(),
@@ -215,9 +200,7 @@ void reshape_and_cache_xpu(
             num_heads,
             head_size,
             block_size,
-            x,
-            key_cache_stride,
-            key_cache_num_tokens);
+            x);
       });
 }
 
