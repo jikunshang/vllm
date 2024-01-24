@@ -6,9 +6,9 @@ void rotary_embedding_xpu(torch::Tensor &positions, torch::Tensor &query,
 
 void silu_and_mul_xpu(torch::Tensor &out, torch::Tensor &input);
 
-void gelu_new_xpu(torch::Tensor &out, torch::Tensor &input) {}
+void gelu_new_xpu(torch::Tensor &out, torch::Tensor &input);
 
-void gelu_fast_xpu(torch::Tensor &out, torch::Tensor &input) {}
+void gelu_fast_xpu(torch::Tensor &out, torch::Tensor &input);
 
 
 void paged_attention_v1_xpu(

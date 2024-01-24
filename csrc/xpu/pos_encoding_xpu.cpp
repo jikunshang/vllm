@@ -9,11 +9,44 @@
 #include <torch/extension.h>
 #include "utils.h"
 
-template <typename scalar_t, typename scalar_sycl_t>
-void rotary_embedding_xpu_impl_(
-    const int64_t* __restrict__ positions, // [num_tokens]
-    scalar_t* __restrict__ query, // [num_tokens, num_heads, head_size]
-    scalar_t* __restrict__ key, // [num_tokens, num_kv_heads, head_size]
+template <typename scalar_t, bool IS_NEOX>
+inline void apply_rotary_embedding(
+    scalar_t* __restrict__ arr,
+    const scalar_t* __restrict__ cos_ptr,
+    const scalar_t* __restrict__ sin_ptr,
+    int rot_offset,
+    int embed_dim) {
+  int x_index, y_index;
+  scalar_t cos, sin;
+  if (IS_NEOX) {
+    // GPT-NeoX style rotary embedding.
+    x_index = rot_offset;
+    y_index = embed_dim + rot_offset;
+    cos = VLLM_LDG(cos_ptr + x_index);
+    sin = VLLM_LDG(sin_ptr + x_index);
+  } else {
+    // GPT-J style rotary embedding.
+    x_index = 2 * rot_offset;
+    y_index = 2 * rot_offset + 1;
+    cos = VLLM_LDG(cos_ptr + x_index / 2);
+    sin = VLLM_LDG(sin_ptr + x_index / 2);
+  }
+
+  const scalar_t x = arr[x_index];
+  const scalar_t y = arr[y_index];
+  arr[x_index] = x * cos - y * sin;
+  arr[y_index] = y * cos + x * sin;
+}
+
+template <typename scalar_t, bool IS_NEOX>
+void rotary_embedding_kernel(
+    const int64_t* __restrict__ positions, // [batch_size, seq_len] or
+                                           // [num_tokens]
+    scalar_t* __restrict__ query, // [batch_size, seq_len, num_heads, head_size]
+                                  // or [num_tokens, num_heads, head_size]
+    scalar_t* __restrict__ key, // [batch_size, seq_len, num_kv_heads,
+                                // head_size] or [num_tokens, num_kv_heads,
+                                // head_size]
     const scalar_t* __restrict__ cos_sin_cache, // [max_position, 2, rot_dim //
                                                 // 2]
     const int rot_dim,
@@ -22,53 +55,39 @@ void rotary_embedding_xpu_impl_(
     const int num_heads,
     const int num_kv_heads,
     const int head_size,
-    const int num_tokens,
-    const int sin_cos_dim) {
+    const sycl::nd_item<3>& item_ct1) {
+  // Each thread block is responsible for one token.
+  const int token_idx = item_ct1.get_group(2);
+  int64_t pos = positions[token_idx];
+  const scalar_t* cache_ptr = cos_sin_cache + pos * rot_dim;
+
   const int embed_dim = rot_dim / 2;
-  sycl::buffer<int64_t, 1> positions_buf(positions, num_tokens);
-  sycl::buffer<scalar_sycl_t, 3> query_buf(
-      (scalar_sycl_t*)query, sycl::range<3>(num_tokens, num_heads, head_size));
-  sycl::buffer<scalar_sycl_t, 3> key_buf(
-      (scalar_sycl_t*)key, sycl::range<3>(num_tokens, num_kv_heads, head_size));
-  sycl::buffer<scalar_sycl_t, 1> cos_sin_cache_buf(
-      (scalar_sycl_t*)cos_sin_cache, sin_cos_dim * rot_dim);
-    sycl::queue& q = vllm::xpu::vllmGetQueue();
-  q.submit([&](auto& h) {
-    sycl::accessor positions_acc(positions_buf, h, sycl::read_only);
-    sycl::accessor query_acc(query_buf, h, sycl::read_write);
-    sycl::accessor key_acc(key_buf, h, sycl::read_write);
-    sycl::accessor cos_sin_cache_acc(cos_sin_cache_buf, h, sycl::read_only);
+  const scalar_t* cos_ptr = cache_ptr;
+  const scalar_t* sin_ptr = cache_ptr + embed_dim;
 
-    h.parallel_for(
-        sycl::range(num_tokens, num_heads, embed_dim), [=](auto index) {
-          const long token_idx = index[0];
-          const long head_idx = index[1];
-          const int x_index = index[2];
-          const int y_index = x_index + embed_dim;
-          int64_t pos = positions_acc[token_idx];
+  const int nq = num_heads * embed_dim;
+  for (int i = item_ct1.get_local_id(2); i < nq;
+       i += item_ct1.get_local_range(2)) {
+    const int head_idx = i / embed_dim;
+    const int token_head = token_idx * query_stride + head_idx * head_size;
+    const int rot_offset = i % embed_dim;
+    apply_rotary_embedding<scalar_t, IS_NEOX>(
+        query + token_head, cos_ptr, sin_ptr, rot_offset, embed_dim);
+  }
 
-          const scalar_sycl_t q_x = query_acc[token_idx][head_idx][x_index];
-          const scalar_sycl_t q_y = query_acc[token_idx][head_idx][y_index];
-          const scalar_sycl_t cos = cos_sin_cache_acc[pos * rot_dim + x_index];
-          const scalar_sycl_t sin = cos_sin_cache_acc[pos * rot_dim + y_index];
-
-          query_acc[token_idx][head_idx][x_index] = q_x * cos - q_y * sin;
-          query_acc[token_idx][head_idx][y_index] = q_y * cos + q_x * sin;
-
-          if (head_idx < num_kv_heads) {
-            const scalar_sycl_t k_x = key_acc[token_idx][head_idx][x_index];
-            const scalar_sycl_t k_y = key_acc[token_idx][head_idx][y_index];
-            key_acc[token_idx][head_idx][x_index] = k_x * cos - k_y * sin;
-            key_acc[token_idx][head_idx][y_index] = k_y * cos + k_x * sin;
-          }
-        });
-  });
-
-  q.wait();
+  const int nk = num_kv_heads * embed_dim;
+  for (int i = item_ct1.get_local_id(2); i < nk;
+       i += item_ct1.get_local_range(2)) {
+    const int head_idx = i / embed_dim;
+    const int token_head = token_idx * key_stride + head_idx * head_size;
+    const int rot_offset = i % embed_dim;
+    apply_rotary_embedding<scalar_t, IS_NEOX>(
+        key + token_head, cos_ptr, sin_ptr, rot_offset, embed_dim);
+  }
 }
 
 template <typename scalar_t>
-void rotary_embedding_xpu_impl(
+void call_rotary_embedding_kernel(
     const int64_t* __restrict__ positions, // [num_tokens]
     scalar_t* __restrict__ query, // [num_tokens, num_heads, head_size]
     scalar_t* __restrict__ key, // [num_tokens, num_kv_heads, head_size]
@@ -81,89 +100,60 @@ void rotary_embedding_xpu_impl(
     const int num_kv_heads,
     const int head_size,
     const int num_tokens,
-    const int sin_cos_dim) {
-  rotary_embedding_xpu_impl_<scalar_t, scalar_t>(
-      positions,
-      query,
-      key,
-      cos_sin_cache,
-      rot_dim,
-      query_stride,
-      key_stride,
-      num_heads,
-      num_kv_heads,
-      head_size,
-      num_tokens,
-      sin_cos_dim);
+    const int sin_cos_dim,
+    bool is_neox) {
+  using sycl_t = vllm::xpu::SyclTypeTrait<scalar_t>::Type;
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1, 1, std::min(num_heads * rot_dim / 2, 512));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  if (is_neox) {
+    queue.submit([&](sycl::handler& cgh) {
+      cgh.parallel_for(
+          sycl::nd_range<3>(grid * block, block),
+          [=](sycl::nd_item<3> item_ct1) {
+            rotary_embedding_kernel<sycl_t, true>(
+                positions,
+                (sycl_t* __restrict__)query,
+                (sycl_t* __restrict__)key,
+                (const sycl_t* __restrict__)cos_sin_cache,
+                rot_dim,
+                query_stride,
+                key_stride,
+                num_heads,
+                num_kv_heads,
+                head_size,
+                item_ct1);
+          });
+    });
+  } else {
+    queue.submit([&](sycl::handler& cgh) {
+      cgh.parallel_for(
+          sycl::nd_range<3>(grid * block, block),
+          [=](sycl::nd_item<3> item_ct1) {
+            rotary_embedding_kernel<sycl_t, false>(
+                positions,
+                (sycl_t* __restrict__)query,
+                (sycl_t* __restrict__)key,
+                (const sycl_t* __restrict__)cos_sin_cache,
+                rot_dim,
+                query_stride,
+                key_stride,
+                num_heads,
+                num_kv_heads,
+                head_size,
+                item_ct1);
+          });
+    });
+  }
 }
 
-template <>
-void rotary_embedding_xpu_impl<c10::Half>(
-    const int64_t* __restrict__ positions, // [num_tokens]
-    c10::Half* __restrict__ query, // [num_tokens, num_heads, head_size]
-    c10::Half* __restrict__ key, // [num_tokens, num_kv_heads, head_size]
-    const c10::Half* __restrict__ cos_sin_cache, // [max_position, 2, rot_dim //
-                                                 // 2]
-    const int rot_dim,
-    const int query_stride,
-    const int key_stride,
-    const int num_heads,
-    const int num_kv_heads,
-    const int head_size,
-    const int num_tokens,
-    const int sin_cos_dim) {
-  rotary_embedding_xpu_impl_<c10::Half, sycl::half>(
-      positions,
-      query,
-      key,
-      cos_sin_cache,
-      rot_dim,
-      query_stride,
-      key_stride,
-      num_heads,
-      num_kv_heads,
-      head_size,
-      num_tokens,
-      sin_cos_dim);
-}
-
-template <>
-void rotary_embedding_xpu_impl<c10::BFloat16>(
-    const int64_t* __restrict__ positions, // [num_tokens]
-    c10::BFloat16* __restrict__ query, // [num_tokens, num_heads, head_size]
-    c10::BFloat16* __restrict__ key, // [num_tokens, num_kv_heads, head_size]
-    const c10::BFloat16* __restrict__ cos_sin_cache, // [max_position, 2, rot_dim //
-                                                 // 2]
-    const int rot_dim,
-    const int query_stride,
-    const int key_stride,
-    const int num_heads,
-    const int num_kv_heads,
-    const int head_size,
-    const int num_tokens,
-    const int sin_cos_dim) {
-  rotary_embedding_xpu_impl_<c10::BFloat16, sycl::ext::oneapi::bfloat16>(
-      positions,
-      query,
-      key,
-      cos_sin_cache,
-      rot_dim,
-      query_stride,
-      key_stride,
-      num_heads,
-      num_kv_heads,
-      head_size,
-      num_tokens,
-      sin_cos_dim);
-}
-
-void _rotary_embedding_xpu(
+void rotary_embedding_xpu(
     torch::Tensor& positions,
     torch::Tensor& query,
     torch::Tensor& key,
     int head_size,
-    torch::Tensor& cos_sin_cache) {
-  // TORCH_CHECK(query.scalar_type() == c10::ScalarType::Float);
+    torch::Tensor& cos_sin_cache,
+    bool is_neox) {
 
   int num_tokens = query.numel() / query.size(-1);
   int rot_dim = cos_sin_cache.size(1);
@@ -174,8 +164,8 @@ void _rotary_embedding_xpu(
   int cos_sin_dim = cos_sin_cache.size(0);
 
   VLLM_XPU_DISPATCH_FLOATING_TYPES(
-      query.scalar_type(), "rotary_embedding_xpu_impl", [&] {
-        rotary_embedding_xpu_impl<scalar_t>(
+      query.scalar_type(), "call_rotary_embedding_kernel", [&] {
+        call_rotary_embedding_kernel<scalar_t>(
             positions.data_ptr<int64_t>(),
             query.data_ptr<scalar_t>(),
             key.data_ptr<scalar_t>(),
@@ -187,23 +177,7 @@ void _rotary_embedding_xpu(
             num_kv_heads,
             head_size,
             num_tokens,
-            cos_sin_dim);
+            cos_sin_dim,
+            is_neox);
       });
-}
-
-void rotary_embedding_xpu(
-    torch::Tensor& positions,
-    torch::Tensor& query,
-    torch::Tensor& key,
-    int head_size,
-    torch::Tensor& cos_sin_cache,
-    bool is_neox) {
-  TORCH_CHECK(is_neox);
-  switch (positions.device().type()) {
-    case c10::DeviceType::XPU:
-      return _rotary_embedding_xpu(
-          positions, query, key, head_size, cos_sin_cache);
-    default:
-      TORCH_CHECK(false, "Unsupported device type.")
-  }
 }
