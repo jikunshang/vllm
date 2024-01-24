@@ -15,6 +15,22 @@ __inline__ T silu_xpu(const T& x) {
   return (T)(((float)x) / (1.0f + sycl::exp((float)-x)));
 }
 
+template <typename scalar_t>
+void silu_and_mul_kernel(
+    scalar_t* __restrict__ out, // [..., d]
+    const scalar_t* __restrict__ input, // [..., 2, d]
+    const int d,
+    const sycl::nd_item<3>& item_ct1) {
+  const int64_t token_idx = item_ct1.get_group(2);
+  for (int64_t idx = item_ct1.get_local_id(2); idx < d;
+       idx += item_ct1.get_local_range(2)) {
+
+    const scalar_t x = input[token_idx * 2 * d + idx];
+    const scalar_t y = input[token_idx * 2 * d + d + idx];
+    out[token_idx * d + idx] = silu_xpu(x) * y;
+  }
+}
+
 template <typename scalar_t, typename scalar_sycl_t>
 void silu_and_mul_xpu_impl_(
     int num_tokens,
@@ -44,31 +60,59 @@ void silu_and_mul_xpu_impl_(
 }
 
 template <typename scalar_t>
-void silu_and_mul_xpu_impl(
+void call_silu_and_mul_kernel(
     int num_tokens,
     int d,
     const scalar_t* __restrict__ input,
     scalar_t* __restrict__ output) {
-  silu_and_mul_xpu_impl_<scalar_t, scalar_t>(num_tokens, d, input, output);
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1, 1, std::min(d, 1024));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          silu_and_mul_kernel<scalar_t>(output, input, d, item_ct1);
+        });
+  });
 }
 
 template <>
-void silu_and_mul_xpu_impl<typename c10::Half>(
+void call_silu_and_mul_kernel<typename c10::Half>(
     int num_tokens,
     int d,
     const c10::Half* __restrict__ input,
     c10::Half* __restrict__ output) {
-  silu_and_mul_xpu_impl_<c10::Half, sycl::half>(num_tokens, d, input, output);
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1, 1, std::min(d, 1024));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          silu_and_mul_kernel<sycl::half>(
+              (sycl::half*)output, (sycl::half*)input, d, item_ct1);
+        });
+  });
 }
 
 template <>
-void silu_and_mul_xpu_impl<typename c10::BFloat16>(
+void call_silu_and_mul_kernel<typename c10::BFloat16>(
     int num_tokens,
     int d,
     const c10::BFloat16* __restrict__ input,
     c10::BFloat16* __restrict__ output) {
-  silu_and_mul_xpu_impl_<c10::BFloat16, sycl::ext::oneapi::bfloat16>(
-      num_tokens, d, input, output);
+  sycl::range<3> grid(1, 1, num_tokens);
+  sycl::range<3> block(1, 1, std::min(d, 1024));
+  auto& queue = vllm::xpu::vllmGetQueue();
+  queue.submit([&](sycl::handler& cgh) {
+    cgh.parallel_for(
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+          silu_and_mul_kernel<sycl::ext::oneapi::bfloat16>(
+              (sycl::ext::oneapi::bfloat16*)output,
+              (sycl::ext::oneapi::bfloat16*)input,
+              d,
+              item_ct1);
+        });
+  });
 }
 
 void silu_and_mul_xpu(torch::Tensor& out, torch::Tensor& input) {
@@ -76,8 +120,8 @@ void silu_and_mul_xpu(torch::Tensor& out, torch::Tensor& input) {
   int d = input.size(-1) / 2;
 
   VLLM_XPU_DISPATCH_FLOATING_TYPES(
-      input.scalar_type(), "silu_and_mul_xpu_impl", [&] {
-        silu_and_mul_xpu_impl(
+      input.scalar_type(), "call_silu_and_mul_kernel", [&] {
+        call_silu_and_mul_kernel(
             num_tokens,
             d,
             input.data_ptr<scalar_t>(),

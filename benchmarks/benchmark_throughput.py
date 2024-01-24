@@ -208,7 +208,7 @@ def main(args: argparse.Namespace):
                                 args.quantization, args.tensor_parallel_size,
                                 args.seed, args.n, args.use_beam_search,
                                 args.trust_remote_code, args.dtype,
-                                args.max_model_len, args.enforce_eager,
+                                args.max_model_len, True,
                                 args.device)
     elif args.backend == "hf":
         assert args.tensor_parallel_size == 1
@@ -291,7 +291,7 @@ if __name__ == "__main__":
         "--device",
         type=str,
         default="cuda",
-        choices=["cuda"],
+        choices=["cuda", "xpu"],
         help='device type for vLLM execution, supporting CUDA only currently.')
     args = parser.parse_args()
     if args.tokenizer is None:
