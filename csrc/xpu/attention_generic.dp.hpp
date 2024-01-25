@@ -15,40 +15,40 @@
  */
 #pragma once
 
-#include <sycl/sycl.hpp>
 #include <dpct/dpct.hpp>
 #include <stdint.h>
+#include <sycl/sycl.hpp>
 
 namespace vllm {
 
 // A vector type to store Q, K, V elements.
-template<typename T, int VEC_SIZE>
+template <typename T, int VEC_SIZE>
 struct Vec {};
 
 // A vector type to store FP32 accumulators.
-template<typename T>
+template <typename T>
 struct FloatVec {};
 
 // Template vector operations.
-template<typename Acc, typename A, typename B>
+template <typename Acc, typename A, typename B>
 inline Acc mul(A a, B b);
 
-template<typename T>
+template <typename T>
 inline float sum(T v);
 
-template<typename T>
+template <typename T>
 inline float dot(T a, T b) {
   return sum(mul<T, T, T>(a, b));
 }
 
-template<typename A, typename T>
+template <typename A, typename T>
 inline float dot(T a, T b) {
   return sum(mul<A, T, T>(a, b));
 }
 
-template<typename T>
+template <typename T>
 inline void zero(T& dst) {
-  constexpr int WORDS = sizeof(T) / 4;
+  constexpr int WORDS = (sizeof(T) / 4) == 0 ? 1 : (sizeof(T) / 4);
   union {
     T raw;
     uint32_t words[WORDS];

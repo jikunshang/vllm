@@ -12,7 +12,7 @@
 #include "utils.h"
 #include "xpu_types.hpp"
 // #include "dtype_bfloat16.dp.hpp"
-// #include "dtype_float16.dp.hpp"
+#include "dtype_float16.dp.hpp"
 #include "dtype_float32.dp.hpp"
 
 #define WARP_SIZE 32
@@ -696,7 +696,7 @@ void paged_attention_v1_kernel(
         sycl::nd_range<3>(grid * block, block),                             \
         [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
           paged_attention_v1_kernel<                                        \
-              T,                                                            \
+              sycl_t,                                                            \
               Q_vec,                                                        \
               HEAD_SIZE,                                                    \
               BLOCK_SIZE,                                                   \
@@ -744,8 +744,8 @@ void paged_attention_xpu_v1_impl_launcher(
 
   constexpr int THREAD_GROUP_SIZE = MAX(WARP_SIZE / BLOCK_SIZE, 1);
   constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
-  using FloatType = typename Float_Trait<T>::Type;
-  using Q_vec = typename Vec<T, VEC_SIZE>::Type;
+  using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
+  using Q_vec = typename Vec<sycl_t, VEC_SIZE>::Type;
 
   int num_vecs_per_thread = head_size / THREAD_GROUP_SIZE / VEC_SIZE;
   assert(head_size % THREAD_GROUP_SIZE == 0);
@@ -755,10 +755,10 @@ void paged_attention_xpu_v1_impl_launcher(
       ? reinterpret_cast<const float*>(alibi_slopes.value().data_ptr())
       : nullptr;
 
-  T* out_ptr = reinterpret_cast<T*>(out.data_ptr());
-  T* query_ptr = reinterpret_cast<T*>(query.data_ptr());
-  T* key_cache_ptr = reinterpret_cast<T*>(key_cache.data_ptr());
-  T* value_cache_ptr = reinterpret_cast<T*>(value_cache.data_ptr());
+  sycl_t* out_ptr = reinterpret_cast<sycl_t*>(out.data_ptr());
+  sycl_t* query_ptr = reinterpret_cast<sycl_t*>(query.data_ptr());
+  sycl_t* key_cache_ptr = reinterpret_cast<sycl_t*>(key_cache.data_ptr());
+  sycl_t* value_cache_ptr = reinterpret_cast<sycl_t*>(value_cache.data_ptr());
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* context_lens_ptr = context_lens.data_ptr<int>();
 
