@@ -674,7 +674,7 @@ void paged_attention_v1_kernel(
   queue.submit([&](sycl::handler& cgh) {                                    \
     sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(                    \
         sycl::range<1>(shared_mem_size), cgh);                              \
-    sycl::local_accessor<Q_vec, 1> q_vecs_acc_ct1(                          \
+    sycl::local_accessor<Q_Vec, 1> q_vecs_acc_ct1(                          \
         sycl::range<1>(THREAD_GROUP_SIZE * num_vecs_per_thread), cgh);      \
     sycl::local_accessor<float, 1> red_smem_acc_ct1(                        \
         sycl::range<1>(2 * NUM_WARPS), cgh);                                \
@@ -697,7 +697,7 @@ void paged_attention_v1_kernel(
         [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
           paged_attention_v1_kernel<                                        \
               sycl_t,                                                       \
-              Q_vec,                                                        \
+              Q_Vec,                                                        \
               HEAD_SIZE,                                                    \
               BLOCK_SIZE,                                                   \
               NUM_THREADS,                                                  \
@@ -743,9 +743,9 @@ void paged_attention_xpu_v1_impl_launcher(
   int kv_head_stride = key_cache.stride(1);
 
   constexpr int THREAD_GROUP_SIZE = MAX(WARP_SIZE / BLOCK_SIZE, 1);
-  constexpr int VEC_SIZE = 1; //MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
+  constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
   using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
-  using Q_vec = typename Vec<sycl_t, VEC_SIZE>::Type;
+  using Q_Vec = typename Vec<sycl_t, VEC_SIZE>::Type;
 
   int num_vecs_per_thread = head_size / THREAD_GROUP_SIZE / VEC_SIZE;
   assert(head_size % THREAD_GROUP_SIZE == 0);
@@ -835,6 +835,460 @@ void paged_attention_xpu_v1_impl_launcher(
       break;                                                      \
   }
 
+// Grid: (num_heads, num_seqs).
+template <
+    typename scalar_t,
+    int HEAD_SIZE,
+    int NUM_THREADS,
+    int PARTITION_SIZE>
+void paged_attention_v2_reduce_kernel(
+    scalar_t* __restrict__ out, // [num_seqs, num_heads, head_size]
+    const float* __restrict__ exp_sums, // [num_seqs, num_heads,
+                                        // max_num_partitions]
+    const float* __restrict__ max_logits, // [num_seqs, num_heads,
+                                          // max_num_partitions]
+    const scalar_t* __restrict__ tmp_out, // [num_seqs, num_heads,
+                                          // max_num_partitions, head_size]
+    const int* __restrict__ context_lens, // [num_seqs]
+    const int max_num_partitions,
+    const sycl::nd_item<3>& item_ct1,
+    uint8_t* dpct_local,
+    float* red_smem) {
+  const int num_heads = item_ct1.get_group_range(2);
+  const int head_idx = item_ct1.get_group(2);
+  const int seq_idx = item_ct1.get_group(1);
+  const int context_len = context_lens[seq_idx];
+  const int num_partitions = DIVIDE_ROUND_UP(context_len, PARTITION_SIZE);
+  if (num_partitions == 1) {
+    // No need to reduce. Only copy tmp_out to out.
+    scalar_t* out_ptr =
+        out + seq_idx * num_heads * HEAD_SIZE + head_idx * HEAD_SIZE;
+    const scalar_t* tmp_out_ptr = tmp_out +
+        seq_idx * num_heads * max_num_partitions * HEAD_SIZE +
+        head_idx * max_num_partitions * HEAD_SIZE;
+    for (int i = item_ct1.get_local_id(2); i < HEAD_SIZE;
+         i += item_ct1.get_local_range(2)) {
+      out_ptr[i] = tmp_out_ptr[i];
+    }
+    // Terminate the thread block.
+    return;
+  }
+
+  constexpr int NUM_WARPS = NUM_THREADS / WARP_SIZE;
+  const int warp_idx = item_ct1.get_local_id(2) / WARP_SIZE;
+  const int lane = item_ct1.get_local_id(2) % WARP_SIZE;
+
+  // Size: 2 * num_partitions.
+  auto shared_mem = (char*)dpct_local;
+  // Workspace for reduction.
+
+  // Load max logits to shared memory.
+  float* shared_max_logits = reinterpret_cast<float*>(shared_mem);
+  const float* max_logits_ptr = max_logits +
+      seq_idx * num_heads * max_num_partitions + head_idx * max_num_partitions;
+  float max_logit = -FLT_MAX;
+  for (int i = item_ct1.get_local_id(2); i < num_partitions;
+       i += item_ct1.get_local_range(2)) {
+    const float l = max_logits_ptr[i];
+    shared_max_logits[i] = l;
+    max_logit = sycl::fmax(max_logit, (float)l);
+  }
+  /*
+  DPCT1065:15: Consider replacing sycl::nd_item::barrier() with
+  sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better
+  performance if there is no access to global memory.
+  */
+  item_ct1.barrier();
+
+  // Get the global max logit.
+  // Reduce within the warp.
+#pragma unroll
+  for (int mask = WARP_SIZE / 2; mask >= 1; mask /= 2) {
+    /*
+    DPCT1023:18: The SYCL sub-group does not support mask options for
+    dpct::permute_sub_group_by_xor.
+    */
+    /*
+    DPCT1096:45: The right-most dimension of the work-group used in the SYCL
+    kernel that calls this function may be less than "32". The function
+    "dpct::permute_sub_group_by_xor" may return an unexpected result on the CPU
+    device. Modify the size of the work-group to ensure that the value of the
+    right-most dimension is a multiple of "32".
+    */
+    max_logit = sycl::fmax(
+        max_logit,
+        dpct::experimental::permute_sub_group_by_xor(
+            0xffffffff, item_ct1.get_sub_group(), max_logit, mask));
+  }
+  if (lane == 0) {
+    red_smem[warp_idx] = max_logit;
+  }
+  /*
+  DPCT1065:16: Consider replacing sycl::nd_item::barrier() with
+  sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better
+  performance if there is no access to global memory.
+  */
+  item_ct1.barrier();
+  // Reduce across warps.
+  max_logit = lane < NUM_WARPS ? red_smem[lane] : -FLT_MAX;
+#pragma unroll
+  for (int mask = NUM_WARPS / 2; mask >= 1; mask /= 2) {
+    /*
+    DPCT1023:19: The SYCL sub-group does not support mask options for
+    dpct::permute_sub_group_by_xor.
+    */
+    /*
+    DPCT1096:46: The right-most dimension of the work-group used in the SYCL
+    kernel that calls this function may be less than "32". The function
+    "dpct::permute_sub_group_by_xor" may return an unexpected result on the CPU
+    device. Modify the size of the work-group to ensure that the value of the
+    right-most dimension is a multiple of "32".
+    */
+    max_logit = sycl::fmax(
+        max_logit,
+        dpct::experimental::permute_sub_group_by_xor(
+            0xffffffff, item_ct1.get_sub_group(), max_logit, mask));
+  }
+  // Broadcast the max value to all threads.
+  /*
+  DPCT1023:20: The SYCL sub-group does not support mask options for
+  dpct::select_from_sub_group.
+  */
+  /*
+  DPCT1096:47: The right-most dimension of the work-group used in the SYCL
+  kernel that calls this function may be less than "32". The function
+  "dpct::select_from_sub_group" may return an unexpected result on the CPU
+  device. Modify the size of the work-group to ensure that the value of the
+  right-most dimension is a multiple of "32".
+  */
+  max_logit = dpct::experimental::select_from_sub_group(
+      0xffffffff, item_ct1.get_sub_group(), max_logit, 0);
+
+  // Load rescaled exp sums to shared memory.
+  float* shared_exp_sums =
+      reinterpret_cast<float*>(shared_mem + sizeof(float) * num_partitions);
+  const float* exp_sums_ptr = exp_sums +
+      seq_idx * num_heads * max_num_partitions + head_idx * max_num_partitions;
+  float global_exp_sum = 0.0f;
+  for (int i = item_ct1.get_local_id(2); i < num_partitions;
+       i += item_ct1.get_local_range(2)) {
+    float l = shared_max_logits[i];
+    float rescaled_exp_sum = exp_sums_ptr[i] * sycl::exp(l - max_logit);
+    global_exp_sum += rescaled_exp_sum;
+    shared_exp_sums[i] = rescaled_exp_sum;
+  }
+  /*
+  DPCT1065:17: Consider replacing sycl::nd_item::barrier() with
+  sycl::nd_item::barrier(sycl::access::fence_space::local_space) for better
+  performance if there is no access to global memory.
+  */
+  item_ct1.barrier();
+  global_exp_sum =
+      block_sum<NUM_WARPS>(&red_smem[NUM_WARPS], global_exp_sum, item_ct1);
+  const float inv_global_exp_sum = 1.0f / (global_exp_sum + 1e-6f);
+
+  // Aggregate tmp_out to out.
+  const scalar_t* tmp_out_ptr = tmp_out +
+      seq_idx * num_heads * max_num_partitions * HEAD_SIZE +
+      head_idx * max_num_partitions * HEAD_SIZE;
+  scalar_t* out_ptr =
+      out + seq_idx * num_heads * HEAD_SIZE + head_idx * HEAD_SIZE;
+#pragma unroll
+  for (int i = item_ct1.get_local_id(2); i < HEAD_SIZE; i += NUM_THREADS) {
+    float acc = 0.0f;
+    for (int j = 0; j < num_partitions; ++j) {
+      acc += to_float(tmp_out_ptr[j * HEAD_SIZE + i]) * shared_exp_sums[j] *
+          inv_global_exp_sum;
+    }
+    from_float(out_ptr[i], acc);
+  }
+}
+
+// Grid: (num_heads, num_seqs, max_num_partitions).
+template <
+    typename scalar_t,
+    typename Q_Vec_t,
+    int HEAD_SIZE,
+    int BLOCK_SIZE,
+    int NUM_THREADS,
+    int VEC_SIZE,
+    int PARTITION_SIZE>
+void paged_attention_v2_kernel(
+    float* __restrict__ exp_sums, // [num_seqs, num_heads, max_num_partitions]
+    float* __restrict__ max_logits, // [num_seqs, num_heads, max_num_partitions]
+    scalar_t* __restrict__ tmp_out, // [num_seqs, num_heads, max_num_partitions,
+                                    // head_size]
+    const scalar_t* __restrict__ q, // [num_seqs, num_heads, head_size]
+    const scalar_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
+                                          // head_size/x, block_size, x]
+    const scalar_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
+                                          // head_size, block_size]
+    const int num_kv_heads, // [num_heads]
+    const float scale,
+    const int* __restrict__ block_tables, // [num_seqs, max_num_blocks_per_seq]
+    const int* __restrict__ context_lens, // [num_seqs]
+    const int max_num_blocks_per_seq,
+    const float* __restrict__ alibi_slopes, // [num_heads]
+    const int q_stride,
+    const int kv_block_stride,
+    const int kv_head_stride,
+    const sycl::nd_item<3>& item_ct1,
+    uint8_t* dpct_local,
+    Q_Vec_t* q_vecs,
+    float* red_smem) {
+  paged_attention_kernel<
+      scalar_t,
+      Q_Vec_t,
+      HEAD_SIZE,
+      BLOCK_SIZE,
+      NUM_THREADS,
+      VEC_SIZE,
+      PARTITION_SIZE>(
+      exp_sums,
+      max_logits,
+      tmp_out,
+      q,
+      k_cache,
+      v_cache,
+      num_kv_heads,
+      scale,
+      block_tables,
+      context_lens,
+      max_num_blocks_per_seq,
+      alibi_slopes,
+      q_stride,
+      kv_block_stride,
+      kv_head_stride,
+      item_ct1,
+      dpct_local,
+      q_vecs,
+      red_smem);
+}
+
+#define LAUNCH_PAGED_ATTENTION_V2(HEAD_SIZE)                                \
+  queue.submit([&](sycl::handler& cgh) {                                    \
+    sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(                    \
+        sycl::range<1>(shared_mem_size), cgh);                              \
+    sycl::local_accessor<Q_Vec, 1> q_vecs_acc_ct1(                          \
+        sycl::range<1>(THREAD_GROUP_SIZE * num_vecs_per_thread), cgh);      \
+    sycl::local_accessor<float, 1> red_smem_acc_ct1(                        \
+        sycl::range<1>(2 * NUM_WARPS), cgh);                                \
+                                                                            \
+    auto exp_sums_ptr_ct0 = exp_sums_ptr;                                   \
+    auto max_logits_ptr_ct1 = max_logits_ptr;                               \
+    auto tmp_out_ptr_ct2 = tmp_out_ptr;                                     \
+    auto query_ptr_ct3 = query_ptr;                                         \
+    auto key_cache_ptr_ct4 = key_cache_ptr;                                 \
+    auto value_cache_ptr_ct5 = value_cache_ptr;                             \
+    auto scale_ct7 = scale;                                                 \
+    auto block_tables_ptr_ct8 = block_tables_ptr;                           \
+    auto context_lens_ptr_ct9 = context_lens_ptr;                           \
+    auto max_num_blocks_per_seq_ct10 = max_num_blocks_per_seq;              \
+    auto alibi_slopes_ptr_ct11 = alibi_slopes_ptr;                          \
+    auto q_stride_ct12 = q_stride;                                          \
+    auto kv_block_stride_ct13 = kv_block_stride;                            \
+    auto kv_head_stride_ct14 = kv_head_stride;                              \
+                                                                            \
+    cgh.parallel_for(                                                       \
+        sycl::nd_range<3>(grid * block, block),                             \
+        [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
+          vllm::paged_attention_v2_kernel<                                  \
+              sycl_t,                                                       \
+              Q_Vec,                                                        \
+              HEAD_SIZE,                                                    \
+              BLOCK_SIZE,                                                   \
+              NUM_THREADS,                                                  \
+              VEC_SIZE,                                                     \
+              PARTITION_SIZE>(                                              \
+              exp_sums_ptr_ct0,                                             \
+              max_logits_ptr_ct1,                                           \
+              tmp_out_ptr_ct2,                                              \
+              query_ptr_ct3,                                                \
+              key_cache_ptr_ct4,                                            \
+              value_cache_ptr_ct5,                                          \
+              num_kv_heads,                                                 \
+              scale_ct7,                                                    \
+              block_tables_ptr_ct8,                                         \
+              context_lens_ptr_ct9,                                         \
+              max_num_blocks_per_seq_ct10,                                  \
+              alibi_slopes_ptr_ct11,                                        \
+              q_stride_ct12,                                                \
+              kv_block_stride_ct13,                                         \
+              kv_head_stride_ct14,                                          \
+              item_ct1,                                                     \
+              dpct_local_acc_ct1.get_pointer(),                             \
+              q_vecs_acc_ct1.get_pointer(),                                 \
+              red_smem_acc_ct1.get_pointer());                              \
+        });                                                                 \
+  });                                                                       \
+  queue.submit([&](sycl::handler& cgh) {                                    \
+    sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(                    \
+        sycl::range<1>(reduce_shared_mem_size), cgh);                       \
+    sycl::local_accessor<float, 1> red_smem_acc_ct1(                        \
+        sycl::range<1>(2 * NUM_WARPS), cgh);                                \
+                                                                            \
+    auto out_ptr_ct0 = out_ptr;                                             \
+    auto exp_sums_ptr_ct1 = exp_sums_ptr;                                   \
+    auto max_logits_ptr_ct2 = max_logits_ptr;                               \
+    auto tmp_out_ptr_ct3 = tmp_out_ptr;                                     \
+    auto context_lens_ptr_ct4 = context_lens_ptr;                           \
+    auto max_num_partitions_ct5 = max_num_partitions;                       \
+                                                                            \
+    cgh.parallel_for(                                                       \
+        sycl::nd_range<3>(reduce_grid * block, block),                      \
+        [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
+          vllm::paged_attention_v2_reduce_kernel<                           \
+              sycl_t,                                                       \
+              HEAD_SIZE,                                                    \
+              NUM_THREADS,                                                  \
+              PARTITION_SIZE>(                                              \
+              out_ptr_ct0,                                                  \
+              exp_sums_ptr_ct1,                                             \
+              max_logits_ptr_ct2,                                           \
+              tmp_out_ptr_ct3,                                              \
+              context_lens_ptr_ct4,                                         \
+              max_num_partitions_ct5,                                       \
+              item_ct1,                                                     \
+              dpct_local_acc_ct1.get_pointer(),                             \
+              red_smem_acc_ct1.get_pointer());                              \
+        });                                                                 \
+  });
+
+template <
+    typename T,
+    int BLOCK_SIZE,
+    int NUM_THREADS = 128,
+    int PARTITION_SIZE = 512>
+void paged_attention_v2_launcher(
+    torch::Tensor& out,
+    torch::Tensor& exp_sums,
+    torch::Tensor& max_logits,
+    torch::Tensor& tmp_out,
+    torch::Tensor& query,
+    torch::Tensor& key_cache,
+    torch::Tensor& value_cache,
+    int num_kv_heads,
+    float scale,
+    torch::Tensor& block_tables,
+    torch::Tensor& context_lens,
+    int max_context_len,
+    const c10::optional<torch::Tensor>& alibi_slopes) {
+  int num_seqs = query.size(0);
+  int num_heads = query.size(1);
+  int head_size = query.size(2);
+  int max_num_blocks_per_seq = block_tables.size(1);
+  int q_stride = query.stride(0);
+  int kv_block_stride = key_cache.stride(0);
+  int kv_head_stride = key_cache.stride(1);
+
+  constexpr int THREAD_GROUP_SIZE = MAX(WARP_SIZE / BLOCK_SIZE, 1);
+  assert(head_size % THREAD_GROUP_SIZE == 0);
+  constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
+  using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
+  using Q_Vec = typename Vec<sycl_t, VEC_SIZE>::Type;
+
+  int num_vecs_per_thread = head_size / THREAD_GROUP_SIZE / VEC_SIZE;
+  assert(head_size % THREAD_GROUP_SIZE == 0);
+
+  // NOTE: alibi_slopes is optional.
+  const float* alibi_slopes_ptr = alibi_slopes
+      ? reinterpret_cast<const float*>(alibi_slopes.value().data_ptr())
+      : nullptr;
+
+  sycl_t* out_ptr = reinterpret_cast<sycl_t*>(out.data_ptr());
+  float* exp_sums_ptr = reinterpret_cast<float*>(exp_sums.data_ptr());
+  float* max_logits_ptr = reinterpret_cast<float*>(max_logits.data_ptr());
+  sycl_t* tmp_out_ptr = reinterpret_cast<sycl_t*>(tmp_out.data_ptr());
+  sycl_t* query_ptr = reinterpret_cast<sycl_t*>(query.data_ptr());
+  sycl_t* key_cache_ptr = reinterpret_cast<sycl_t*>(key_cache.data_ptr());
+  sycl_t* value_cache_ptr = reinterpret_cast<sycl_t*>(value_cache.data_ptr());
+  int* block_tables_ptr = block_tables.data_ptr<int>();
+  int* context_lens_ptr = context_lens.data_ptr<int>();
+
+  constexpr int NUM_WARPS = NUM_THREADS / WARP_SIZE;
+  int max_num_partitions = DIVIDE_ROUND_UP(max_context_len, PARTITION_SIZE);
+  /*
+  DPCT1083:26: The size of local memory in the migrated code may be different
+  from the original code. Check that the allocated memory size in the migrated
+  code is correct.
+  */
+  int logits_size = PARTITION_SIZE * sizeof(float);
+  int outputs_size = (NUM_WARPS / 2) * head_size * sizeof(float);
+
+  // For paged attention v2 kernel.
+  sycl::range<3> grid(max_num_partitions, num_seqs, num_heads);
+  int shared_mem_size = std::max(logits_size, outputs_size);
+  // For paged attention v2 reduce kernel.
+  sycl::range<3> reduce_grid(1, num_seqs, num_heads);
+  /*
+  DPCT1083:24: The size of local memory in the migrated code may be different
+  from the original code. Check that the allocated memory size in the migrated
+  code is correct.
+  */
+  int reduce_shared_mem_size = 2 * max_num_partitions * sizeof(float);
+
+  sycl::range<3> block(1, 1, NUM_THREADS);
+  sycl::queue& queue = vllm::xpu::vllmGetQueue();
+  switch (head_size) {
+    // NOTE(woosuk): To reduce the compilation time, we only compile for the
+    // head sizes that we use in the model. However, we can easily extend this
+    // to support any head size which is a multiple of 16.
+    case 64:
+      LAUNCH_PAGED_ATTENTION_V2(64);
+      break;
+    case 80:
+      LAUNCH_PAGED_ATTENTION_V2(80);
+      break;
+    case 96:
+      LAUNCH_PAGED_ATTENTION_V2(96);
+      break;
+    case 112:
+      LAUNCH_PAGED_ATTENTION_V2(112);
+      break;
+    case 128:
+      LAUNCH_PAGED_ATTENTION_V2(128);
+      break;
+    case 256:
+      LAUNCH_PAGED_ATTENTION_V2(256);
+      break;
+    default:
+      TORCH_CHECK(false, "Unsupported head size: ", head_size);
+      break;
+  }
+}
+
+#define CALL_V2_LAUNCHER(T, BLOCK_SIZE)             \
+  vllm::paged_attention_v2_launcher<T, BLOCK_SIZE>( \
+      out,                                          \
+      exp_sums,                                     \
+      max_logits,                                   \
+      tmp_out,                                      \
+      query,                                        \
+      key_cache,                                    \
+      value_cache,                                  \
+      num_kv_heads,                                 \
+      scale,                                        \
+      block_tables,                                 \
+      context_lens,                                 \
+      max_context_len,                              \
+      alibi_slopes);
+
+#define CALL_V2_LAUNCHER_BLOCK_SIZE(T)                            \
+  switch (block_size) {                                           \
+    case 8:                                                       \
+      CALL_V2_LAUNCHER(T, 8);                                     \
+      break;                                                      \
+    case 16:                                                      \
+      CALL_V2_LAUNCHER(T, 16);                                    \
+      break;                                                      \
+    case 32:                                                      \
+      CALL_V2_LAUNCHER(T, 32);                                    \
+      break;                                                      \
+    default:                                                      \
+      TORCH_CHECK(false, "Unsupported block size: ", block_size); \
+      break;                                                      \
+  }
+
 } // namespace vllm
 
 void paged_attention_v1_xpu(
@@ -870,5 +1324,8 @@ void paged_attention_v2_xpu(
     int block_size,
     int max_context_len,
     const c10::optional<torch::Tensor>& alibi_slopes) {
-  TORCH_CHECK(false, "paged_attention_v2 is unsupported on CPU.")
+  VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
+      query.scalar_type(), "paged_attention_xpu_v2_impl", [&] {
+        CALL_V2_LAUNCHER_BLOCK_SIZE(scalar_t);
+      });
 }
