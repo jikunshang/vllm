@@ -30,34 +30,6 @@ void silu_and_mul_kernel(
   }
 }
 
-template <typename scalar_t, typename scalar_sycl_t>
-void silu_and_mul_xpu_impl_(
-    int num_tokens,
-    int d,
-    const scalar_t* __restrict__ input, //
-    scalar_t* __restrict__ output) {
-  sycl::queue& q = vllm::xpu::vllmGetQueue();
-  sycl::buffer<scalar_sycl_t, 1> input_buf(
-      (scalar_sycl_t*)input, num_tokens * d * 2);
-  sycl::buffer<scalar_sycl_t, 1> output_buf(
-      (scalar_sycl_t*)output, num_tokens * d);
-  q.submit([&](auto& h) {
-    sycl::accessor input_acc(input_buf, h, sycl::read_only);
-    sycl::accessor output_acc(output_buf, h, sycl::read_write);
-
-    // each work item calculate 16 output result, trying to leverage SIMD lane
-    h.parallel_for(sycl::range<1>(num_tokens * d), [=](sycl::item<1> index) {
-      int i = index[0];
-      int token_idx = i / d;
-      int dim_idx = i % d;
-      const scalar_sycl_t x = input_acc[token_idx * d * 2 + dim_idx];
-      const scalar_sycl_t y = input_acc[token_idx * d * 2 + dim_idx + d];
-      output_acc[token_idx * d + dim_idx] = silu_xpu(x) * y;
-    });
-  });
-  q.wait();
-}
-
 template <typename scalar_t>
 void call_silu_and_mul_kernel(
     int num_tokens,

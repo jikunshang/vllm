@@ -132,7 +132,7 @@ if __name__ == '__main__':
         "--device",
         type=str,
         default="cuda",
-        choices=["cuda"],
+        choices=["cuda", "xpu"],
         help='device type for vLLM execution, supporting CUDA only currently.')
     args = parser.parse_args()
     main(args)

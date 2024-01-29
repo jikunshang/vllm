@@ -40,8 +40,8 @@ namespace vllm {
 // Q*K^T operation.
 template <int THREAD_GROUP_SIZE, typename Vec, int N>
 inline float qk_dot_(
-    const Vec (&q)[N],
-    const Vec (&k)[N],
+    const Vec* q,
+    const Vec* k,
     const sycl::nd_item<3>& item_ct1) {
   using A_vec = typename FloatVec<Vec>::Type;
   // Compute the parallel products for Q*K^T (treat vector lanes separately).
@@ -69,10 +69,10 @@ template <typename T, int THREAD_GROUP_SIZE>
 struct Qk_dot {
   template <typename Vec, int N>
   static inline float dot(
-      const Vec (&q)[N],
-      const Vec (&k)[N],
+      const Vec* q,
+      const Vec* k,
       const sycl::nd_item<3>& item_ct1) {
-    return qk_dot_<THREAD_GROUP_SIZE>(q, k, item_ct1);
+    return qk_dot_<THREAD_GROUP_SIZE, Vec, N>(q, k, item_ct1);
   }
 };
 
@@ -309,7 +309,6 @@ void paged_attention_kernel(
       const int token_idx = block_idx * BLOCK_SIZE + physical_block_offset;
 
       Q_Vec_t k_vecs[NUM_VECS_PER_THREAD];
-      Q_Vec_t q_vecs_new[NUM_VECS_PER_THREAD];
 
 #pragma unroll
       for (int j = 0; j < NUM_VECS_PER_THREAD; j++) {
@@ -322,7 +321,6 @@ void paged_attention_kernel(
         const int offset2 = (vec_idx * VEC_SIZE) % x;
         k_vecs[j] = *reinterpret_cast<const Q_Vec_t*>(
             k_ptr + offset1 * BLOCK_SIZE * x + offset2);
-        q_vecs_new[j] = q_vecs[thread_group_offset * NUM_VECS_PER_THREAD + j];
       }
 
       // Compute dot product.
@@ -332,7 +330,9 @@ void paged_attention_kernel(
       float qk = scale *
           Qk_dot<scalar_t, THREAD_GROUP_SIZE>::
               template dot<Q_Vec_t, NUM_VECS_PER_THREAD>(
-                     q_vecs_new, k_vecs, item_ct1);
+                     q_vecs + thread_group_offset * NUM_VECS_PER_THREAD,
+                     k_vecs,
+                     item_ct1);
       // Add the ALiBi bias if slopes are given.
       qk +=
           (alibi_slope != 0) ? alibi_slope * (token_idx - context_len + 1) : 0;
@@ -696,7 +696,7 @@ void paged_attention_v1_kernel(
         sycl::nd_range<3>(grid * block, block),                             \
         [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
           paged_attention_v1_kernel<                                        \
-              sycl_t,                                                            \
+              sycl_t,                                                       \
               Q_vec,                                                        \
               HEAD_SIZE,                                                    \
               BLOCK_SIZE,                                                   \
@@ -743,7 +743,7 @@ void paged_attention_xpu_v1_impl_launcher(
   int kv_head_stride = key_cache.stride(1);
 
   constexpr int THREAD_GROUP_SIZE = MAX(WARP_SIZE / BLOCK_SIZE, 1);
-  constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
+  constexpr int VEC_SIZE = 1; //MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
   using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
   using Q_vec = typename Vec<sycl_t, VEC_SIZE>::Type;
 
@@ -806,7 +806,7 @@ void paged_attention_xpu_v1_impl_launcher(
       TORCH_CHECK(false, "Unsupported head size: ", head_size);
       break;
   }
-  queue.wait();
+  // queue.wait();
 }
 
 #define CALL_KERNEL_LAUNCHER(T, BLOCK_SIZE)                  \
