@@ -150,18 +150,17 @@ class PagedAttention(nn.Module):
                     value = value.unflatten(0, (batch_size, seq_len))
 
                 if is_xpu():
+                    new_shape = (seq_len * batch_size + 8 - 1) & 0xFFFFFFF8
                     attn_mask = input_metadata.attn_bias.materialize(
-                        (1, seq_len * batch_size, seq_len * batch_size),
+                        (1, new_shape, new_shape),
                         dtype=query.dtype,
-                        device=query.device)
-
+                        device=query.device).contiguous()
+                    # print(attn_mask.shape)
                     out = torch.nn.functional.scaled_dot_product_attention(
-                        query.movedim(1,
-                                      query.dim() - 2),
-                        key.movedim(1,
-                                    query.dim() - 2),
-                        value.movedim(1,
-                                      value.dim() - 2), attn_mask,
+                        query.movedim(1, query.dim() - 2),
+                        key.movedim(1, query.dim() - 2),
+                        value.movedim(1, value.dim() - 2),
+                        attn_mask,
                         0.0).movedim(query.dim() - 2, 1).contiguous()
 
                 else:

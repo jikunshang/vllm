@@ -148,6 +148,9 @@ class ModelRunner:
                 slot_mapping[-1].append(slot)
 
         max_prompt_len = max(subquery_lens)
+        def align_to_8(val):
+            return (val+8-1) & 0xFFFFFFF8
+        max_prompt_len = align_to_8(max_prompt_len)
         input_tokens = self._make_tensor_with_pad(input_tokens,
                                                   max_prompt_len,
                                                   pad=0,
@@ -492,6 +495,9 @@ class ModelRunner:
         self.execute_model(seqs, kv_caches)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
+        if is_xpu():
+            torch.xpu.synchronize()
+            print("profile run done")
         return
 
     @torch.inference_mode()
