@@ -16,7 +16,6 @@ __inline__ T warpReduceSum(T val, const sycl::nd_item<3>& item_ct1) {
   for (int mask = 16; mask > 0; mask >>= 1)
     val += dpct::experimental::permute_sub_group_by_xor(
         0xffffffff, item_ct1.get_sub_group(), val, mask, 32);
-  // val += __shfl_xor_sync(0xffffffff, val, mask, 32);
   return val;
 }
 
@@ -97,7 +96,7 @@ void call_rms_norm_kernel(
     sycl::local_accessor<float, 1> shared_vals( sycl::range<1>(32), cgh);
     sycl::local_accessor<float, 1> s_variance( sycl::range<1>(1), cgh);
     cgh.parallel_for(
-        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] {
           rms_norm_kernel<sycl_t>(
               (sycl_t*)out_ptr,
               (const sycl_t*)input_ptr,
@@ -179,7 +178,7 @@ void call_fused_add_rms_norm_kernel(
     sycl::local_accessor<float, 1> shared_vals( sycl::range<1>(32), cgh);
     sycl::local_accessor<float, 1> s_variance( sycl::range<1>(1), cgh);
     cgh.parallel_for(
-        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
+        sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1)[[intel::reqd_sub_group_size(32)]] {
           fused_add_rms_norm_kernel<sycl_t>(
               (sycl_t*)input_ptr,
               (sycl_t*)residual_ptr,
