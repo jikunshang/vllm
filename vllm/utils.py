@@ -31,6 +31,13 @@ STR_DTYPE_TO_TORCH_DTYPE = {
     "fp8_e5m2": torch.uint8,
 }
 
+is_xpu_ = False
+try:
+    import intel_extension_for_pytorch as ipex
+    is_xpu_ = True
+except ImportError:
+    pass
+
 
 class Device(enum.Enum):
     GPU = enum.auto()
@@ -118,6 +125,10 @@ def is_hip() -> bool:
     return torch.version.hip is not None
 
 
+def is_xpu() -> bool:
+    return is_xpu_
+
+
 def get_max_shared_memory_bytes(gpu: int = 0) -> int:
     """Returns the maximum shared memory per thread block in bytes."""
     # NOTE: This import statement should be executed lazily since
@@ -134,6 +145,13 @@ def get_max_shared_memory_bytes(gpu: int = 0) -> int:
 def get_cpu_memory() -> int:
     """Returns the total CPU memory of the node in bytes."""
     return psutil.virtual_memory().total
+
+
+def get_total_xpu_memory(xpu: int = 0) -> int:
+    """Returns the total memory of the XPU in bytes."""
+    if is_xpu():
+        return torch.xpu.get_device_properties(xpu).total_memory
+    return 0
 
 
 def random_uuid() -> str:

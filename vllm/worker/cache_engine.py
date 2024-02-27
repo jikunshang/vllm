@@ -4,9 +4,9 @@ from typing import Dict, List, Tuple
 import torch
 
 from vllm._C import cache_ops
-from vllm.config import CacheConfig, ModelConfig, ParallelConfig
+from vllm.config import CacheConfig, DeviceConfig, ModelConfig, ParallelConfig
 from vllm.logger import init_logger
-from vllm.utils import in_wsl, STR_DTYPE_TO_TORCH_DTYPE
+from vllm.utils import in_wsl, STR_DTYPE_TO_TORCH_DTYPE, is_xpu
 
 logger = init_logger(__name__)
 
@@ -21,15 +21,13 @@ class CacheEngine:
     as swapping and copying.
     """
 
-    def __init__(
-        self,
-        cache_config: CacheConfig,
-        model_config: ModelConfig,
-        parallel_config: ParallelConfig,
-    ) -> None:
+    def __init__(self, cache_config: CacheConfig, model_config: ModelConfig,
+                 parallel_config: ParallelConfig,
+                 device_config: DeviceConfig) -> None:
         self.cache_config = cache_config
         self.model_config = model_config
         self.parallel_config = parallel_config
+        self.device_config = device_config
 
         self.head_size = model_config.get_head_size()
         self.num_layers = model_config.get_num_layers(parallel_config)
@@ -49,10 +47,17 @@ class CacheEngine:
         self.cpu_cache = self.allocate_cpu_cache()
 
         # Initialize the stream for caching operations.
-        self.cache_stream = torch.cuda.Stream()
-        assert self.cache_stream != torch.cuda.current_stream()
-        # Initialize the events for stream synchronization.
-        self.events = [torch.cuda.Event() for _ in range(self.num_layers)]
+        self.get_cache_events()
+
+    def get_cache_events(self):
+        if torch.cuda.is_available():
+            self.cache_stream = torch.cuda.Stream()
+            assert self.cache_stream != torch.cuda.current_stream()
+            # Initialize the events for stream synchronization.
+            self.events = [torch.cuda.Event() for _ in range(self.num_layers)]
+        elif is_xpu():
+            self.cache_stream = torch.xpu.Stream()
+            self.events = [torch.xpu.Event() for _ in range(self.num_layers)]
 
     def get_key_block_shape(self) -> Tuple[int, int, int, int]:
         element_size = torch.tensor([], dtype=self.dtype).element_size()
@@ -79,12 +84,12 @@ class CacheEngine:
             key_blocks = torch.empty(
                 size=(self.num_gpu_blocks, *key_block_shape),
                 dtype=self.dtype,
-                device="cuda",
+                device=self.device_config.device,
             )
             value_blocks = torch.empty(
                 size=(self.num_gpu_blocks, *value_block_shape),
                 dtype=self.dtype,
-                device="cuda",
+                device=self.device_config.device,
             )
             gpu_cache.append((key_blocks, value_blocks))
         return gpu_cache
@@ -93,7 +98,7 @@ class CacheEngine:
         cpu_cache: List[KVCache] = []
         key_block_shape = self.get_key_block_shape()
         value_block_shape = self.get_value_block_shape()
-        pin_memory = not in_wsl()
+        pin_memory = not in_wsl() and not is_xpu()
         if not pin_memory:
             # Pinning memory in WSL is not supported.
             # https://docs.nvidia.com/cuda/wsl-user-guide/index.html#known-limitations-for-linux-cuda-applications
@@ -121,7 +126,13 @@ class CacheEngine:
         dst: List[KVCache],
         src_to_dst: Dict[int, int],
     ) -> None:
-        with torch.cuda.stream(self.cache_stream):
+        if torch.cuda.is_available():
+            stream = torch.cuda.stream
+        elif is_xpu():
+            stream = torch.xpu.stream
+        else:
+            stream = None
+        with stream(self.cache_stream):
             for i in range(self.num_layers):
                 src_key_cache, src_value_cache = src[i]
                 dst_key_cache, dst_value_cache = dst[i]

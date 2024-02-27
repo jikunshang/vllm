@@ -268,9 +268,10 @@ class EngineArgs:
             "--device",
             type=str,
             default=EngineArgs.device,
-            choices=["cuda"],
+            choices=["cuda", "xpu"],
             help=('Device type for vLLM execution. '
-                  'Currently, only CUDA-compatible devices are supported.'))
+                  'Currently, only CUDA-compatible and xpu devices '
+                  'are supported.'))
         return parser
 
     @classmethod

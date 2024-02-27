@@ -19,7 +19,13 @@ from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.model_runner import ModelRunner
 from vllm.lora.request import LoRARequest
-from vllm.utils import is_hip
+from vllm.utils import is_hip, is_xpu, get_total_xpu_memory
+
+if is_xpu():
+    try:
+        import oneccl_bindings_for_pytorch
+    except ImportError:
+        pass
 
 
 class Worker:
@@ -87,17 +93,46 @@ class Worker:
             _check_if_gpu_supports_dtype(self.model_config.dtype)
             torch.cuda.empty_cache()
             self.init_gpu_memory = torch.cuda.mem_get_info()[0]
+        elif self.device_config.device.type == "xpu":
+            self.init_gpu_memory = get_total_xpu_memory()
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
         init_distributed_environment(self.parallel_config, self.rank,
-                                     cupy_port, self.distributed_init_method)
+                                     self.device_config, cupy_port,
+                                     self.distributed_init_method)
         # Initialize the model.
         set_random_seed(self.model_config.seed)
 
     def load_model(self):
         self.model_runner.load_model()
+
+    def empty_cache(self):
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif is_xpu():
+            torch.xpu.empty_cache()
+        else:
+            pass
+
+    def synchronize(self):
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elif is_xpu():
+            torch.xpu.synchronize()
+        else:
+            pass
+
+    def mem_get_info(self):
+        if torch.cuda.is_available():
+            return torch.cuda.mem_get_info()
+        elif is_xpu():
+            used_memory = torch.xpu.memory_allocated()
+            total_xpu_memory = get_total_xpu_memory()
+            return total_xpu_memory - used_memory, total_xpu_memory
+        else:
+            return 0, 0
 
     @torch.inference_mode()
     def profile_num_available_blocks(
@@ -117,7 +152,7 @@ class Worker:
         """
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
-        torch.cuda.empty_cache()
+        self.empty_cache()
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
@@ -125,8 +160,8 @@ class Worker:
 
         # Calculate the number of blocks that can be allocated with the
         # profiled peak memory.
-        torch.cuda.synchronize()
-        free_gpu_memory, total_gpu_memory = torch.cuda.mem_get_info()
+        self.synchronize()
+        free_gpu_memory, total_gpu_memory = self.mem_get_info()
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
         peak_memory = self.init_gpu_memory - free_gpu_memory
@@ -142,13 +177,14 @@ class Worker:
         if self.model_runner.lora_manager:
             self.model_runner.remove_all_loras()
         gc.collect()
-        torch.cuda.empty_cache()
+        self.empty_cache()
         return num_gpu_blocks, num_cpu_blocks
 
     def init_cache_engine(self, cache_config: CacheConfig) -> None:
         self.cache_config = cache_config
         self.cache_engine = CacheEngine(self.cache_config, self.model_config,
-                                        self.parallel_config)
+                                        self.parallel_config,
+                                        self.device_config)
         self.cache_events = self.cache_engine.events
         self.gpu_cache = self.cache_engine.gpu_cache
         self.model_runner.set_block_size(self.cache_engine.block_size)
@@ -237,6 +273,7 @@ class Worker:
 def init_distributed_environment(
     parallel_config: ParallelConfig,
     rank: int,
+    device_config: DeviceConfig,
     cupy_port: Optional[int],
     distributed_init_method: Optional[str] = None,
 ) -> None:
@@ -248,13 +285,16 @@ def init_distributed_environment(
                 "torch.distributed is already initialized but the torch world "
                 "size does not match parallel_config.world_size "
                 f"({torch_world_size} vs. {parallel_config.world_size}).")
-    elif not distributed_init_method:
+    elif not distributed_init_method and not is_xpu():
         raise ValueError(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
+        backend = "nccl"
+        if device_config.device.type == "xpu":
+            backend = "ccl"
         torch.distributed.init_process_group(
-            backend="nccl",
+            backend=backend,
             world_size=parallel_config.world_size,
             rank=rank,
             init_method=distributed_init_method,
@@ -280,7 +320,8 @@ def init_distributed_environment(
         )
 
     # A small all_reduce for warmup.
-    torch.distributed.all_reduce(torch.zeros(1).cuda())
+    if device_config.device.type == "cuda":
+        torch.distributed.all_reduce(torch.zeros(1).cuda())
     if cupy_utils.is_initialized():
         cupy_utils.all_reduce(torch.zeros(1).cuda())
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,

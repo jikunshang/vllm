@@ -407,7 +407,8 @@ def _sample(
                 "generators": sampling_metadata.generators,
             }
             multinomial_samples[sampling_type] = _multinomial(
-                probs[sample_indices], max_best_of, **seeded_args)
+                probs[sample_indices.to(torch.int64)], max_best_of,
+                **seeded_args)
         elif sampling_type == SamplingType.BEAM:
             beam_search_logprobs = logprobs[sample_indices]
         else:
