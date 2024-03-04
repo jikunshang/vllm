@@ -17,6 +17,7 @@ logger = init_logger(__name__)
 DEVICE_TO_WORKER_MODULE_MAP = {
     "cuda": "vllm.worker.worker",
     "neuron": "vllm.worker.neuron_worker",
+    "cpu": "vllm.worker.cpu_worker",
 }
 
 

@@ -21,6 +21,7 @@ from vllm.sequence import SamplerOutput, SequenceData, SequenceGroupMetadata
 from vllm.lora.worker_manager import LRUCacheWorkerLoRAManager
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.request import LoRARequest
+from vllm.utils import measure_cuda_memory
 from vllm.device_utils import device_synchronize, could_pin_memory
 
 logger = init_logger(__name__)

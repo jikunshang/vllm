@@ -45,8 +45,6 @@ endif()
 
 message(STATUS "CPU extension compile flags: ${CXX_COMPILE_FLAGS}")
 
-message(FATAL_ERROR "vLLM CPU backend is unavailable")
-
 #
 # Define extension targets
 #

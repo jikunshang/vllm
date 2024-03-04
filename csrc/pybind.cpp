@@ -56,12 +56,15 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     &rotary_embedding,
     "Apply GPT-NeoX or GPT-J style rotary embedding to query and key");
 
+#ifndef VLLM_CPU_EXTENSION
   ops.def(
     "batched_rotary_embedding",
     &batched_rotary_embedding,
     "Apply GPT-NeoX or GPT-J style rotary embedding to query and key (supports multiple loras)");
+#endif
 
 // Quantization ops
+#ifndef VLLM_CPU_EXTENSION
 #ifndef USE_ROCM
   ops.def("awq_gemm", &awq_gemm, "Quantized GEMM for AWQ");
   ops.def("marlin_gemm", &marlin_gemm, "Marlin Optimized Quantized GEMM for GPTQ");
@@ -75,6 +78,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     "moe_align_block_size",
     &moe_align_block_size,
     "Aligning the number of tokens to be processed by each expert such that it is divisible by the block size.");
+#endif
 
   // Cache ops
   pybind11::module cache_ops = m.def_submodule("cache_ops", "vLLM cache ops");
@@ -90,12 +94,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     "reshape_and_cache",
     &reshape_and_cache,
     "Reshape the key and value tensors and cache them");
+
+#ifndef VLLM_CPU_EXTENSION
   cache_ops.def(
     "convert_fp8_e5m2",
     &convert_fp8_e5m2,
     "Convert the key and value cache to fp8_e5m2 data type");
+#endif
 
   // Cuda utils
+#ifndef VLLM_CPU_EXTENSION
   pybind11::module cuda_utils = m.def_submodule("cuda_utils", "vLLM cuda utils");
   cuda_utils.def(
     "get_device_attribute",
@@ -122,5 +130,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   custom_ar.def("register_graph_buffers", &register_graph_buffers,
                 "register_graph_buffers");
 #endif
-
+#endif
 }

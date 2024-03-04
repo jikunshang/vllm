@@ -120,6 +120,10 @@ class LRUCache:
 def is_hip() -> bool:
     return torch.version.hip is not None
 
+def is_cpu() -> bool:
+    from importlib.metadata import version 
+    is_cpu_flag = "cpu" in version("vllm")
+    return is_cpu_flag
 
 @cache
 def is_neuron() -> bool:
@@ -344,6 +348,8 @@ class measure_cuda_memory:
 
     def current_memory_usage(self) -> float:
         # Return the memory usage in bytes.
+        if is_cpu():
+            return 0 
         torch.cuda.reset_peak_memory_stats(self.device)
         mem = torch.cuda.max_memory_allocated(self.device)
         return mem
