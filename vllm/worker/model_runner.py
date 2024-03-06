@@ -203,6 +203,9 @@ class ModelRunner:
                 slot_mapping[-1].append(slot)
 
         max_prompt_len = max(subquery_lens)
+        def align_to_8(len):
+            return (len+8-1) & (~0b111)
+        max_prompt_len = align_to_8(max_prompt_len)
         input_tokens = _make_tensor_with_pad(input_tokens,
                                              max_prompt_len,
                                              pad=0,

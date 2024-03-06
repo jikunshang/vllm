@@ -4,7 +4,7 @@ from typing import Optional, List, Tuple, TYPE_CHECKING
 
 from vllm.config import ParallelConfig
 from vllm.logger import init_logger
-from vllm.utils import is_hip, set_cuda_visible_devices, get_ip
+from vllm.utils import is_hip, is_xpu, set_cuda_visible_devices, get_ip
 
 logger = init_logger(__name__)
 
@@ -93,7 +93,7 @@ def initialize_cluster(
                 "Ray is not installed. Please install Ray to use distributed "
                 "serving.")
         # Connect to a ray cluster.
-        if is_hip():
+        if is_hip() or is_xpu():
             ray.init(address=ray_address,
                      ignore_reinit_error=True,
                      num_gpus=parallel_config.world_size)
