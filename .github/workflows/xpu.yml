@@ -13,21 +13,21 @@ jobs:
     - uses: conda-incubator/setup-miniconda@v2
       with:
         miniconda-version: "latest"
+        python-version: "3.10"
         channels: bioconda, conda-forge, defaults
         use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
         auto-update-conda: true
         auto-activate-base: false
         activate-environment: vllm-xpu-ci
-        python-version: "3.10"
     - name: setup conda
       shell: bash -l {0}
       run: |
         conda info
         conda list
         # conda create -y --name vllm-xpu-ci python=3.10
-        # conda activate vllm-xpu-ci || true
-        # pip install -r requirements-xpu.txt
+        conda activate vllm-xpu-ci || true
+        pip install -r requirements-xpu.txt
     - name: build vllm
       run: |
-        pip install -r requirements-xpu.txt
+        # pip install -r requirements-xpu.txt
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
