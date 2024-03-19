@@ -10,9 +10,17 @@ jobs:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v2
-    - name: use conda
+    - uses: conda-incubator/setup-miniconda@v2
+      with:
+        miniconda-version: "latest"
+        channels: bioconda, conda-forge, defaults
+        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
+        auto-update-conda: true
+        auto-activate-base: true    
+    - name: setup conda
       run: |
-        conda activate vllm-xpu-ci
+        conda create -y --name vllm-xpu-ci python=3.10
+        conda activate vllm-xpu-ci || true
         pip install -r requirements-xpu.txt
     - name: build vllm
       run: |
