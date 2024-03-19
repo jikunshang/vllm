@@ -27,7 +27,4 @@ jobs:
         # conda create -y --name vllm-xpu-ci python=3.10
         conda activate vllm-xpu-ci || true
         pip install -r requirements-xpu.txt
-    - name: build vllm
-      run: |
-        # pip install -r requirements-xpu.txt
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
