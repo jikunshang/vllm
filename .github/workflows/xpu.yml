@@ -1,0 +1,19 @@
+name: xpu_ci
+
+on: 
+  pull_request:
+    branches:
+      - sycl_xpu
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+    - uses: actions/checkout@v2
+    - name: use conda
+      run: |
+        conda activate vllm-xpu-ci
+        pip install -r requirements-xpu.txt
+    - name: build vllm
+      run: |
+        VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
