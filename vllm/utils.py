@@ -134,6 +134,7 @@ def is_xpu() -> bool:
     try:
         import intel_extension_for_pytorch  # noqa: F401
     except ImportError:
+        logger.warning("can not import ipex, please check whether installed")
         return False
     return hasattr(torch, "xpu") and torch.xpu.is_available()
 
