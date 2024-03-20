@@ -19,6 +19,9 @@ jobs:
         auto-update-conda: true
         auto-activate-base: false
         activate-environment: vllm-xpu-ci
+    - name: check sycl env
+      run: |
+        sycl-ls
     - name: setup conda
       shell: bash -l {0}
       run: |
