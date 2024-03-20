@@ -4,53 +4,42 @@ on:
   pull_request:
     branches:
       - sycl_xpu
+env:
+  ONEAPI_DEVICE_SELECTOR: "level_zero:7"
 
 jobs:
   build:
     runs-on: self-hosted
     steps:
     - uses: actions/checkout@v2
-    - uses: conda-incubator/setup-miniconda@v2
+    - name: Set up Python
+      # This is the version of the action for setting up Python, not the Python version.
+      uses: actions/setup-python@v4
       with:
-        miniconda-version: "latest"
-        python-version: "3.10"
-        channels: bioconda, conda-forge, defaults
-        use-only-tar-bz2: true  # IMPORTANT: This needs to be set for caching to work properly!
-        auto-update-conda: true
-        auto-activate-base: false
-        activate-environment: vllm-xpu-ci
+        # Semantic version range syntax or exact version of a Python version
+        python-version: '3.10'
+        # Optional - x64 or x86 architecture, defaults to x64
+        architecture: 'x64'
+        cache: 'pip' 
     - name: check sycl env
       run: |
         sycl-ls
-    - name: setup conda
-      shell: bash -l {0}
+    - name: setup env
       run: |
-        conda info
-        conda list
-        # conda create -y --name vllm-xpu-ci python=3.10
-        conda activate vllm-xpu-ci || true
         pip install -r requirements-xpu.txt
+        pip install -r requirements-dev.txt
     - name: build
-      shell: bash -l {0}
       run: |
-        conda activate vllm-xpu-ci || true
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
 
     - name: offline_inference test
-      shell: bash -l {0}
       run: |
-        conda activate vllm-xpu-ci || true
         python examples/offline_inference.py 
     
     - name: benchmark_throughput test
-      shell: bash -l {0}
       run: |
-        conda activate vllm-xpu-ci || true
         python benchmarks/benchmark_throughput.py --backend=vllm --dataset=/home/sdp/sharegpt_v3_unfiltered_cleaned_split/ShareGPT_V3_unfiltered_cleaned_split.json --model=mistralai/Mistral-7B-Instruct-v0.1 --num-prompts=1000 --trust-remote-code --device=xpu  --dtype=float16 --enforce-eager --gpu-memory-utilization=0.8
     
     - name: kernel test
-      shell: bash -l {0}
       run: |
-        conda activate vllm-xpu-ci || true
-        pip install -r requirements-dev.txt
         pytest -v -s kernels        
