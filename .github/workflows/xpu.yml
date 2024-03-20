@@ -40,7 +40,7 @@ jobs:
       shell: bash -l {0}
       run: |
         conda activate vllm-xpu-ci || true
-        python example/offline_inference.py 
+        python examples/offline_inference.py 
     
     - name: benchmark_throughput test
       shell: bash -l {0}
