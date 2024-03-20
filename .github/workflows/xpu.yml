@@ -42,4 +42,4 @@ jobs:
     
     - name: kernel test
       run: |
-        pytest -v -s kernels        
+        pytest -v -s tests/kernels

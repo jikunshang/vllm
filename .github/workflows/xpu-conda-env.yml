@@ -1,8 +1,0 @@
-name: vllm-xpu-ci
-channels:
-  - conda-forge
-  - defaults
-dependencies:
-  - pip
-  - pip:
-      - -r requirements-xpu.txt
