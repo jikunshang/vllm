@@ -28,6 +28,7 @@ jobs:
       run: |
         pip install -r requirements-xpu.txt
         pip install -r requirements-dev.txt
+        pip install xformers --no-dpes
     - name: build
       run: |
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
