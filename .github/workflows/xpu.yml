@@ -35,12 +35,6 @@ jobs:
       run: |
         conda activate vllm-xpu-ci || true
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e .
-    
-    - name: kernel test
-      shell: bash -l {0}
-      run: |
-        conda activate vllm-xpu-ci || true
-        pytest -v -s kernels
 
     - name: offline_inference test
       shell: bash -l {0}
@@ -53,3 +47,10 @@ jobs:
       run: |
         conda activate vllm-xpu-ci || true
         python benchmarks/benchmark_throughput.py --backend=vllm --dataset=/home/sdp/sharegpt_v3_unfiltered_cleaned_split/ShareGPT_V3_unfiltered_cleaned_split.json --model=mistralai/Mistral-7B-Instruct-v0.1 --num-prompts=1000 --trust-remote-code --device=xpu  --dtype=float16 --enforce-eager  
+    
+    - name: kernel test
+      shell: bash -l {0}
+      run: |
+        conda activate vllm-xpu-ci || true
+        pip install -r requirements-dev.txt
+        pytest -v -s kernels        
