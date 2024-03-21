@@ -21,7 +21,7 @@ jobs:
         cache: 'pip' 
     - name: setup env
       run: |
-        pip config --user set global.extra-index-url https://download.pytorch.org/whl/cpu
+        pip config --user set global.extra-index-url https://download.pytorch.org/whl/cpu --root-user-action=ignore
         pip install -r requirements-build.txt --root-user-action=ignore
         pip install -r requirements-dev.txt --root-user-action=ignore
         pip install -r requirements-cpu.txt --root-user-action=ignore
