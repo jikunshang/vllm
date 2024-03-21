@@ -29,6 +29,7 @@ jobs:
         pip install -r requirements-xpu.txt --root-user-action=ignore
         pip install -r requirements-dev.txt --root-user-action=ignore
         pip install xformers --no-deps --root-user-action=ignore
+        pip install outlines --no-deps --root-user-action=ignore
     - name: build
       run: |
         VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e . --root-user-action=ignore
