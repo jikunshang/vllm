@@ -1,0 +1,47 @@
+name: xpu_ci
+
+on: 
+  pull_request:
+    branches:
+      - sycl_xpu
+env:
+  ONEAPI_DEVICE_SELECTOR: "level_zero:7"
+
+jobs:
+  build:
+    runs-on: self-hosted-xpu
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up Python
+      # This is the version of the action for setting up Python, not the Python version.
+      uses: actions/setup-python@v4
+      with:
+        # Semantic version range syntax or exact version of a Python version
+        python-version: '3.10'
+        # Optional - x64 or x86 architecture, defaults to x64
+        architecture: 'x64'
+        cache: 'pip' 
+    - name: check sycl env
+      run: |
+        sycl-ls
+    - name: setup env
+      run: |
+        pip install -r requirements-xpu.txt --root-user-action=ignore
+        pip install -r requirements-dev.txt --root-user-action=ignore
+        pip install xformers --no-deps --root-user-action=ignore
+        pip install outlines --no-deps --root-user-action=ignore
+    - name: build
+      run: |
+        VLLM_BUILD_XPU_OPS=1 pip install --no-build-isolation -v -e . --root-user-action=ignore
+
+    - name: offline_inference test
+      run: |
+        python examples/offline_inference.py 
+    
+    - name: benchmark_throughput test
+      run: |
+        python benchmarks/benchmark_throughput.py --backend=vllm --dataset=/root/ShareGPT_V3_unfiltered_cleaned_split.json --model=mistralai/Mistral-7B-Instruct-v0.1 --num-prompts=1000 --trust-remote-code --device=xpu  --dtype=float16 --enforce-eager --gpu-memory-utilization=0.8
+    
+    - name: kernel test
+      run: |
+        pytest -v -s tests/kernels
