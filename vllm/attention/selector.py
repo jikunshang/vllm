@@ -5,7 +5,7 @@ import torch
 
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.logger import init_logger
-from vllm.utils import is_cpu, is_hip
+from vllm.utils import is_cpu, is_hip, is_xpu
 
 logger = init_logger(__name__)
 
@@ -17,7 +17,7 @@ def get_attn_backend(dtype: torch.dtype) -> Type[AttentionBackend]:
         from vllm.attention.backends.flash_attn import (  # noqa: F401
             FlashAttentionBackend)
         return FlashAttentionBackend
-    elif is_cpu():
+    elif is_cpu() or is_xpu():
         logger.info("Using Torch SDPA backend.")
         from vllm.attention.backends.torch_sdpa import TorchSDPABackend
         return TorchSDPABackend
@@ -33,7 +33,7 @@ def _can_use_flash_attn(dtype: torch.dtype) -> bool:
         # AMD GPUs.
         logger.info("Cannot use FlashAttention backend for AMD GPUs.")
         return False
-    if is_cpu():
+    if is_cpu() or is_xpu():
         return False
     if torch.cuda.get_device_capability()[0] < 8:
         # Volta and Turing NVIDIA GPUs.

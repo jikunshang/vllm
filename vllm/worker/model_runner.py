@@ -25,7 +25,7 @@ from vllm.sequence import (MultiModalData, SamplerOutput, SequenceData,
                            SequenceGroupMetadata)
 from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, is_hip,
                         is_pin_memory_available, make_tensor_with_pad,
-                        maybe_expand_dim)
+                        maybe_expand_dim, device_sync)
 
 logger = init_logger(__name__)
 
@@ -759,7 +759,7 @@ class ModelRunner:
         num_layers = self.model_config.get_num_layers(self.parallel_config)
         kv_caches = [None] * num_layers
         self.execute_model(seqs, kv_caches)
-        torch.cuda.synchronize()
+        device_sync()
         return
 
     def remove_all_loras(self) -> bool:
