@@ -23,7 +23,14 @@ assert sys.platform.startswith(
     "linux"), "vLLM only supports Linux platform (including WSL)."
 
 MAIN_CUDA_VERSION = "12.1"
+BUILD_XPU_OPS = os.getenv('VLLM_BUILD_XPU_OPS', "0") == "1"
 
+
+def _is_xpu() -> bool:
+    return BUILD_XPU_OPS
+
+if _is_xpu():
+    import intel_extension_for_pytorch
 
 def is_sccache_available() -> bool:
     return which("sccache") is not None
@@ -118,6 +125,8 @@ class cmake_build_ext(build_ext):
         ]
 
         verbose = bool(int(os.getenv('VERBOSE', '0')))
+        if _is_xpu():
+            cmake_args += ['-DVLLM_BUILD_XPU_OPS=ON']
         if verbose:
             cmake_args += ['-DCMAKE_VERBOSE_MAKEFILE=ON']
 
@@ -300,6 +309,9 @@ def get_vllm_version() -> str:
         if hipcc_version != MAIN_CUDA_VERSION:
             rocm_version_str = hipcc_version.replace(".", "")[:3]
             version += f"+rocm{rocm_version_str}"
+    elif _is_xpu():
+        xpu_version = "0.0.1"
+        version += f"+xpu{xpu_version}"
     elif _is_neuron():
         # Get the Neuron version
         neuron_version = str(get_neuronxcc_version())
@@ -354,6 +366,8 @@ def get_requirements() -> List[str]:
         requirements = _read_requirements("requirements-neuron.txt")
     elif _is_cpu():
         requirements = _read_requirements("requirements-cpu.txt")
+    elif _is_xpu():
+        requirements = _read_requirements("requirements-xpu.txt")
     else:
         raise ValueError(
             "Unsupported platform, please use CUDA, ROCm, Neuron, or CPU.")
