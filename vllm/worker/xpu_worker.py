@@ -153,6 +153,7 @@ class Worker(Worker):
     @staticmethod
     def init_distributed_environment(
         parallel_config: ParallelConfig,
+        local_rank: int,
         rank: int,
         distributed_init_method: Optional[str] = None,
     ) -> None:
