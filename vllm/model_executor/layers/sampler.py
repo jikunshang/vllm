@@ -384,7 +384,7 @@ def _sample_with_torch(
                 probs[sample_indices.long()], max_best_of_in_batch,
                 **seeded_args)
         elif sampling_type == SamplingType.BEAM:
-            beam_search_logprobs = logprobs[sample_indices]
+            beam_search_logprobs = logprobs[sample_indices.long()]
         else:
             raise ValueError(f"Unsupported sampling type: {sampling_type}")
 

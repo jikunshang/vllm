@@ -125,6 +125,14 @@ def is_neuron() -> bool:
         transformers_neuronx = None
     return transformers_neuronx is not None
 
+@lru_cache(maxsize=None)
+def is_xpu() -> bool:
+    try:
+        import intel_extension_for_pytorch  # noqa: F401
+    except ImportError:
+        return False
+    return hasattr(torch, "xpu") and torch.xpu.is_available()
+
 
 @lru_cache(maxsize=None)
 def get_max_shared_memory_bytes(gpu: int = 0) -> int:
@@ -359,10 +367,18 @@ def is_pin_memory_available() -> bool:
         print_warning_once("Using 'pin_memory=False' as WSL is detected. "
                            "This may slow down the performance.")
         return False
+    elif is_xpu():
+        return False
     elif is_neuron():
         print_warning_once("Pin memory is not supported on Neuron.")
         return False
     return True
+
+def device_sync():
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    elif is_xpu():
+        torch.xpu.synchronize()
 
 
 class CudaMemoryProfiler:
@@ -372,8 +388,12 @@ class CudaMemoryProfiler:
 
     def current_memory_usage(self) -> float:
         # Return the memory usage in bytes.
-        torch.cuda.reset_peak_memory_stats(self.device)
-        mem = torch.cuda.max_memory_allocated(self.device)
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
+            mem = torch.cuda.max_memory_allocated(self.device)
+        if torch.xpu.is_available():
+            torch.xpu.reset_peak_memory_stats(self.device)
+            mem = torch.xpu.max_memory_allocated(self.device)
         return mem
 
     def __enter__(self):
