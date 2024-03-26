@@ -17,6 +17,7 @@ from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import MultiModalData
 from vllm.usage.usage_lib import UsageContext
+from vllm.utils import is_xpu
 
 logger = init_logger(__name__)
 ENGINE_ITERATION_TIMEOUT_S = int(
@@ -333,6 +334,12 @@ class AsyncLLMEngine:
         if engine_config.device_config.device_type == "neuron":
             raise NotImplementedError("Neuron is not supported for "
                                       "async engine yet.")
+        elif is_xpu():
+            if engine_config.parallel_config.worker_use_ray or engine_args.engine_use_ray:
+                logger.warning("not support ray yet")
+            else:
+                from vllm.executor.xpu_executor import XPUExecutorAsync
+                executor_class = XPUExecutorAsync
         elif (engine_config.parallel_config.worker_use_ray
               or engine_args.engine_use_ray):
             initialize_ray_cluster(engine_config.parallel_config)

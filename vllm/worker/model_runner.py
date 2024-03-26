@@ -25,7 +25,7 @@ from vllm.sequence import (MultiModalData, SamplerOutput, SequenceData,
                            SequenceGroupMetadata)
 from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, is_hip,
                         is_pin_memory_available, make_tensor_with_pad,
-                        maybe_expand_dim, device_sync)
+                        maybe_expand_dim, device_sync, is_xpu)
 
 logger = init_logger(__name__)
 
@@ -266,6 +266,13 @@ class ModelRunner:
                 block_offset = i % self.block_size
                 slot = block_number * self.block_size + block_offset
                 slot_mapping.append(slot)
+        if is_xpu(): # padding to 8 bytes for the last prompt
+            padding_num = 8 - len(input_tokens) % 8
+            if padding_num != 8:
+                input_tokens.extend([0] * padding_num)
+                input_positions.extend([0] * padding_num)
+                slot_mapping.extend([_PAD_SLOT_ID] * padding_num)
+                prompt_lens[-1] += padding_num
 
         max_subquery_len = max(subquery_lens)
         max_prompt_len = max(prompt_lens)

@@ -1,7 +1,7 @@
-""" Attention layer with torch scaled_dot_product_attention
-    and PagedAttention."""
+"""Attention layer with torch scaled_dot_product_attention and PagedAttention."""
+import importlib
+from typing import List, Optional, Tuple, Type, Dict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Type
 
 import torch
 from torch.nn.functional import scaled_dot_product_attention
@@ -74,7 +74,7 @@ class TorchSDPAMetadata(AttentionMetadata, PagedAttentionMetadata):
         # when alibi slopes is used. It is because of the limitation
         # from xformer API.
         # will not appear in the __repr__ and __init__
-        self.attn_bias: Optional[List[torch.Tensor]] = None
+        self.attn_bias: Optional[torch.Tensor] = None
 
 
 class TorchSDPABackendImpl(AttentionImpl):
@@ -145,7 +145,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                                                 kv_scale)
 
         if attn_metadata.is_prompt:
-            if (kv_cache is None or attn_metadata.block_tables.numel() == 0):
+            if kv_cache is None or attn_metadata.block_tables.numel() == 0:
                 if self.num_kv_heads != self.num_heads:
                     key = key.repeat_interleave(self.num_queries_per_kv, dim=1)
                     value = value.repeat_interleave(self.num_queries_per_kv,
