@@ -190,8 +190,3 @@ class Worker(Worker):
         ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                           parallel_config.pipeline_parallel_size)
 
-
-
-
-
-

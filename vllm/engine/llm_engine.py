@@ -136,9 +136,14 @@ class LLMEngine:
         if device_config.device_type == "neuron":
             from vllm.executor.neuron_executor import NeuronExecutor
             executor_class = NeuronExecutor
-        if device_config.device_type == "xpu":
-            from vllm.executor.xpu_executor import XPUExecutor
-            executor_class = XPUExecutor            
+        elif device_config.device_type == "xpu":
+            if parallel_config.worker_use_ray:
+                initialize_ray_cluster(parallel_config)
+                from vllm.executor.ray_xpu_executor import RayXPUExecutor
+                executor_class = RayXPUExecutor
+            else:
+                from vllm.executor.xpu_executor import XPUExecutor
+                executor_class = XPUExecutor            
         elif parallel_config.worker_use_ray:
             initialize_ray_cluster(parallel_config)
             from vllm.executor.ray_gpu_executor import RayGPUExecutor

@@ -122,28 +122,28 @@ class XPUExecutor(ExecutorBase):
         return self.driver_worker.list_loras()
 
     def check_health(self) -> None:
-        # GPUExecutor will always be healthy as long as
+        # XPUExecutor will always be healthy as long as
         # it's running.
         return
 
 
-# class GPUExecutorAsync(GPUExecutor, ExecutorAsyncBase):
+class XPUExecutorAsync(XPUExecutor, ExecutorAsyncBase):
 
-    # async def execute_model_async(
-    #     self,
-    #     seq_group_metadata_list: List[SequenceGroupMetadata],
-    #     blocks_to_swap_in: Dict[int, int],
-    #     blocks_to_swap_out: Dict[int, int],
-    #     blocks_to_copy: Dict[int, List[int]],
-    # ) -> SamplerOutput:
-    #     output = await make_async(self.driver_worker.execute_model)(
-    #         seq_group_metadata_list=seq_group_metadata_list,
-    #         blocks_to_swap_in=blocks_to_swap_in,
-    #         blocks_to_swap_out=blocks_to_swap_out,
-    #         blocks_to_copy=blocks_to_copy)
-    #     return output
+    async def execute_model_async(
+        self,
+        seq_group_metadata_list: List[SequenceGroupMetadata],
+        blocks_to_swap_in: Dict[int, int],
+        blocks_to_swap_out: Dict[int, int],
+        blocks_to_copy: Dict[int, List[int]],
+    ) -> SamplerOutput:
+        output = await make_async(self.driver_worker.execute_model)(
+            seq_group_metadata_list=seq_group_metadata_list,
+            blocks_to_swap_in=blocks_to_swap_in,
+            blocks_to_swap_out=blocks_to_swap_out,
+            blocks_to_copy=blocks_to_copy)
+        return output
 
-    # async def check_health_async(self) -> None:
-    #     # GPUExecutor will always be healthy as long as
-    #     # it's running.
-    #     return
+    async def check_health_async(self) -> None:
+        # XPUExecutor will always be healthy as long as
+        # it's running.
+        return
