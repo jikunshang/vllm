@@ -155,10 +155,12 @@ class TorchSDPABackendImpl(AttentionImpl):
                         att_masks, attn_metadata.prompt_lens,
                         attn_metadata.num_prompt_tokens,
                         query.dtype)  # type: ignore
-
-                query = query.movedim(0, query.dim() - 2)
-                key = key.movedim(0, key.dim() - 2)
-                value = value.movedim(0, value.dim() - 2)
+                query = query.unsqueeze(0)
+                key = key.unsqueeze(0)
+                value = value.unsqueeze(0)
+                query = query.movedim(1, query.dim() - 2)
+                key = key.movedim(1, key.dim() - 2)
+                value = value.movedim(1, value.dim() - 2)
 
                 out = torch.nn.functional.scaled_dot_product_attention(
                     query,
@@ -167,7 +169,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                     attn_mask=attn_metadata.attn_bias.to(query.device),
                     dropout_p=0.0,
                     is_causal=False,
-                    scale=self.scale).movedim(query.dim() - 2, 0).contiguous()
+                    scale=self.scale).movedim(query.dim() - 2, 1).contiguous()
                 output = out.view_as(query).to(query.dtype)
             else:
                 # prefix-enabled attention
@@ -240,7 +242,11 @@ def _make_alibi_bias(
             dtype=dtype,
         )[:, :, :prompt_len].copy_(bias)
         bias.mul_(alibi_slopes[:, None, None])
-        attn_biases.append(bias.to(dtype))
+        inf_mask = torch.empty(
+            (1, prompt_len, prompt_len),
+            dtype=bias.dtype,
+            device=alibi_slopes.device,).fill_(-torch.inf).triu_(diagonal=1)        
+        attn_biases.append((bias + inf_mask).to(dtype))
 
     return attn_biases
 

@@ -46,7 +46,18 @@ class Worker(Worker):
         kv_cache_dtype: Optional[str] = "auto",
         is_driver_worker: bool = False,
     ) -> None:
+        import os 
+        print(os.environ)
+        import intel_extension_for_pytorch as ipex
+        ipex.xpu.lazy_init._lazy_init()
+        print(f"initialized: {ipex.xpu.lazy_init._initialized}")
+        import subprocess
+
+        p = subprocess.Popen('sycl-ls', shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for line in p.stdout.readlines():
+            print(line)
         assert device_config.device_type == "xpu"
+        assert is_xpu()
         model_config = Worker._verify_and_get_model_config(model_config)
         super().__init__(
             model_config=model_config,
