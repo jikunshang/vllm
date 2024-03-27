@@ -268,7 +268,8 @@ def _make_alibi_bias(
         bias.mul_(alibi_slopes[:, None, None])
         inf_mask = torch.empty(
             (1, prompt_len, prompt_len),
-            dtype=bias.dtype).fill_(-torch.inf).triu_(diagonal=1)
+            dtype=bias.dtype,
+            device=alibi_slopes.device,).fill_(-torch.inf).triu_(diagonal=1)        
         attn_biases.append((bias + inf_mask).to(dtype))
 
     return attn_biases
