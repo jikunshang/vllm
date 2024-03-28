@@ -74,7 +74,7 @@ class TorchSDPAMetadata(AttentionMetadata, PagedAttentionMetadata):
         # when alibi slopes is used. It is because of the limitation
         # from xformer API.
         # will not appear in the __repr__ and __init__
-        self.attn_bias: Optional[torch.Tensor] = None
+        self.attn_bias: Optional[List[torch.Tensor]] = None
 
 
 class TorchSDPABackendImpl(AttentionImpl):
@@ -148,7 +148,6 @@ class TorchSDPABackendImpl(AttentionImpl):
                     key = key.repeat_interleave(self.num_queries_per_kv, dim=1)
                     value = value.repeat_interleave(self.num_queries_per_kv,
                                                     dim=1)
-
                 if attn_metadata.attn_bias is None:
                     if self.alibi_slopes is not None:
                         att_masks = _make_alibi_bias(
@@ -159,7 +158,11 @@ class TorchSDPABackendImpl(AttentionImpl):
                             attn_metadata.prompt_lens, self.sliding_window,
                             query.dtype)  # type: ignore
                     else:
-                        att_masks = [None] * len(attn_metadata.prompt_lens)
+                        if self.fuse_batch:
+                            att_masks = _make_sliding_window_bias(
+                            attn_metadata.prompt_lens, None, dtype=query.dtype)
+                        else:
+                            att_masks = [None] * len(attn_metadata.prompt_lens)
                     attn_metadata.attn_bias = att_masks
 
                 query = query.unsqueeze(0)
