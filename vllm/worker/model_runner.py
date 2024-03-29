@@ -217,6 +217,8 @@ class ModelRunner:
             # actual prompt lens
             context_lens.append(computed_len)
             subquery_lens.append(prompt_len - computed_len)
+            # if is_xpu():
+            #     subquery_lens[-1] -= padding_num
 
             input_tokens.extend(prompt_tokens)
             # NOTE(woosuk): Here we assume that the first token in the prompt
@@ -266,13 +268,15 @@ class ModelRunner:
                 block_offset = i % self.block_size
                 slot = block_number * self.block_size + block_offset
                 slot_mapping.append(slot)
+            # if is_xpu():
+            #     for i in range(-padding_num, 0):
+            #         slot_mapping[i] = _PAD_SLOT_ID
         if is_xpu(): # padding to 8 bytes for the last prompt
-            padding_num = 8 - len(input_tokens) % 8
-            if padding_num != 8:
-                input_tokens.extend([0] * padding_num)
-                input_positions.extend([0] * padding_num)
-                slot_mapping.extend([_PAD_SLOT_ID] * padding_num)
-                prompt_lens[-1] += padding_num
+            padding_num = (8 - len(input_tokens) % 8) % 8
+            input_tokens.extend([0] * padding_num)
+            input_positions.extend([0] * padding_num)
+            slot_mapping.extend([_PAD_SLOT_ID] * padding_num)
+            prompt_lens[-1] += padding_num
 
         max_subquery_len = max(subquery_lens)
         max_prompt_len = max(prompt_lens)
