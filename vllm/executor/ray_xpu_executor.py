@@ -5,15 +5,15 @@ import os
 import pickle
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from vllm.config import (CacheConfig, DeviceConfig, ModelConfig,
-                         ParallelConfig, SchedulerConfig, LoRAConfig)
+from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
+                         ParallelConfig, SchedulerConfig, VisionLanguageConfig)
 from vllm.engine.ray_utils import RayWorkerVllm, ray
 from vllm.executor.executor_base import ExecutorAsyncBase, ExecutorBase
 from vllm.executor.utils import check_block_size_valid
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
-from vllm.utils import (set_cuda_visible_devices, get_ip, get_open_port,
+from vllm.utils import (get_ip, get_open_port,
                         get_distributed_init_method, make_async)
 
 if ray is not None:
@@ -40,6 +40,7 @@ class RayXPUExecutor(ExecutorBase):
         scheduler_config: SchedulerConfig,
         device_config: DeviceConfig,
         lora_config: Optional[LoRAConfig],
+        vision_language_config: Optional[VisionLanguageConfig],        
     ) -> None:
         self.model_config = model_config
         self.cache_config = cache_config
@@ -47,6 +48,7 @@ class RayXPUExecutor(ExecutorBase):
         self.parallel_config = parallel_config
         self.scheduler_config = scheduler_config
         self.device_config = device_config
+        self.vision_language_config = vision_language_config
 
         assert self.parallel_config.worker_use_ray
         placement_group = self.parallel_config.placement_group
@@ -131,11 +133,6 @@ class RayXPUExecutor(ExecutorBase):
         for node_id, gpu_ids in node_gpus.items():
             node_gpus[node_id] = sorted(gpu_ids)
 
-        # Set CUDA_VISIBLE_DEVICES for the driver and workers.
-        set_cuda_visible_devices(node_gpus[driver_node_id])
-        for worker, (node_id, _) in zip(self.workers, worker_node_and_gpu_ids):
-            worker.set_cuda_visible_devices.remote(node_gpus[node_id])
-
         distributed_init_method = get_distributed_init_method(
             driver_ip, get_open_port())
 
@@ -187,9 +184,7 @@ class RayXPUExecutor(ExecutorBase):
 
         # FIXME(woosuk): We are not properly initializing cupy NCCL when
         # we have multiple nodes.
-        self._run_workers("init_device",
-                          cupy_port=get_open_port()
-                          if not model_config.enforce_eager else None)
+        self._run_workers("init_device")
         self._run_workers(
             "load_model",
             max_concurrent_workers=self.parallel_config.

@@ -7,7 +7,7 @@ import torch
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata)
 from vllm.attention.ops.paged_attn import PagedAttention, PagedAttentionMetadata
-
+from vllm.utils import is_xpu
 
 class TorchSDPABackend(AttentionBackend):
 
@@ -95,7 +95,7 @@ class TorchSDPABackendImpl(AttentionImpl):
         self.alibi_slopes = alibi_slopes
         self.need_mask = (self.alibi_slopes is not None
                           or self.sliding_window is not None)
-        self.fuse_batch = True
+        self.fuse_batch = is_xpu()
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
         suppored_head_sizes = PagedAttention.get_supported_head_sizes()
