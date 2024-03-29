@@ -139,7 +139,6 @@ def is_xpu() -> bool:
     except ImportError:
         logger.warning("not found ipex lib")
         return False
-    print(f"xpu available: {torch.xpu.is_available()}, device count: {torch.xpu.device_count()}")
     return hasattr(torch, "xpu") and torch.xpu.is_available()
 
 

@@ -1,7 +1,7 @@
-"""A GPU worker class."""
+"""A XPU worker class."""
 import gc
 import os
-from typing import Dict, List, Tuple, Set, Optional
+from typing import Tuple, Optional
 
 import torch
 import intel_extension_for_pytorch
@@ -11,15 +11,10 @@ import torch.distributed
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
                          ParallelConfig, SchedulerConfig, VisionLanguageConfig)
 from vllm.model_executor import set_random_seed
-from vllm.model_executor.parallel_utils.communication_op import (
-    broadcast_tensor_dict)
-from vllm.model_executor.parallel_utils.custom_all_reduce import init_custom_ar
 from vllm.model_executor.parallel_utils.parallel_state import (
     ensure_model_parallel_initialized)
 from vllm.worker.cache_engine import CacheEngine
-from vllm.worker.model_runner import ModelRunner
 from vllm.worker.worker import Worker
-from vllm.lora.request import LoRARequest
 from vllm.utils import is_xpu
 
 from vllm.logger import init_logger
@@ -45,16 +40,6 @@ class Worker(Worker):
         kv_cache_dtype: Optional[str] = "auto",
         is_driver_worker: bool = False,
     ) -> None:
-        import os 
-        print(os.environ)
-        import intel_extension_for_pytorch as ipex
-        ipex.xpu.lazy_init._lazy_init()
-        print(f"initialized: {ipex.xpu.lazy_init._initialized}")
-        import subprocess
-
-        p = subprocess.Popen('sycl-ls', shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        for line in p.stdout.readlines():
-            print(line)
         assert device_config.device_type == "xpu"
         assert is_xpu()
         model_config = Worker._verify_and_get_model_config(model_config)
@@ -80,7 +65,7 @@ class Worker(Worker):
         return config
 
 
-    def init_device(self, cupy_port: Optional[int] = None) -> None:
+    def init_device(self) -> None:
         if self.device_config.device.type == "xpu" and is_xpu():
             self.device = torch.device(f"xpu:{self.local_rank}")
             torch.xpu.set_device(self.device)
@@ -93,6 +78,7 @@ class Worker(Worker):
         Worker.init_distributed_environment(
             self.parallel_config,
             self.rank,
+            self.local_rank,
             self.distributed_init_method,
         )
         # Initialize the model.
@@ -131,7 +117,7 @@ class Worker(Worker):
         
         used_memory = torch.xpu.memory_allocated()
         total_gpu_memory = torch.xpu.get_device_properties(self.local_rank).total_memory
-        print(f"rank:{self.local_rank}, used_memory:{used_memory}")
+        # print(f"rank:{self.local_rank}, used_memory:{used_memory}")
         
         free_gpu_memory = total_gpu_memory - used_memory
         # NOTE(woosuk): Here we assume that the other processes using the same
@@ -150,7 +136,6 @@ class Worker(Worker):
             self.model_runner.remove_all_loras()
         gc.collect()
         torch.xpu.empty_cache()
-        print(f"num_gpu_blocks:{num_gpu_blocks}, num_cpu_blocks:{num_cpu_blocks}")
         return num_gpu_blocks, num_cpu_blocks
 
     def init_cache_engine(self, cache_config: CacheConfig) -> None:
@@ -187,7 +172,6 @@ class Worker(Worker):
                 "distributed_init_method must be set if torch.distributed "
                 "is not already initialized")
         else:
-            # backend = (device_config)
             torch.distributed.init_process_group(
                 backend="ccl",
                 world_size=parallel_config.world_size,
