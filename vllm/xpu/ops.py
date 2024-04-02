@@ -47,8 +47,8 @@ class xpu_ops:
     ):
         assert kv_cache_dtype == "auto"
         num_heads = out.size(1)
-        num_queries_per_tokens = (int)(num_heads / num_kv_heads)
-        head_mapping = torch.arange(0, num_kv_heads, device="xpu", dtype=torch.int32,).view(num_kv_heads, 1).repeat(1, num_queries_per_tokens).flatten()
+        num_queries_per_tokens = num_heads // num_kv_heads
+        head_mapping = torch.arange(0, num_kv_heads, device="xpu", dtype=torch.int32,).view(num_kv_heads, 1).repeat_interleave(num_queries_per_tokens).flatten()
         ipex.llm.modules.PagedAttention.single_query_cached_kv_attention(
             out,
             query,
@@ -82,9 +82,9 @@ class xpu_ops:
     ):
         assert kv_cache_dtype == "auto"
         num_heads = out.size(1)
-        num_queries_per_tokens = num_heads / num_kv_heads
-        head_mapping = torch.arange(0, num_kv_heads, dtype=torch.int32,).view(num_kv_heads, 1).repeat(1, num_queries_per_tokens).flatten()
-        torch.xpu.IpexPaged_attention_v2(out,
+        num_queries_per_tokens = num_heads // num_kv_heads
+        head_mapping = torch.arange(0, num_kv_heads, dtype=torch.int32,).view(num_kv_heads, 1).repeat_interleave(num_queries_per_tokens).flatten()
+        torch.xpu.paged_attention_v2(out,
                                          exp_sum,
                                          max_logits,
                                          tmp_out,
@@ -136,8 +136,11 @@ class xpu_ops:
         # out = torch.ops.torch_ipex.rms_norm(input, [weight.size(0)], weight, epsilon)
         out = ipex.llm.modules.RMSNorm.apply(input, weight, epsilon)
         
-        return out
-        
+    def fused_add_rms_norm(input: torch.Tensor,
+                           residual: torch.Tensor,
+                           weight: torch.Tensor,
+                           epsilon: float):
+        ipex.llm.functional.add_rms_norm(residual, input, weight, None, epsilon, True)        
         
 class xpu_cache_ops:
     def reshape_and_cache(
@@ -148,24 +151,27 @@ class xpu_cache_ops:
         slot_mapping: torch.Tensor,
         kv_cache_dtype: str,
     ) -> None:
-        assert kv_cache_dtype == "auto"
+        assert kv_cache_dtype == "auto" 
         torch.ops.torch_ipex.reshape_and_cache(key, value, key_cache, value_cache, slot_mapping)
         
     def copy_blocks(key_caches, value_caches, block_mapping):
-        # print(block_mapping)
-        block_mapping_tensor = torch.tensor(list(block_mapping.values())).view(-1,2)
-        # print(block_mapping_tensor)
+        block_mapping_tensor = []
+        for key, values in block_mapping.items():
+            if hasattr(values, "__iter__"):
+                for value in values:
+                    block_mapping_tensor.append([key, value])
+        block_mapping = torch.tensor(
+            block_mapping_tensor, device="xpu", dtype=torch.int64
+        )                    
         torch.ops.torch_ipex.copy_blocks(key_caches, value_caches, block_mapping_tensor)
         
     def swap_blocks(src: torch.Tensor,
                     dst: torch.Tensor,
                     block_mapping: Dict[int, int]):
-        print(block_mapping)
         keys = list(block_mapping.keys())
         values = list(block_mapping.values())
         key_tensor = torch.tensor(keys)
         value_tensor = torch.tensor(values)
         block_mapping_tensor = torch.stack([key_tensor, value_tensor], dim=1)
-        print(block_mapping_tensor)
         
         torch.ops.torch_ipex.swap_blocks(src, dst, block_mapping_tensor)        
