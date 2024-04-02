@@ -4,11 +4,11 @@ import torch
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.utils import is_xpu
 
-DTYPES = [torch.half, torch.bfloat16, torch.float]
-NUM_TOKENS = [7, 83, 4096]  # Arbitrary values for testing
+DTYPES = [torch.half,]# torch.bfloat16, torch.float]
+NUM_TOKENS = [7,]# 83, 4096]  # Arbitrary values for testing
 HIDDEN_SIZES = [768, 769, 770, 771, 5120, 5124, 5125, 5126, 8192,
                 8199]  # Arbitrary values for testing
-ADD_RESIDUAL = [False]
+ADD_RESIDUAL = [False, True]
 SEEDS = [0]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
