@@ -27,7 +27,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from vllm._C import ops
+# from vllm._C import ops
+from vllm.xpu.ops import xpu_ops as ops
 
 
 def _rotate_neox(x: torch.Tensor) -> torch.Tensor:
