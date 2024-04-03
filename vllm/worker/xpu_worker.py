@@ -18,7 +18,7 @@ from vllm.model_executor.parallel_utils.parallel_state import (
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
 from vllm.utils import is_xpu
 from vllm.worker.cache_engine import CacheEngine
-from vllm.worker.model_runner import ModelRunner
+from vllm.worker.xpu_model_runner import XPUModelRunner
 
 logger = init_logger(__name__)
 
@@ -66,7 +66,7 @@ class XPUWorker():
             assert not self.lora_config, (
                 "To be tested: vision language model with LoRA settings.")
 
-        self.model_runner = ModelRunner(
+        self.model_runner = XPUModelRunner(
             model_config,
             parallel_config,
             scheduler_config,
