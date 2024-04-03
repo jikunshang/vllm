@@ -76,13 +76,13 @@ void rms_norm(torch::Tensor &out, torch::Tensor &input,
 void fused_add_rms_norm(torch::Tensor &input, torch::Tensor &residual,
                             torch::Tensor &weight, float epsilon);
 
-inline torch::Tensor awq_gemm(torch::Tensor _in_feats, torch::Tensor _kernel,
-                                  torch::Tensor _scaling_factors, torch::Tensor _zeros,
-                                  int split_k_iters) {
+torch::Tensor awq_gemm(torch::Tensor _in_feats, torch::Tensor _kernel,
+                       torch::Tensor _scaling_factors, torch::Tensor _zeros,
+                       int split_k_iters) {
   TORCH_CHECK(false, "awq_gemm is not supported on XPU.");                            
 }
 
-inline torch::Tensor marlin_gemm(
+torch::Tensor marlin_gemm(
     torch::Tensor& a, 
     torch::Tensor& b_q_weight,
     torch::Tensor& b_scales, 
@@ -93,17 +93,19 @@ inline torch::Tensor marlin_gemm(
   TORCH_CHECK(false, "marlin_gemm is not supported on XPU.");                            
 }
 
-inline torch::Tensor awq_dequantize(torch::Tensor _kernel, 
+torch::Tensor awq_dequantize(torch::Tensor _kernel, 
     torch::Tensor _scaling_factors,
     torch::Tensor _zeros,
     int split_k_iters,
     int thx,
     int thy);
 
-inline void squeezellm_gemm(torch::Tensor vec, torch::Tensor mat,
-                         torch::Tensor mul, torch::Tensor lookup_table){}
+void squeezellm_gemm(torch::Tensor vec, torch::Tensor mat,
+                         torch::Tensor mul, torch::Tensor lookup_table) {
+  TORCH_CHECK(false, "squeezellm_gemm is not supported on XPU.");
+}
 
-inline torch::Tensor gptq_gemm(
+torch::Tensor gptq_gemm(
   torch::Tensor a,
   torch::Tensor b_q_weight,
   torch::Tensor b_gptq_qzeros,
@@ -114,7 +116,7 @@ inline torch::Tensor gptq_gemm(
   TORCH_CHECK(false, "gptq_gemm is not supported on XPU.");
 }
 
-inline void gptq_shuffle(
+void gptq_shuffle(
   torch::Tensor q_weight,
   torch::Tensor q_perm,
   int bit) {
