@@ -15,6 +15,8 @@ append_torchlib_if_found(torch_python)
 include_directories(${IPEX_INCLUDE_DIRS})
 set(CMPLR_ROOT $ENV{CMPLR_ROOT})
 set(CMAKE_CXX_COMPILER icpx)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-narrowing")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 set(VLLM_EXTRA_INCLUDE_DIRECTORIES ${CMPLR_ROOT}/include/sycl)
 
 list(APPEND VLLM_GPU_FLAGS "-fsycl" "-fsycl-targets=spir64")
