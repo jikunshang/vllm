@@ -17,7 +17,7 @@ set(CMPLR_ROOT $ENV{CMPLR_ROOT})
 set(CMAKE_CXX_COMPILER icpx)
 set(VLLM_EXTRA_INCLUDE_DIRECTORIES ${CMPLR_ROOT}/include/sycl)
 
-list(APPEND VLLM_GPU_FLAGS "-DVLLM_BUILD_XPU_OPS" "-fsycl" "-fsycl-targets=spir64")
+list(APPEND VLLM_GPU_FLAGS "-fsycl" "-fsycl-targets=spir64")
 list(APPEND VLLM_GPU_LINK_FLAGS "-fsycl" "-fsycl-targets=spir64")
 list(APPEND VLLM_LINK_LIBRARIES "sycl" "OpenCL" "pthread" "m" "dl" "dnnl" "intel-ext-pt-gpu" )    
 
@@ -36,7 +36,7 @@ set(VLLM_EXT_SRC
     "csrc/xpu/layernorm_xpu.cpp"
     "csrc/xpu/pos_encoding_xpu.cpp"
     "csrc/xpu/utils.cpp"
-    "csrc/pybind.cpp")
+    "csrc/xpu/pybind.cpp")
 
 define_gpu_extension_target(
     _C
