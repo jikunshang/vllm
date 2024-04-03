@@ -335,7 +335,8 @@ class AsyncLLMEngine:
             raise NotImplementedError("Neuron is not supported for "
                                       "async engine yet.")
         elif is_xpu():
-            if engine_config.parallel_config.worker_use_ray or engine_args.engine_use_ray:
+            if (engine_config.parallel_config.worker_use_ray
+                    or engine_args.engine_use_ray):
                 logger.warning("not support ray yet")
             else:
                 from vllm.executor.xpu_executor import XPUExecutorAsync

@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 import torch
 
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
-                         ParallelConfig, SchedulerConfig, SpeculativeConfig, 
+                         ParallelConfig, SchedulerConfig, SpeculativeConfig,
                          VisionLanguageConfig)
 from vllm.executor.executor_base import ExecutorAsyncBase, ExecutorBase
 from vllm.executor.utils import check_block_size_valid
