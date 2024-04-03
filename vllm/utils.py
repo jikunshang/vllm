@@ -384,6 +384,7 @@ def is_pin_memory_available() -> bool:
                            "This may slow down the performance.")
         return False
     elif is_xpu():
+        print_warning_once("Pin memory is not supported on XPU.")
         return False
     elif is_neuron():
         print_warning_once("Pin memory is not supported on Neuron.")

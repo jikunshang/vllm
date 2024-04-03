@@ -1,4 +1,4 @@
-""" Attention layer with torch scaled_dot_product_attention 
+""" Attention layer with torch scaled_dot_product_attention
     and PagedAttention."""
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Type
@@ -150,6 +150,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                     key = key.repeat_interleave(self.num_queries_per_kv, dim=1)
                     value = value.repeat_interleave(self.num_queries_per_kv,
                                                     dim=1)
+
                 if attn_metadata.attn_bias is None:
                     if self.alibi_slopes is not None:
                         att_masks = _make_alibi_bias(

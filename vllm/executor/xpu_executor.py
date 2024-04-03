@@ -3,7 +3,8 @@ from typing import Dict, List, Optional
 import torch
 
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
-                         ParallelConfig, SchedulerConfig, VisionLanguageConfig)
+                         ParallelConfig, SchedulerConfig, SpeculativeConfig, 
+                         VisionLanguageConfig)
 from vllm.executor.executor_base import ExecutorAsyncBase, ExecutorBase
 from vllm.executor.utils import check_block_size_valid
 from vllm.logger import init_logger
@@ -26,8 +27,12 @@ class XPUExecutor(ExecutorBase):
         device_config: DeviceConfig,
         lora_config: Optional[LoRAConfig],
         vision_language_config: Optional[VisionLanguageConfig],
+        speculative_config: Optional[SpeculativeConfig],
     ) -> None:
         assert device_config.device_type == "xpu"
+        assert (not speculative_config
+                ), "Speculative decoding not yet supported for XPU backend"
+
         model_config = _verify_and_get_model_config(model_config)
 
         self.model_config = model_config
