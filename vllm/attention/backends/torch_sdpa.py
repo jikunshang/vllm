@@ -1,7 +1,7 @@
-"""Attention layer with torch scaled_dot_product_attention and PagedAttention."""
-import importlib
-from typing import List, Optional, Tuple, Type, Dict
+""" Attention layer with torch scaled_dot_product_attention 
+    and PagedAttention."""
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple, Type
 
 import torch
 from torch.nn.functional import scaled_dot_product_attention
@@ -160,7 +160,9 @@ class TorchSDPABackendImpl(AttentionImpl):
                     else:
                         if self.fuse_batch:
                             att_masks = _make_sliding_window_bias(
-                            attn_metadata.prompt_lens, None, dtype=query.dtype)
+                                attn_metadata.prompt_lens,
+                                None,
+                                dtype=query.dtype)
                         else:
                             att_masks = [None] * len(attn_metadata.prompt_lens)
                     attn_metadata.attn_bias = att_masks
@@ -177,14 +179,15 @@ class TorchSDPABackendImpl(AttentionImpl):
                                                 attn_metadata.prompt_lens,
                                                 sum(attn_metadata.prompt_lens),
                                                 query.dtype).to(query.device)
-                    out = torch.nn.functional.scaled_dot_product_attention(
+                    out = scaled_dot_product_attention(
                         query,
                         key,
                         value,
                         attn_mask=mask,
                         dropout_p=0.0,
                         is_causal=False,
-                        scale=self.scale).movedim(query.dim() - 2, 1).contiguous()
+                        scale=self.scale).movedim(query.dim() - 2,
+                                                  1).contiguous()
                 else:
                     start = 0
                     out = torch.empty(
@@ -194,7 +197,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                     for prompt_len, mask in zip(attn_metadata.prompt_lens,
                                                 attn_metadata.attn_bias):
                         end = start + prompt_len
-                        sub_out = torch.nn.functional.scaled_dot_product_attention(
+                        sub_out = scaled_dot_product_attention(
                             query[:, :, start:end, :],
                             key[:, :, start:end, :],
                             value[:, :, start:end, :],
@@ -251,6 +254,7 @@ def _make_attention_mask(
         start += prompt_len
     return mask
 
+
 def _make_alibi_bias(
     alibi_slopes: torch.Tensor,
     dtype: torch.dtype,
@@ -272,7 +276,8 @@ def _make_alibi_bias(
         inf_mask = torch.empty(
             (1, prompt_len, prompt_len),
             dtype=bias.dtype,
-            device=alibi_slopes.device,).fill_(-torch.inf).triu_(diagonal=1)        
+            device=alibi_slopes.device,
+        ).fill_(-torch.inf).triu_(diagonal=1)
         attn_biases.append((bias + inf_mask).to(dtype))
 
     return attn_biases

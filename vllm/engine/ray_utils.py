@@ -96,12 +96,9 @@ def initialize_ray_cluster(
 
     # Connect to a ray cluster.
     if is_hip() or is_xpu():
-        import os
-        print(os.environ)
         ray.init(address=ray_address,
                  ignore_reinit_error=True,
                  num_gpus=parallel_config.world_size)
-        print(f"ray init done!!! ray_address:{ray_address}, num_gpus:{parallel_config.world_size}")
     else:
         ray.init(address=ray_address, ignore_reinit_error=True)
 

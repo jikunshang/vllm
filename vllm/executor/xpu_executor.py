@@ -1,13 +1,15 @@
 from typing import Dict, List, Optional
 
-from vllm.lora.request import LoRARequest
+import torch
+
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
                          ParallelConfig, SchedulerConfig, VisionLanguageConfig)
 from vllm.executor.executor_base import ExecutorAsyncBase, ExecutorBase
 from vllm.executor.utils import check_block_size_valid
 from vllm.logger import init_logger
+from vllm.lora.request import LoRARequest
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
-from vllm.utils import (get_ip, get_open_port, get_distributed_init_method,
+from vllm.utils import (get_distributed_init_method, get_ip, get_open_port,
                         make_async)
 
 logger = init_logger(__name__)
@@ -23,8 +25,11 @@ class XPUExecutor(ExecutorBase):
         scheduler_config: SchedulerConfig,
         device_config: DeviceConfig,
         lora_config: Optional[LoRAConfig],
-        vision_language_config: Optional[VisionLanguageConfig],        
+        vision_language_config: Optional[VisionLanguageConfig],
     ) -> None:
+        assert device_config.device_type == "xpu"
+        model_config = _verify_and_get_model_config(model_config)
+
         self.model_config = model_config
         self.cache_config = cache_config
         self.lora_config = lora_config
@@ -40,16 +45,14 @@ class XPUExecutor(ExecutorBase):
         self._init_cache()
 
     def _init_worker(self):
-        # Lazy import the Worker to avoid importing torch.cuda/xformers
-        # before CUDA_VISIBLE_DEVICES is set in the Worker
-        from vllm.worker.xpu_worker import Worker
+        from vllm.worker.xpu_worker import XPUWorker
 
         assert self.parallel_config.world_size == 1, (
             "XPUExecutor only supports single GPU.")
 
         distributed_init_method = get_distributed_init_method(
             get_ip(), get_open_port())
-        self.driver_worker = Worker(
+        self.driver_worker = XPUWorker(
             self.model_config,
             self.parallel_config,
             self.scheduler_config,
@@ -96,9 +99,6 @@ class XPUExecutor(ExecutorBase):
 
         # Initialize the cache.
         self.driver_worker.init_cache_engine(cache_config=self.cache_config)
-        # Warm up the model. This includes capturing the model into CUDA graph
-        # if enforce_eager is False.
-        self.driver_worker.warm_up_model()
 
     def execute_model(self,
                       seq_group_metadata_list: List[SequenceGroupMetadata],
@@ -150,3 +150,16 @@ class XPUExecutorAsync(XPUExecutor, ExecutorAsyncBase):
         # XPUExecutor will always be healthy as long as
         # it's running.
         return
+
+
+def _verify_and_get_model_config(config: ModelConfig) -> ModelConfig:
+    if config.dtype == torch.bfloat16:
+        logger.warning(
+            "bfloat16 is not fully supported on XPU, casting to float16.")
+        config.dtype = torch.float16
+    if not config.enforce_eager:
+        logger.warning(
+            "CUDA graph is not supported on CPU, fallback to the eager "
+            "mode.")
+        config.enforce_eager = True
+    return config
