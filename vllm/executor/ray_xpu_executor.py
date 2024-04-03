@@ -1,8 +1,8 @@
 import asyncio
 import copy
-from collections import defaultdict
 import os
 import pickle
+from collections import defaultdict
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from vllm.config import (CacheConfig, DeviceConfig, LoRAConfig, ModelConfig,
@@ -13,8 +13,8 @@ from vllm.executor.utils import check_block_size_valid
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.sequence import SamplerOutput, SequenceGroupMetadata
-from vllm.utils import (get_ip, get_open_port,
-                        get_distributed_init_method, make_async)
+from vllm.utils import (get_distributed_init_method, get_ip, get_open_port,
+                        make_async)
 
 if ray is not None:
     from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
@@ -40,7 +40,7 @@ class RayXPUExecutor(ExecutorBase):
         scheduler_config: SchedulerConfig,
         device_config: DeviceConfig,
         lora_config: Optional[LoRAConfig],
-        vision_language_config: Optional[VisionLanguageConfig],        
+        vision_language_config: Optional[VisionLanguageConfig],
     ) -> None:
         self.model_config = model_config
         self.cache_config = cache_config
@@ -138,7 +138,7 @@ class RayXPUExecutor(ExecutorBase):
 
         # Lazy import the Worker to avoid importing torch.cuda/xformers
         # before CUDA_VISIBLE_DEVICES is set in the Worker
-        from vllm.worker.xpu_worker import Worker
+        from vllm.worker.xpu_worker import XPUWorker
 
         model_config = copy.deepcopy(self.model_config)
         parallel_config = copy.deepcopy(self.parallel_config)
@@ -154,7 +154,7 @@ class RayXPUExecutor(ExecutorBase):
         ):
             local_rank = node_workers[node_id].index(rank)
             worker.init_worker.remote(
-                lambda rank=rank, local_rank=local_rank: Worker(
+                lambda rank=rank, local_rank=local_rank: XPUWorker(
                     model_config,
                     parallel_config,
                     scheduler_config,
@@ -169,7 +169,7 @@ class RayXPUExecutor(ExecutorBase):
         # Initialize the driver worker with the Worker class.
         driver_rank = 0
         driver_local_rank = node_workers[driver_node_id].index(driver_rank)
-        self.driver_worker = Worker(
+        self.driver_worker = XPUWorker(
             self.model_config,
             self.parallel_config,
             self.scheduler_config,
@@ -198,8 +198,8 @@ class RayXPUExecutor(ExecutorBase):
         Then, it calculate the maximum possible number of GPU and CPU blocks
         that can be allocated with the remaining free memory.
         More details can be found in the
-        :meth:`~vllm.worker.worker.xpu_Worker.profile_num_available_blocks` method
-        from class :class:`~vllm.worker.xpu_Worker`.
+        :meth:`~vllm.worker.worker.xpu_Worker.profile_num_available_blocks` 
+        method from class :class:`~vllm.worker.xpu_Worker`.
 
         Afterwards, as there may be multiple workers,
         we take the minimum number of blocks across all workers
@@ -338,7 +338,7 @@ class RayXPUExecutor(ExecutorBase):
             raise ValueError(f"Ray version {required_version} or greater is "
                              f"required, but found {current_version}")
 
-        from ray.dag import MultiOutputNode, InputNode
+        from ray.dag import InputNode, MultiOutputNode
         assert self.parallel_config.worker_use_ray
 
         # Right now, compiled DAG requires at least 1 arg. We send

@@ -15,7 +15,7 @@ from torch.utils.cpp_extension import CUDA_HOME
 
 ROOT_DIR = os.path.dirname(__file__)
 logger = logging.getLogger(__name__)
-# Target device of vLLM, supporting [cuda (by default), rocm, neuron, cpu]
+# Target device of vLLM, supporting [cuda (by default), rocm, neuron, cpu, xpu]
 VLLM_TARGET_DEVICE = os.getenv("VLLM_TARGET_DEVICE", "cuda")
 
 # vLLM only supports Linux platform
@@ -23,14 +23,7 @@ assert sys.platform.startswith(
     "linux"), "vLLM only supports Linux platform (including WSL)."
 
 MAIN_CUDA_VERSION = "12.1"
-BUILD_XPU_OPS = os.getenv('VLLM_BUILD_XPU_OPS', "0") == "1"
 
-
-def _is_xpu() -> bool:
-    return BUILD_XPU_OPS
-
-if _is_xpu():
-    import intel_extension_for_pytorch
 
 def is_sccache_available() -> bool:
     return which("sccache") is not None
@@ -220,6 +213,10 @@ def _is_cpu() -> bool:
     return VLLM_TARGET_DEVICE == "cpu"
 
 
+def _is_xpu() -> bool:
+    return VLLM_TARGET_DEVICE == "xpu"
+
+
 def _install_punica() -> bool:
     return bool(int(os.getenv("VLLM_INSTALL_PUNICA_KERNELS", "0")))
 
@@ -309,9 +306,6 @@ def get_vllm_version() -> str:
         if hipcc_version != MAIN_CUDA_VERSION:
             rocm_version_str = hipcc_version.replace(".", "")[:3]
             version += f"+rocm{rocm_version_str}"
-    elif _is_xpu():
-        xpu_version = "0.0.1"
-        version += f"+xpu{xpu_version}"
     elif _is_neuron():
         # Get the Neuron version
         neuron_version = str(get_neuronxcc_version())
@@ -320,6 +314,8 @@ def get_vllm_version() -> str:
             version += f"+neuron{neuron_version_str}"
     elif _is_cpu():
         version += "+cpu"
+    elif _is_xpu():
+        version += "+xpu"
     else:
         raise RuntimeError("Unknown runtime environment")
 

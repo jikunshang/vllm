@@ -14,6 +14,13 @@ from typing import (Any, Awaitable, Callable, Generic, Hashable, List,
 
 import psutil
 import torch
+
+try:
+    import intel_extension_for_pytorch  # noqa: F401
+    _import_ipex = True
+except ImportError:
+    _import_ipex = False
+
 from packaging.version import Version, parse
 
 from vllm.logger import init_logger
@@ -134,11 +141,10 @@ def is_neuron() -> bool:
         transformers_neuronx = None
     return transformers_neuronx is not None
 
+
 @lru_cache(maxsize=None)
 def is_xpu() -> bool:
-    try:
-        import intel_extension_for_pytorch  # noqa: F401
-    except ImportError:
+    if not _import_ipex:
         logger.warning("not found ipex lib")
         return False
     return hasattr(torch, "xpu") and torch.xpu.is_available()
@@ -386,6 +392,7 @@ def is_pin_memory_available() -> bool:
         print_warning_once("Pin memory is not supported on CPU.")
         return False
     return True
+
 
 def device_sync():
     if torch.cuda.is_available():

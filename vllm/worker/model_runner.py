@@ -24,8 +24,8 @@ from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import (MultiModalData, SamplerOutput, SequenceData,
                            SequenceGroupMetadata)
 from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, is_hip,
-                        is_pin_memory_available, make_tensor_with_pad,
-                        maybe_expand_dim, device_sync, is_xpu)
+                        device_sync, is_pin_memory_available,
+                        make_tensor_with_pad, maybe_expand_dim)
 
 logger = init_logger(__name__)
 
