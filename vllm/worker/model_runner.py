@@ -23,7 +23,6 @@ from vllm.model_executor.parallel_utils.parallel_state import (
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import (MultiModalData, SamplerOutput, SequenceData,
                            SequenceGroupMetadata)
-
 from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, device_sync,
                         is_hip, is_pin_memory_available, make_tensor_with_pad,
                         maybe_expand_dim)
