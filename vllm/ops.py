@@ -1,4 +1,5 @@
 from typing import Dict, Optional
+from vllm.utils import is_xpu
 
 import torch
 
@@ -8,6 +9,9 @@ try:
 except ImportError:
     pass
 
+if is_xpu():
+    from vllm.xpu.ops import xpu_ops as vllm_ops    
+    from vllm.xpu.ops import xpu_cache_ops as vllm_cache_ops
 
 class ops:
 
