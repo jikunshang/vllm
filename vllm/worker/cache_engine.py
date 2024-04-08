@@ -4,7 +4,7 @@ from typing import Dict, List
 import torch
 
 from vllm.attention import get_attn_backend
-from vllm.config import CacheConfig, ModelConfig, ParallelConfig
+from vllm.config import CacheConfig, DeviceConfig, ModelConfig, ParallelConfig
 from vllm.logger import init_logger
 from vllm.utils import STR_DTYPE_TO_TORCH_DTYPE, is_pin_memory_available
 
@@ -24,10 +24,12 @@ class CacheEngine:
         cache_config: CacheConfig,
         model_config: ModelConfig,
         parallel_config: ParallelConfig,
+        device_config: DeviceConfig,
     ) -> None:
         self.cache_config = cache_config
         self.model_config = model_config
         self.parallel_config = parallel_config
+        self.device_config = device_config
 
         self.head_size = model_config.get_head_size()
         self.num_layers = model_config.get_num_layers(parallel_config)
@@ -46,7 +48,8 @@ class CacheEngine:
         self.attn_backend = get_attn_backend(model_config.dtype)
 
         # Initialize the cache.
-        self.gpu_cache = self._allocate_kv_cache(self.num_gpu_blocks, "cuda")
+        self.gpu_cache = self._allocate_kv_cache(
+            self.num_gpu_blocks, self.device_config.device_type)
         self.cpu_cache = self._allocate_kv_cache(self.num_cpu_blocks, "cpu")
 
     def _allocate_kv_cache(
