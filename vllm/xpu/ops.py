@@ -25,7 +25,7 @@ class xpu_ops:
 
     def gelu_tanh_and_mul(out: torch.Tensor, x: torch.Tensor):
         x1, x2 = xpu_ops.reshape_activation_tensor(x)
-        torch.ops.torch_ipex.gelu_mul(x1, x2, out, "none")
+        torch.ops.torch_ipex.gelu_mul(x1, x2, out, "tanh")
 
     def gelu_fast(out: torch.Tensor, x: torch.Tensor):
         out.copy_(torch.nn.functional.gelu(x))
@@ -103,6 +103,11 @@ class xpu_ops:
         cos_sin_cache: torch.Tensor,  # [cos_sin_dim, rot_dim]
         is_neox: bool,
     ):
+        if positions.dim() == 1:
+            positions.unsqueeze(0)
+            query.unsqueeze(0)
+            key.unsqueeze(0)
+        
         rotary_dim = cos_sin_cache.size(1)
         query = query.view(*query.shape[:-1], -1, head_size)
         key = key.view(*key.shape[:-1], -1, head_size)
@@ -132,8 +137,34 @@ class xpu_ops:
                                  cos_sin_cache: torch.tensor, is_neox: bool,
                                  rot_dim: int,
                                  cos_sin_cache_offsets: torch.tensor):
-        raise RuntimeError(
-            "Not supported op: batched_rotary_embedding for xpu backend")
+        if positions.dim() == 1:
+            positions.unsqueeze(0)
+            query.unsqueeze(0)
+            key.unsqueeze(0)
+        cos_sin_cache_offsets = cos_sin_cache_offsets.view_as(positions)
+        rotary_dim = cos_sin_cache.size(1)
+        query = query.view(*query.shape[:-1], -1, head_size)
+        key = key.view(*key.shape[:-1], -1, head_size)
+
+        query_rot = query[..., :rotary_dim]
+        key_rot = key[..., :rotary_dim]
+        if rotary_dim < head_size:
+            query_pass = query[..., rotary_dim:]
+            key_pass = key[..., rotary_dim:]
+
+        cos_sin = cos_sin_cache[torch.add(positions, cos_sin_cache_offsets).long()]
+        cos, sin = cos_sin.chunk(2, dim=-1)
+
+        if is_neox:
+            cos = cos.repeat(1, 1, 2).unsqueeze(-2)
+            sin = sin.repeat(1, 1, 2).unsqueeze(-2)
+            torch.ops.torch_ipex.apply_rotary_embedding_half_qk(
+                query_rot, key_rot, sin, cos, query_rot, key_rot)
+        else:
+            cos = cos.repeat_interleave(2, dim=-1).unsqueeze(-2)
+            sin = sin.repeat_interleave(2, dim=-1).unsqueeze(-2)
+            torch.ops.torch_ipex.apply_rotary_embedding_two_qk(
+                query_rot, key_rot, sin, cos, query_rot, key_rot)
 
     def rms_norm(out: torch.Tensor, input: torch.Tensor, weight: torch.Tensor,
                  epsilon: float):
@@ -172,7 +203,7 @@ class xpu_cache_ops:
                                      device="xpu",
                                      dtype=torch.int64)
         torch.ops.torch_ipex.copy_blocks(key_caches, value_caches,
-                                         block_mapping_tensor)
+                                         block_mapping)
 
     def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
                     block_mapping: Dict[int, int]):
