@@ -332,20 +332,24 @@ def read_readme() -> str:
 def get_requirements() -> List[str]:
     """Get Python package dependencies from requirements.txt."""
     if _is_cuda():
-        with open(get_path("requirements.txt")) as f:
-            requirements = f.read().strip().split("\n")
+        requirements = _read_requirements("requirements-cuda.txt")
+        cuda_major = torch.version.cuda.split(".")[0]
+        modified_requirements = []
+        for req in requirements:
+            if "vllm-nccl-cu12" in req:
+                modified_requirements.append(
+                    req.replace("vllm-nccl-cu12", f"vllm-nccl-cu{cuda_major}"))
+            else:
+                modified_requirements.append(req)
+        requirements = modified_requirements
     elif _is_hip():
-        with open(get_path("requirements-rocm.txt")) as f:
-            requirements = f.read().strip().split("\n")
+        requirements = _read_requirements("requirements-rocm.txt")
     elif _is_neuron():
-        with open(get_path("requirements-neuron.txt")) as f:
-            requirements = f.read().strip().split("\n")
+        requirements = _read_requirements("requirements-neuron.txt")
     elif _is_cpu():
-        with open(get_path("requirements-cpu.txt")) as f:
-            requirements = f.read().strip().split("\n")
+        requirements = _read_requirements("requirements-cpu.txt")
     elif _is_xpu():
-        with open(get_path("requirements-xpu.txt")) as f:
-            requirements = f.read().strip().split("\n")
+        requirements = _read_requirements("requirements-xpu.txt")
     else:
         raise ValueError(
             "Unsupported platform, please use CUDA, ROCM or Neuron.")
