@@ -104,9 +104,9 @@ class xpu_ops:
         is_neox: bool,
     ):
         if positions.dim() == 1:
-            positions.unsqueeze(0)
-            query.unsqueeze(0)
-            key.unsqueeze(0)
+            positions = positions.unsqueeze(0)
+            query = query.unsqueeze(0)
+            key = key.unsqueeze(0)
         
         rotary_dim = cos_sin_cache.size(1)
         query = query.view(*query.shape[:-1], -1, head_size)
@@ -138,9 +138,9 @@ class xpu_ops:
                                  rot_dim: int,
                                  cos_sin_cache_offsets: torch.tensor):
         if positions.dim() == 1:
-            positions.unsqueeze(0)
-            query.unsqueeze(0)
-            key.unsqueeze(0)
+            positions = positions.unsqueeze(0)
+            query = query.unsqueeze(0)
+            key = key.unsqueeze(0)
         cos_sin_cache_offsets = cos_sin_cache_offsets.view_as(positions)
         rotary_dim = cos_sin_cache.size(1)
         query = query.view(*query.shape[:-1], -1, head_size)
