@@ -59,9 +59,9 @@ class xpu_ops:
         ).view(num_kv_heads,
                1).repeat_interleave(num_queries_per_tokens).flatten()
         ipex.llm.modules.PagedAttention.single_query_cached_kv_attention(
-            out, query, key_cache, value_cache, head_mapping, scale,
-            block_tables, context_lens, block_size, max_context_len,
-            alibi_slopes)
+            out, query.contiguous(), key_cache.view_as(value_cache),
+            value_cache, head_mapping, scale, block_tables, context_lens,
+            block_size, max_context_len, alibi_slopes)
 
     def paged_attention_v2(
         out: torch.Tensor,
@@ -90,10 +90,12 @@ class xpu_ops:
             dtype=torch.int32,
         ).view(num_kv_heads,
                1).repeat_interleave(num_queries_per_tokens).flatten()
-        torch.xpu.paged_attention_v2(out, exp_sum, max_logits, tmp_out, query,
-                                     key_cache, value_cache, head_mapping,
-                                     block_tables, context_lens, scale,
-                                     block_size, max_context_len, alibi_slopes)
+        torch.xpu.paged_attention_v2(out, exp_sum, max_logits, tmp_out,
+                                     query.contiguous(),
+                                     key_cache.view_as(value_cache),
+                                     value_cache, head_mapping, block_tables,
+                                     context_lens, scale, block_size,
+                                     max_context_len, alibi_slopes)
 
     def rotary_embedding(
         positions: torch.Tensor,  # [batch_size, seq_len]
@@ -107,16 +109,13 @@ class xpu_ops:
             positions = positions.unsqueeze(0)
             query = query.unsqueeze(0)
             key = key.unsqueeze(0)
-        
+
         rotary_dim = cos_sin_cache.size(1)
         query = query.view(*query.shape[:-1], -1, head_size)
         key = key.view(*key.shape[:-1], -1, head_size)
 
         query_rot = query[..., :rotary_dim]
         key_rot = key[..., :rotary_dim]
-        if rotary_dim < head_size:
-            query_pass = query[..., rotary_dim:]
-            key_pass = key[..., rotary_dim:]
 
         cos_sin = cos_sin_cache[positions.long()]
         cos, sin = cos_sin.chunk(2, dim=-1)
@@ -148,11 +147,9 @@ class xpu_ops:
 
         query_rot = query[..., :rotary_dim]
         key_rot = key[..., :rotary_dim]
-        if rotary_dim < head_size:
-            query_pass = query[..., rotary_dim:]
-            key_pass = key[..., rotary_dim:]
 
-        cos_sin = cos_sin_cache[torch.add(positions, cos_sin_cache_offsets).long()]
+        cos_sin = cos_sin_cache[torch.add(positions,
+                                          cos_sin_cache_offsets).long()]
         cos, sin = cos_sin.chunk(2, dim=-1)
 
         if is_neox:

@@ -109,6 +109,22 @@ class TorchSDPABackendImpl(AttentionImpl):
                 f"Head size {head_size} is not supported by PagedAttention. "
                 f"Supported head sizes are: {suppored_head_sizes}.")
 
+    def split_kv_cache(
+        self,
+        kv_cache: torch.Tensor,
+        num_kv_heads: int,
+        head_size: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = 1
+        num_blocks = kv_cache.shape[1]
+
+        key_cache = kv_cache[0]
+        key_cache = key_cache.view(num_blocks, num_kv_heads, head_size // x,
+                                   -1, x)
+        value_cache = kv_cache[1]
+        value_cache = value_cache.view(num_blocks, num_kv_heads, head_size, -1)
+        return key_cache, value_cache
+
     def forward(
         self,
         query: torch.Tensor,
@@ -136,7 +152,7 @@ class TorchSDPABackendImpl(AttentionImpl):
         value = value.view(-1, self.num_kv_heads, self.head_size)
 
         if kv_cache is not None:
-            key_cache, value_cache = PagedAttention.split_kv_cache(
+            key_cache, value_cache = self.split_kv_cache(
                 kv_cache, self.num_kv_heads, self.head_size)
             PagedAttention.write_to_paged_cache(key, value, key_cache,
                                                 value_cache,
