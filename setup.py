@@ -226,6 +226,10 @@ def _is_cpu() -> bool:
     return VLLM_TARGET_DEVICE == "cpu"
 
 
+def _is_xpu() -> bool:
+    return VLLM_TARGET_DEVICE == "xpu"
+
+
 def _install_punica() -> bool:
     return envs.VLLM_INSTALL_PUNICA_KERNELS
 
@@ -324,6 +328,8 @@ def get_vllm_version() -> str:
             version += f"+neuron{neuron_version_str}"
     elif _is_cpu():
         version += "+cpu"
+    elif _is_xpu():
+        version += "+xpu"
     else:
         raise RuntimeError("Unknown runtime environment")
 
@@ -374,6 +380,8 @@ def get_requirements() -> List[str]:
         requirements = _read_requirements("requirements-neuron.txt")
     elif _is_cpu():
         requirements = _read_requirements("requirements-cpu.txt")
+    elif _is_xpu():
+        requirements = _read_requirements("requirements-xpu.txt")
     else:
         raise ValueError(
             "Unsupported platform, please use CUDA, ROCm, Neuron, or CPU.")
@@ -428,6 +436,7 @@ setup(
     extras_require={
         "tensorizer": ["tensorizer==2.9.0"],
     },
-    cmdclass={"build_ext": cmake_build_ext} if not _is_neuron() else {},
+    cmdclass={"build_ext": cmake_build_ext}
+    if not _is_neuron() and not _is_xpu() else {},
     package_data=package_data,
 )
