@@ -7,7 +7,7 @@ import torch
 
 from vllm.attention.backends.abstract import AttentionBackend
 from vllm.logger import init_logger
-from vllm.utils import is_cpu, is_hip
+from vllm.utils import is_cpu, is_hip, is_xpu
 
 logger = init_logger(__name__)
 
@@ -49,7 +49,7 @@ def get_attn_backend(dtype: torch.dtype) -> Type[AttentionBackend]:
 
 def _which_attn_to_use(dtype: torch.dtype) -> _Backend:
     """Returns which flash attention backend to use."""
-    if is_cpu():
+    if is_cpu() or is_xpu():
         return _Backend.TORCH_SDPA
 
     if is_hip():

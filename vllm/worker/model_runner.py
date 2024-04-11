@@ -23,8 +23,8 @@ from vllm.model_executor.model_loader import get_model
 from vllm.sampling_params import SamplingParams, SamplingType
 from vllm.sequence import (MultiModalData, SamplerOutput, SequenceData,
                            SequenceGroupMetadata)
-from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, is_hip,
-                        is_pin_memory_available, make_tensor_with_pad,
+from vllm.utils import (CudaMemoryProfiler, async_tensor_h2d, device_sync,
+                        is_hip, is_pin_memory_available, make_tensor_with_pad,
                         maybe_expand_dim)
 
 logger = init_logger(__name__)
@@ -911,7 +911,7 @@ class ModelRunner:
         num_layers = self.model_config.get_num_layers(self.parallel_config)
         kv_caches = [None] * num_layers
         self.execute_model(seqs, kv_caches)
-        torch.cuda.synchronize()
+        device_sync()
         return
 
     def remove_all_loras(self) -> bool:
