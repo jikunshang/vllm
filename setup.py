@@ -15,7 +15,7 @@ from torch.utils.cpp_extension import CUDA_HOME
 
 ROOT_DIR = os.path.dirname(__file__)
 logger = logging.getLogger(__name__)
-# Target device of vLLM, supporting [cuda (by default), rocm, neuron, cpu]
+# Target device of vLLM, supporting [cuda (by default), rocm, neuron, cpu, xpu]
 VLLM_TARGET_DEVICE = os.getenv("VLLM_TARGET_DEVICE", "cuda")
 
 # vLLM only supports Linux platform
@@ -211,6 +211,10 @@ def _is_cpu() -> bool:
     return VLLM_TARGET_DEVICE == "cpu"
 
 
+def _is_xpu() -> bool:
+    return VLLM_TARGET_DEVICE == "xpu"
+
+
 def _install_punica() -> bool:
     return bool(int(os.getenv("VLLM_INSTALL_PUNICA_KERNELS", "0")))
 
@@ -309,6 +313,8 @@ def get_vllm_version() -> str:
             version += f"+neuron{neuron_version_str}"
     elif _is_cpu():
         version += "+cpu"
+    elif _is_xpu():
+        version += "+xpu"
     else:
         raise RuntimeError("Unknown runtime environment")
 
@@ -355,6 +361,8 @@ def get_requirements() -> List[str]:
         requirements = _read_requirements("requirements-neuron.txt")
     elif _is_cpu():
         requirements = _read_requirements("requirements-cpu.txt")
+    elif _is_xpu():
+        requirements = _read_requirements("requirements-xpu.txt")
     else:
         raise ValueError(
             "Unsupported platform, please use CUDA, ROCm, Neuron, or CPU.")
@@ -408,6 +416,7 @@ setup(
     extras_require={
         "tensorizer": ["tensorizer==2.9.0a1"],
     },
-    cmdclass={"build_ext": cmake_build_ext} if not _is_neuron() else {},
+    cmdclass={"build_ext": cmake_build_ext}
+    if not _is_neuron() and not _is_xpu() else {},
     package_data=package_data,
 )
