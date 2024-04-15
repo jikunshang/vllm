@@ -414,6 +414,6 @@ setup(
     install_requires=get_requirements(),
     ext_modules=ext_modules,
     cmdclass={"build_ext": cmake_build_ext}
-    if not _is_neuron() and not _is_xpu() else {},
+    if not _is_neuron() and not _is_cpu() and not _is_xpu() else {},
     package_data=package_data,
 )

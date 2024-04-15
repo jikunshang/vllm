@@ -9,10 +9,14 @@ except ImportError:
     pass
 
 # todo: how to support cpu+ipex?
-from vllm.utils import is_xpu
+from vllm.utils import is_xpu, is_cpu
 if is_xpu():
     from vllm._ipex_ops import ipex_ops as vllm_ops
     from vllm._ipex_ops import ipex_cache_ops as vllm_cache_ops
+
+if is_cpu():
+    from vllm.cpu_ops import cpu_ops as vllm_ops
+    from vllm.cpu_ops import cpu_cache_ops as vllm_cache_ops
 
 
 # activation ops

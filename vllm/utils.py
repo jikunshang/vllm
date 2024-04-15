@@ -342,8 +342,10 @@ def create_kv_caches_with_random(
         raise ValueError(f"Invalid kv cache dtype: {cache_dtype}")
 
     scale = head_size**-0.5
-    x = 16 // torch.tensor([], dtype=torch_dtype).element_size()
+    # x = 16 // torch.tensor([], dtype=torch_dtype).element_size()
+    x = 1# (5,2,4,8)
     key_cache_shape = (num_blocks, num_heads, head_size // x, block_size, x)
+    cpu_key_cache_shape = (num_blocks, block_size, num_heads, head_size)
     key_caches = []
     for _ in range(num_layers):
         key_cache = torch.empty(size=key_cache_shape,
@@ -359,6 +361,8 @@ def create_kv_caches_with_random(
         key_caches.append(key_cache)
 
     value_cache_shape = (num_blocks, num_heads, head_size, block_size)
+    # cpu_value_cache_shape = (num_blocks, block_size, num_heads, head_size)
+
     value_caches = []
     for _ in range(num_layers):
         value_cache = torch.empty(size=value_cache_shape,

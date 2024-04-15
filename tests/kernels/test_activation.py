@@ -16,6 +16,7 @@ CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
 ]
 SYCL_DEVICES = [f"xpu:0"] if is_xpu() else []
+SYCL_DEVICES = [f"cpu"]
 
 
 @pytest.mark.parametrize("activation", ["silu", "gelu", "gelu_tanh"])
