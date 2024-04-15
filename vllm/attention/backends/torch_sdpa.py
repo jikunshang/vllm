@@ -275,7 +275,9 @@ def _make_alibi_bias(
 ) -> List[torch.Tensor]:
     attn_biases = []
     for prompt_len in prompt_lens:
-        bias = torch.arange(prompt_len, dtype=dtype)
+        bias = torch.arange(prompt_len,
+                            dtype=dtype,
+                            device=alibi_slopes.device)
         # NOTE(zhuohan): HF uses
         #     `bias = bias[None, :].repeat(prompt_len, 1)`
         # here. We find that both biases give the same results, but
@@ -288,7 +290,8 @@ def _make_alibi_bias(
         bias.mul_(alibi_slopes[:, None, None])
         inf_mask = torch.empty(
             (1, prompt_len, prompt_len),
-            dtype=bias.dtype).fill_(-torch.inf).triu_(diagonal=1)
+            dtype=bias.dtype,
+            device=alibi_slopes.device).fill_(-torch.inf).triu_(diagonal=1)
         attn_biases.append((bias + inf_mask).to(dtype))
 
     return attn_biases
