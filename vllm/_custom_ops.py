@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
 
@@ -182,12 +182,13 @@ def reshape_and_cache(
                                      slot_mapping, kv_cache_dtype, kv_scale)
 
 
-def copy_blocks(key_caches: torch.Tensor, value_caches: torch.Tensor,
-                block_mapping: torch.Tensor) -> None:
+def copy_blocks(key_caches: List[torch.Tensor],
+                value_caches: List[torch.Tensor],
+                block_mapping: Dict[int, List[int]]) -> None:
     vllm_cache_ops.copy_blocks(key_caches, value_caches, block_mapping)
 
 
-def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
+def swap_blocks(src: List[torch.Tensor], dst: List[torch.Tensor],
                 block_mapping: Dict[int, int]) -> None:
     vllm_cache_ops.swap_blocks(src, dst, block_mapping)
 
