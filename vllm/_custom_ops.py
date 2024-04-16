@@ -8,11 +8,11 @@ try:
 except ImportError:
     pass
 
-# todo: how to support cpu+ipex?
 from vllm.utils import is_xpu
+
 if is_xpu():
-    from vllm._ipex_ops import ipex_ops as vllm_ops
     from vllm._ipex_ops import ipex_cache_ops as vllm_cache_ops
+    from vllm._ipex_ops import ipex_ops as vllm_ops
 
 
 # activation ops
