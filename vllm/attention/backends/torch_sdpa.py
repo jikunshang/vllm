@@ -179,51 +179,35 @@ class TorchSDPABackendImpl(AttentionImpl):
                             att_masks = [None] * len(attn_metadata.prompt_lens)
                     attn_metadata.attn_bias = att_masks
 
-                # query = query.unsqueeze(0) # [batch_size, num_tokens, num_heads, head_size]
-                # key = key.unsqueeze(0)
-                # value = value.unsqueeze(0)
-
                 if self.fuse_batch:
                     out = torch.empty(
                         (num_tokens, self.num_heads, self.head_size),
                         dtype=query.dtype,
                         device=query.device)
-                    # if attn_metadata.prompt_lens is not None:
-                    seqlen = torch.tensor(attn_metadata.prompt_lens)
+                    tmp = [0]
+                    tmp.extend(attn_metadata.prompt_lens)
+                    seqlen = torch.tensor(tmp)
                     max_seqlen = max(attn_metadata.prompt_lens)
-                    seqlen_q = torch.cumsum(seqlen, dim=0)
-                    torch.xpu.varlen_fwd(query,
-                                         key,
-                                         value,
-                                         out,
-                                         seqlen_q,
-                                         seqlen_q,
-                                         max_seqlen,
-                                         max_seqlen,
-                                         pdropout=0.0,
-                                         softmax_scale=self.scale,
-                                         zero_tensors=None,
-                                         is_causal=False,
-                                         return_softmax=False,
-                                         gen_=None)
-                    # mask = _make_attention_mask(attn_metadata.attn_bias,
-                    #                             attn_metadata.prompt_lens,
-                    #                             sum(attn_metadata.prompt_lens),
-                    #                             query.dtype).to(query.device)
-                    # out = scaled_dot_product_attention(
-                    #     query,
-                    #     key,
-                    #     value,
-                    #     attn_mask=mask,
-                    #     dropout_p=0.0,
-                    #     is_causal=False,
-                    #     scale=self.scale).movedim(query.dim() - 2,
-                    #                               1).contiguous()
+                    seqlen_q = torch.cumsum(seqlen,
+                                            dim=0).to(device=query.device)
+                    import intel_extension_for_pytorch as ipex
+                    ipex.llm.functional.varlen_attention(
+                        query,
+                        key,
+                        value,
+                        out,
+                        seqlen_q,
+                        seqlen_q,
+                        max_seqlen,
+                        max_seqlen,
+                        pdropout=0.0,
+                        softmax_scale=self.scale,
+                        zero_tensors=False,
+                        is_causal=False,
+                        return_softmax=False,
+                        gen_=None)
                 else:
-                    query = query.movedim(
-                        0,
-                        query.dim() -
-                        2)  #[batch_size, num_heads, num_tokens, head_size]
+                    query = query.movedim(0, query.dim() - 2)
                     key = key.movedim(0, key.dim() - 2)
                     value = value.movedim(0, value.dim() - 2)
                     start = 0
