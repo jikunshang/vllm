@@ -212,9 +212,12 @@ class TorchSDPABackendImpl(AttentionImpl):
                         return_softmax=False,
                         gen_=None)
                 else:
-                    query = query.movedim(0, query.dim() - 2)
-                    key = key.movedim(0, key.dim() - 2)
-                    value = value.movedim(0, value.dim() - 2)
+                    query = query.unsqueeze(0)
+                    key = key.unsqueeze(0)
+                    value = value.unsqueeze(0)
+                    query = query.movedim(1, query.dim() - 2)
+                    key = key.movedim(1, key.dim() - 2)
+                    value = value.movedim(1, value.dim() - 2)
                     start = 0
                     out = torch.empty(
                         (num_tokens, self.num_heads, self.head_size),
@@ -224,14 +227,14 @@ class TorchSDPABackendImpl(AttentionImpl):
                                                 attn_metadata.attn_bias):
                         end = start + seq_len
                         sub_out = scaled_dot_product_attention(
-                            query[:, start:end, :],
-                            key[:, start:end, :],
-                            value[:, start:end, :],
+                            query[:, :, start:end, :],
+                            key[:, :, start:end, :],
+                            value[:, :, start:end, :],
                             attn_mask=mask,
                             dropout_p=0.0,
                             is_causal=not self.need_mask,
-                            scale=self.scale).movedim(query.dim() - 2, 0)
-                        out[start:end, :, :] = sub_out
+                            scale=self.scale).movedim(query.dim() - 2, 1)
+                        out[:, start:end, :, :] = sub_out
                         start = end
 
                 output = out.to(query.dtype)
