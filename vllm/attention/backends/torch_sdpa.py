@@ -184,48 +184,73 @@ class TorchSDPABackendImpl(AttentionImpl):
                             att_masks = [None] * len(attn_metadata.seq_lens)
                     attn_metadata.attn_bias = att_masks
 
-                query = query.unsqueeze(0)
-                key = key.unsqueeze(0)
-                value = value.unsqueeze(0)
-                query = query.movedim(1, query.dim() - 2)
-                key = key.movedim(1, key.dim() - 2)
-                value = value.movedim(1, value.dim() - 2)
+                # query = query.unsqueeze(0) # [batch_size, num_tokens, num_heads, head_size]
+                # key = key.unsqueeze(0)
+                # value = value.unsqueeze(0)
 
                 if self.fuse_batch:
-                    mask = _make_attention_mask(attn_metadata.attn_bias,
-                                                attn_metadata.seq_lens,
-                                                sum(attn_metadata.seq_lens),
-                                                query.dtype).to(query.device)
-                    out = scaled_dot_product_attention(
-                        query,
-                        key,
-                        value,
-                        attn_mask=mask,
-                        dropout_p=0.0,
-                        is_causal=False,
-                        scale=self.scale).movedim(query.dim() - 2,
-                                                  1).contiguous()
+                    out = torch.empty(
+                        (num_tokens, self.num_heads, self.head_size),
+                        dtype=query.dtype,
+                        device=query.device)
+                    # if attn_metadata.prompt_lens is not None:
+                    seqlen = torch.tensor(attn_metadata.seq_lens)
+                    max_seqlen = max(attn_metadata.seq_lens)
+                    seqlen_q = torch.cumsum(seqlen, dim=0)
+                    torch.xpu.varlen_fwd(query,
+                                         key,
+                                         value,
+                                         out,
+                                         seqlen_q,
+                                         seqlen_q,
+                                         max_seqlen,
+                                         max_seqlen,
+                                         pdropout=0.0,
+                                         softmax_scale=self.scale,
+                                         zero_tensors=None,
+                                         is_causal=False,
+                                         return_softmax=False,
+                                         gen_=None)
+                    # mask = _make_attention_mask(attn_metadata.attn_bias,
+                    #                             attn_metadata.prompt_lens,
+                    #                             sum(attn_metadata.prompt_lens),
+                    #                             query.dtype).to(query.device)
+                    # out = scaled_dot_product_attention(
+                    #     query,
+                    #     key,
+                    #     value,
+                    #     attn_mask=mask,
+                    #     dropout_p=0.0,
+                    #     is_causal=False,
+                    #     scale=self.scale).movedim(query.dim() - 2,
+                    #                               1).contiguous()
                 else:
+                    query = query.movedim(
+                        0,
+                        query.dim() -
+                        2)  #[batch_size, num_heads, num_tokens, head_size]
+                    key = key.movedim(0, key.dim() - 2)
+                    value = value.movedim(0, value.dim() - 2)
                     start = 0
                     out = torch.empty(
-                        (1, num_tokens, self.num_heads, self.head_size),
+                        (num_tokens, self.num_heads, self.head_size),
                         dtype=query.dtype,
                         device=query.device)
                     for seq_len, mask in zip(attn_metadata.seq_lens,
                                                 attn_metadata.attn_bias):
                         end = start + seq_len
                         sub_out = scaled_dot_product_attention(
-                            query[:, :, start:end, :],
-                            key[:, :, start:end, :],
-                            value[:, :, start:end, :],
+                            query[:, start:end, :],
+                            key[:, start:end, :],
+                            value[:, start:end, :],
                             attn_mask=mask,
                             dropout_p=0.0,
                             is_causal=not self.need_mask,
-                            scale=self.scale).movedim(query.dim() - 2, 1)
-                        out[:, start:end, :, :] = sub_out
+                            scale=self.scale).movedim(query.dim() - 2, 0)
+                        out[start:end, :, :] = sub_out
                         start = end
 
-                output = out.view_as(query).to(query.dtype)
+                output = out.to(query.dtype)
             else:
                 # prefix-enabled attention
                 raise RuntimeError(
