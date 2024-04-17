@@ -168,7 +168,7 @@ class CPUWorker(LoraNotSupportedWorkerBase):
 
     def load_model(self):
         self.model_runner.load_model()
-
+    
     def determine_num_available_blocks(self) -> Tuple[int, int]:
         """Determine the number of blocks available for the KV cache.
 
@@ -253,7 +253,11 @@ class CPUWorker(LoraNotSupportedWorkerBase):
         if blocks_to_copy:
             self.cache_engine.copy(blocks_to_copy)
 
-    @torch.inference_mode()
+    def child_loop(self):
+        while True:
+            self.execute_model()
+
+    @torch.no_grad()
     def execute_model(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,

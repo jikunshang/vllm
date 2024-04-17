@@ -309,7 +309,7 @@ class CPUModelRunner:
         return (input_tokens, input_positions, attn_metadata,
                 sampling_metadata, multi_modal_input)
 
-    @torch.inference_mode()
+    @torch.no_grad()
     def execute_model(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],

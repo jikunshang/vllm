@@ -23,21 +23,11 @@ def tensor_model_parallel_all_reduce(input_: torch.Tensor) -> torch.Tensor:
     TLDR: always assume this function modifies its input, but use the return
     value as the output.
     """
-    from vllm.distributed.device_communicators import pynccl_utils
-    from vllm.distributed.device_communicators.custom_all_reduce import (
-        custom_all_reduce)
-
     # Bypass the function if we are using only 1 GPU.
     if get_tensor_model_parallel_world_size() == 1:
         return input_
-    out = custom_all_reduce(input_)
-    if out is not None:
-        return out
-    if is_pynccl_enabled_for_all_reduce():
-        pynccl_utils.all_reduce(input_)
-    else:
-        torch.distributed.all_reduce(input_,
-                                     group=get_tensor_model_parallel_group())
+    torch.distributed.all_reduce(input_,
+                                group=get_tensor_model_parallel_group())
     return input_
 
 
@@ -188,50 +178,8 @@ def broadcast_tensor_dict(
     if world_size == 1:
         return tensor_dict
 
-    rank = torch.distributed.get_rank()
-    if rank == src:
-        metadata_list: List[Tuple[Any, Any]] = []
-        assert isinstance(
-            tensor_dict,
-            dict), (f"Expecting a dictionary, got {type(tensor_dict)}")
-        metadata_list, tensor_list = _split_tensor_dict(tensor_dict)
-        # `metadata_list` lives in CPU memory.
-        # `broadcast_object_list` involves serialization and deserialization,
-        # all happening on CPU. Therefore, we can use the CPU group.
-        torch.distributed.broadcast_object_list([metadata_list],
-                                                src=src,
-                                                group=metadata_group)
-        async_handles = []
-        for tensor in tensor_list:
-            async_handles.append(
-                torch.distributed.broadcast(tensor,
+    broadcast_list = [tensor_dict]
+    torch.distributed.broadcast_object_list(broadcast_list,
                                             src=src,
-                                            group=group,
-                                            async_op=True))
-        for async_handle in async_handles:
-            async_handle.wait()
-
-    else:
-        recv_metadata_list = [None]
-        torch.distributed.broadcast_object_list(recv_metadata_list,
-                                                src=src,
-                                                group=metadata_group)
-        assert recv_metadata_list[0] is not None
-        tensor_dict = {}
-        async_handles = []
-        for key, value in recv_metadata_list[0]:
-            if isinstance(value, TensorMetadata):
-                tensor = torch.empty(value.size,
-                                     dtype=value.dtype,
-                                     device="cuda")
-                async_handle = torch.distributed.broadcast(tensor,
-                                                           src=src,
-                                                           async_op=True,
-                                                           group=group)
-                async_handles.append(async_handle)
-                tensor_dict[key] = tensor
-            else:
-                tensor_dict[key] = value
-        for async_handle in async_handles:
-            async_handle.wait()
-    return tensor_dict
+                                            group=group)
+    return broadcast_list[0]
