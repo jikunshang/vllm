@@ -192,7 +192,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                                             dim=0).to(device=query.device)
                     import intel_extension_for_pytorch as ipex
                     ipex.llm.functional.varlen_attention(
-                        query,
+                        query.contiguous(),
                         key,
                         value,
                         out,
@@ -203,7 +203,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                         pdropout=0.0,
                         softmax_scale=self.scale,
                         zero_tensors=False,
-                        is_causal=False,
+                        is_causal=True,
                         return_softmax=False,
                         gen_=None)
                 else:
@@ -215,7 +215,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                     value = value.movedim(1, value.dim() - 2)
                     start = 0
                     out = torch.empty(
-                        (num_tokens, self.num_heads, self.head_size),
+                        (1, num_tokens, self.num_heads, self.head_size),
                         dtype=query.dtype,
                         device=query.device)
                     for prompt_len, mask in zip(attn_metadata.prompt_lens,

@@ -188,7 +188,7 @@ def copy_blocks(key_caches: List[torch.Tensor],
     vllm_cache_ops.copy_blocks(key_caches, value_caches, block_mapping)
 
 
-def swap_blocks(src: List[torch.Tensor], dst: List[torch.Tensor],
+def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
                 block_mapping: Dict[int, int]) -> None:
     vllm_cache_ops.swap_blocks(src, dst, block_mapping)
 

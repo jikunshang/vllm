@@ -119,8 +119,12 @@ def run_vllm(
 
     start = time.perf_counter()
     # FIXME(woosuk): Do not use internal method.
-    llm._run_engine(use_tqdm=True)
+    outputs = llm._run_engine(use_tqdm=True)
     end = time.perf_counter()
+    for output in outputs:
+        prompt = output.prompt
+        generated_text = output.outputs[0].text
+        print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
     return end - start
 
 
@@ -335,7 +339,7 @@ if __name__ == "__main__":
         "--device",
         type=str,
         default="cuda",
-        choices=["cuda", "cpu"],
+        choices=["cuda", "cpu", "xpu"],
         help='device type for vLLM execution, supporting CUDA and CPU.')
     parser.add_argument(
         "--enable-prefix-caching",
