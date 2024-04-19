@@ -8,7 +8,9 @@ install:
 	VLLM_TARGET_DEVICE=cpu pip install --no-build-isolation  -v -e .
 
 VLLM_TP_2S_bench:
-	OMP_DISPLAY_ENV=VERBOSE numactl --physcpubind=32-63 --membind=1 ray start --head --num-cpus=32 --num-gpus=0
+	ray stop
+	OMP_DISPLAY_ENV=VERBOSE VLLM_CPU_KVCACHE_SPACE=40 OMP_PROC_BIND=close numactl --physcpubind=48-79 --membind=1 ray start --head --num-cpus=32 --num-gpus=0
+	OMP_DISPLAY_ENV=VERBOSE VLLM_CPU_KVCACHE_SPACE=40 OMP_PROC_BIND=close numactl --physcpubind=0-31 --membind=0 python3 examples/offline_inference.py
 
 HF_TP_bench:
 	cd benchmarks && python benchmark_throughput.py --backend=hf --dataset=../ShareGPT_V3_unfiltered_cleaned_split.json --model=/root/frameworks.bigdata.dev-ops/vicuna-7b-v1.5/ --n=1 --num-prompts=1 --hf-max-batch-size=1 --trust-remote-code --device=cpu

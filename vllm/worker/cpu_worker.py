@@ -9,6 +9,7 @@ from vllm.config import (CacheConfig, DeviceConfig, LoadConfig, LoRAConfig,
                          ModelConfig, ParallelConfig, SchedulerConfig,
                          VisionLanguageConfig)
 from vllm.distributed import (broadcast_tensor_dict,
+                              parallel_state,
                               ensure_model_parallel_initialized,
                               init_distributed_environment)
 from vllm.logger import init_logger
@@ -122,6 +123,7 @@ class CPUWorker(LoraNotSupportedWorkerBase):
         local_rank: int,
         rank: int,
         distributed_init_method: str,
+        ip_port: str,
         lora_config: Optional[LoRAConfig] = None,
         vision_language_config: Optional[VisionLanguageConfig] = None,
         kv_cache_dtype: Optional[str] = "auto",
@@ -136,6 +138,7 @@ class CPUWorker(LoraNotSupportedWorkerBase):
         self.local_rank = local_rank
         self.rank = rank
         self.distributed_init_method = distributed_init_method
+        self.ip_port = ip_port
         self.lora_config = lora_config
         self.vision_language_config = vision_language_config
         self.is_driver_worker = is_driver_worker
@@ -316,6 +319,24 @@ class CPUWorker(LoraNotSupportedWorkerBase):
         ensure_model_parallel_initialized(
             parallel_config.tensor_parallel_size,
             parallel_config.pipeline_parallel_size)
+
+    def init_shm_manager(self):
+        from vllm._C.ops import init_shm_manager
+
+        elem_size = torch.tensor([], 
+                                    dtype=self.model_config.dtype).element_size()
+        world_size = parallel_state.get_tensor_model_parallel_world_size()
+        hidden_size = self.model_config.get_hidden_size() 
+        rank_buffer_size = \
+            self.model_config.max_model_len * hidden_size * 5 // world_size * elem_size 
+        ret = init_shm_manager(
+            self.ip_port,
+            parallel_state.get_tensor_model_parallel_world_size(),
+            parallel_state.get_tensor_model_parallel_rank(),
+            rank_buffer_size,
+        )
+        print("rank: ", parallel_state.get_tensor_model_parallel_rank())
+        print(ret)
 
     def get_cache_block_size_bytes(self) -> int:
         """Return the size in bytes of a single KV cache block.

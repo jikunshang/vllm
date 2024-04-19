@@ -73,6 +73,7 @@ set(VLLM_EXT_SRC
     "csrc/cpu/cache.cpp"
     "csrc/cpu/layernorm.cpp"
     "csrc/cpu/pos_encoding.cpp"
+    "csrc/cpu/shm_ccl.cpp"
     "csrc/cpu/pybind.cpp")
 
 define_gpu_extension_target(

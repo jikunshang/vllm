@@ -3,6 +3,12 @@
 #include "ops.h"
 #include <torch/extension.h>
 
+std::string init_shm_manager(const std::string &ip_port,
+                      const int group_size, const int rank,
+                      const size_t rank_buffer_size);
+
+void shm_allreduce(torch::Tensor &data, int rank);
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // vLLM custom ops
   pybind11::module ops = m.def_submodule("ops", "vLLM custom operators");
@@ -70,4 +76,14 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     "reshape_and_cache",
     &reshape_and_cache,
     "Reshape the key and value tensors and cache them");
+
+  // SHM CCL
+  ops.def(
+    "init_shm_manager",
+    &init_shm_manager,
+    "Initialize shared memory collective communication manager."); 
+  ops.def(
+    "shm_allreduce",
+    &shm_allreduce,
+    "SHM based sum AllReduce operation."); 
 }

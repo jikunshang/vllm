@@ -32,8 +32,10 @@ class CPUExecutor(ExecutorBase):
         self.children_loops = []
 
         # Instantiate the worker and load the model to CPU.
-        self.distributed_init_method = get_distributed_init_method(
-            get_ip(), get_open_port())
+        ip = get_ip()
+        port = get_open_port()
+        self.ip_port = ip + "_" + str(port)
+        self.distributed_init_method = get_distributed_init_method(ip, port)
         if self.parallel_config.tensor_parallel_size > 1:
             self._init_ray_workers()
         else:
@@ -50,6 +52,7 @@ class CPUExecutor(ExecutorBase):
             local_rank=0,
             rank=0,
             distributed_init_method=self.distributed_init_method,
+            ip_port=self.ip_port,
             lora_config=self.lora_config,
             vision_language_config=self.vision_language_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
@@ -93,6 +96,7 @@ class CPUExecutor(ExecutorBase):
         device_config = copy.deepcopy(self.device_config)
         lora_config = copy.deepcopy(self.lora_config)
         cache_config = copy.deepcopy(self.cache_config)
+        load_config = copy.deepcopy(self.load_config)
         distributed_init_method = copy.deepcopy(self.distributed_init_method)
         for bundle_id, bundle in enumerate(placement_group.bundle_specs):
             scheduling_strategy = PlacementGroupSchedulingStrategy(
@@ -110,10 +114,11 @@ class CPUExecutor(ExecutorBase):
                 scheduler_config=scheduler_config,
                 device_config=device_config,
                 cache_config=cache_config,
-                load_config=self.load_config,
+                load_config=load_config,
                 local_rank=bundle_id + 1,
                 rank=bundle_id + 1,
                 distributed_init_method=distributed_init_method,
+                ip_port = self.ip_port,
                 lora_config=lora_config,
                 kv_cache_dtype=self.cache_config.cache_dtype,
                 is_driver_worker=False, 
@@ -126,6 +131,10 @@ class CPUExecutor(ExecutorBase):
             task_handlers.append(child.load_model.remote())
 
         self._init_worker()
+        self.driver_worker.init_shm_manager()
+        for child in self.children_workers:
+            task_handlers.append(child.init_shm_manager.remote())
+
         ray.get(task_handlers)
 
     def determine_num_available_blocks(self) -> Tuple[int, int]:
