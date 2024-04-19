@@ -119,12 +119,8 @@ def run_vllm(
 
     start = time.perf_counter()
     # FIXME(woosuk): Do not use internal method.
-    outputs = llm._run_engine(use_tqdm=True)
+    llm._run_engine(use_tqdm=True)
     end = time.perf_counter()
-    for output in outputs:
-        prompt = output.prompt
-        generated_text = output.outputs[0].text
-        print(f"Prompt: {prompt!r}, Generated text: {generated_text!r}")
     return end - start
 
 
