@@ -81,6 +81,7 @@ void parallel_memcpy(void *dst, void *src, size_t len) {
 }
 
 void gather(SHMContext *ctx, int rank, void *data, size_t len) {
+  CPU_KERNEL_GUARD_IN(gather)
   TORCH_CHECK(len <= ctx->rank_buffer_size);
   if (rank == 0) {
     for (int i = 0; i < ctx->group_size; ++i) {
@@ -101,6 +102,7 @@ void gather(SHMContext *ctx, int rank, void *data, size_t len) {
 }
 
 void broadcast(SHMContext *ctx, int rank, void *data, size_t len) {
+  CPU_KERNEL_GUARD_IN(broatcast)
   if (rank == 0) {
     for (int i = 0; i < ctx->group_size; ++i) {
       ctx->set_rank_stat(i, RankStat::READY);
