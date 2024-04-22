@@ -104,7 +104,8 @@ void reshape_and_cache(
     torch::Tensor& key_cache,
     torch::Tensor& value_cache,
     torch::Tensor& slot_mapping,
-    const std::string& kv_cache_dtype) {
+    const std::string& kv_cache_dtype,
+    const float kv_scale) {
   int num_tokens = key.size(0);
   int num_heads = key.size(1);
   int head_size = key.size(2);

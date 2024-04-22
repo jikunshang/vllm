@@ -1222,7 +1222,8 @@ void paged_attention_v1(
     int block_size,
     int max_context_len,
     const c10::optional<torch::Tensor>& alibi_slopes,
-    const std::string& kv_cache_dtype) {
+    const std::string& kv_cache_dtype,
+    const float kv_scale) {
   VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
       query.scalar_type(), "paged_attention_xpu_v1_impl", [&] {
         CALL_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t);
@@ -1244,7 +1245,8 @@ void paged_attention_v2(
     int block_size,
     int max_context_len,
     const c10::optional<torch::Tensor>& alibi_slopes,
-    const std::string& kv_cache_dtype) {
+    const std::string& kv_cache_dtype,
+    const float kv_scale) {
   VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
       query.scalar_type(), "paged_attention_xpu_v2_impl", [&] {
         CALL_V2_LAUNCHER_BLOCK_SIZE(scalar_t);

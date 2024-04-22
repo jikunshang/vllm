@@ -30,7 +30,7 @@ void paged_attention_v1(
     torch::Tensor &value_cache, int num_kv_heads, float scale,
     torch::Tensor &block_tables, torch::Tensor &context_lens, int block_size,
     int max_context_len, const c10::optional<torch::Tensor> &alibi_slopes,
-    const std::string& kv_cache_dtype);
+    const std::string& kv_cache_dtype, const float kv_scale);
 
 void paged_attention_v2(
     torch::Tensor &out, torch::Tensor &exp_sums, torch::Tensor &max_logits,
@@ -38,7 +38,7 @@ void paged_attention_v2(
     torch::Tensor &value_cache, int num_kv_heads, float scale,
     torch::Tensor &block_tables, torch::Tensor &context_lens, int block_size,
     int max_context_len, const c10::optional<torch::Tensor> &alibi_slopes,
-    const std::string& kv_cache_dtype);
+    const std::string& kv_cache_dtype, const float kv_scale);
 
 void copy_blocks(
     std::vector<torch::Tensor> &key_caches,
@@ -48,7 +48,7 @@ void copy_blocks(
 void reshape_and_cache(torch::Tensor &key, torch::Tensor &value,
                            torch::Tensor &key_cache, torch::Tensor &value_cache,
                            torch::Tensor &slot_mapping,
-                           const std::string& kv_cache_dtype);
+                           const std::string& kv_cache_dtype, const float kv_scale);
 
 void moe_align_block_size(
   torch::Tensor topk_ids,
