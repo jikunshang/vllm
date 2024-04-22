@@ -205,6 +205,9 @@ class XPUWorker():
                                                  self.gpu_cache)
         return output
 
+    def warm_up_model(self) -> None:
+        pass
+
     def cache_swap(
         self,
         blocks_to_swap_in: Dict[int, int],
