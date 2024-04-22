@@ -212,29 +212,27 @@ class TorchSDPABackendImpl(AttentionImpl):
                         return_softmax=False,
                         gen_=None)
                 else:
-                    query = query.unsqueeze(0)
-                    key = key.unsqueeze(0)
-                    value = value.unsqueeze(0)
-                    query = query.movedim(1, query.dim() - 2)
-                    key = key.movedim(1, key.dim() - 2)
-                    value = value.movedim(1, value.dim() - 2)
+                    query = query.movedim(0, query.dim() - 2)
+                    key = key.movedim(0, key.dim() - 2)
+                    value = value.movedim(0, value.dim() - 2)
+
                     start = 0
                     out = torch.empty(
-                        (1, num_tokens, self.num_heads, self.head_size),
+                        (num_tokens, self.num_heads, self.head_size),
                         dtype=query.dtype,
                         device=query.device)
                     for seq_len, mask in zip(attn_metadata.seq_lens,
                                                 attn_metadata.attn_bias):
                         end = start + seq_len
                         sub_out = scaled_dot_product_attention(
-                            query[:, :, start:end, :],
-                            key[:, :, start:end, :],
-                            value[:, :, start:end, :],
+                            query[:, start:end, :],
+                            key[:, start:end, :],
+                            value[:, start:end, :],
                             attn_mask=mask,
                             dropout_p=0.0,
                             is_causal=not self.need_mask,
-                            scale=self.scale).movedim(query.dim() - 2, 1)
-                        out[:, start:end, :, :] = sub_out
+                            scale=self.scale).movedim(query.dim() - 2, 0)
+                        out[start:end, :, :] = sub_out
                         start = end
 
                 output = out.to(query.dtype)
@@ -261,28 +259,6 @@ class TorchSDPABackendImpl(AttentionImpl):
 
         # Reshape the output tensor.
         return output.view(-1, self.num_heads * self.head_size)
-
-
-def _make_attention_mask(
-    att_bias: List[torch.Tensor],
-    seq_lens: List[int],
-    prompt_token_num: int,
-    dtype: torch.dtype,
-) -> torch.Tensor:
-    assert att_bias[0].dim() == 3
-    assert len(att_bias) == len(seq_lens)
-    head_size, _, _ = att_bias[0].size()
-    mask = torch.empty(head_size,
-                       prompt_token_num,
-                       prompt_token_num,
-                       dtype=dtype)
-    mask.fill_(-torch.inf)
-    start = 0
-    for seq_len, sub_mask in zip(seq_lens, att_bias):
-        end = start + seq_len
-        mask[:, start:end, start:end] = sub_mask
-        start += seq_len
-    return mask
 
 
 def _make_alibi_bias(
