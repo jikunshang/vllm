@@ -18,6 +18,7 @@ uvicorn[standard]
 pydantic >= 2.0  # Required for OpenAI server.
 prometheus_client >= 0.18.0
 pynvml == 11.5.0
+py-cpuinfo
 # outlines == 0.0.34
 
 triton @ https://github.com/intel/intel-xpu-backend-for-triton/releases/download/v2.1.0/triton-2.1.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
