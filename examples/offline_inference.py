@@ -11,7 +11,7 @@ prompts = [
 sampling_params = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1024)
 
 # Create an LLM.
-llm = LLM(model="lmsys/vicuna-7b-v1.5", tensor_parallel_size=2)
+llm = LLM(model="lmsys/vicuna-7b-v1.5", tensor_parallel_size=4)
 # Generate texts from the prompts. The output is a list of RequestOutput objects
 # that contain the prompt, generated text, and other information.
 outputs = llm.generate(prompts, sampling_params)
