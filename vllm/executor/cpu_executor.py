@@ -131,11 +131,17 @@ class CPUExecutor(ExecutorBase):
             task_handlers.append(child.load_model.remote())
 
         self._init_worker()
-        self.driver_worker.init_shm_manager()
+
+        # Initialize SHM CCL
         for child in self.children_workers:
             task_handlers.append(child.init_shm_manager.remote())
-
         ray.get(task_handlers)
+        self.driver_worker.init_shm_manager()
+
+        for child in self.children_workers:
+            task_handlers.append(child.join_shm_manager.remote())
+        ray.get(task_handlers)
+        self.driver_worker.join_shm_manager()
 
     def determine_num_available_blocks(self) -> Tuple[int, int]:
         """Determine the number of available KV blocks by invoking the

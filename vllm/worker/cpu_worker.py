@@ -329,7 +329,23 @@ class CPUWorker(LoraNotSupportedWorkerBase):
         hidden_size = self.model_config.get_hidden_size() 
         rank_buffer_size = \
             self.model_config.max_model_len * hidden_size * 5 // world_size * elem_size 
-        ret = init_shm_manager(
+        init_shm_manager(
+            self.ip_port,
+            parallel_state.get_tensor_model_parallel_world_size(),
+            parallel_state.get_tensor_model_parallel_rank(),
+            rank_buffer_size,
+        )
+
+    def join_shm_manager(self):
+        from vllm._C.ops import join_shm_manager
+
+        elem_size = torch.tensor([], 
+                                    dtype=self.model_config.dtype).element_size()
+        world_size = parallel_state.get_tensor_model_parallel_world_size()
+        hidden_size = self.model_config.get_hidden_size() 
+        rank_buffer_size = \
+            self.model_config.max_model_len * hidden_size * 5 // world_size * elem_size 
+        ret = join_shm_manager(
             self.ip_port,
             parallel_state.get_tensor_model_parallel_world_size(),
             parallel_state.get_tensor_model_parallel_rank(),

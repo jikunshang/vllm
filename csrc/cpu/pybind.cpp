@@ -3,7 +3,11 @@
 #include "ops.h"
 #include <torch/extension.h>
 
-std::string init_shm_manager(const std::string &ip_port,
+void init_shm_manager(const std::string &ip_port,
+                      const int group_size, const int rank,
+                      const size_t rank_buffer_size);
+
+std::string join_shm_manager(const std::string &ip_port,
                       const int group_size, const int rank,
                       const size_t rank_buffer_size);
 
@@ -82,6 +86,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     "init_shm_manager",
     &init_shm_manager,
     "Initialize shared memory collective communication manager."); 
+  ops.def(
+    "join_shm_manager",
+    &join_shm_manager,
+    "Exchange shared memory collective communication managers between ranks."); 
   ops.def(
     "shm_allreduce",
     &shm_allreduce,
