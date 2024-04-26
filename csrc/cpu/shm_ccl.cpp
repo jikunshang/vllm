@@ -129,19 +129,11 @@ namespace shm_cc_ops {
 
 void memcpy_64bytes(void *dst, void *src, size_t len) {
   constexpr size_t align_len = 64;
-  constexpr size_t group_len = align_len * 4;
   TORCH_CHECK(len % align_len == 0);
   TORCH_CHECK((size_t)dst % align_len == 0);
   TORCH_CHECK((size_t)src % align_len == 0);
-  size_t i = 0;
-  size_t round_len = (len - len % group_len);
-  for (; i < round_len; i += group_len) {
-    vec_op::unroll_loop<int, group_len / align_len>([&](int idx) {
-      vec_op::BF16Vec32 data((char *)src + i + idx * align_len);
-      vec_op::non_temporal_save(data, (char *)dst + i + idx * align_len);
-    });
-  }
-  for (; i < len; i += align_len) {
+#pragma GCC unroll 4
+  for (size_t i = 0; i < len; i += align_len) {
     vec_op::BF16Vec32 data((char *)src + i);
     vec_op::non_temporal_save(data, (char *)dst + i);
   }
@@ -185,12 +177,65 @@ void scatter(SHMContext *ctx, int rank, void *data, size_t len) {
 }
 
 template <typename scalar_t, int RANKS>
-void all_reduce_sum(SHMContext *ctx, int rank, size_t elem_num) {
-  CPU_KERNEL_GUARD_IN(all_reduce_sum)
+void all_reduce_sum_v1(SHMContext *ctx, int rank, scalar_t *data,
+                       size_t elem_num) {
+  CPU_KERNEL_GUARD_IN(all_reduce_sum_v1)
+  const size_t bytes = elem_num * sizeof(scalar_t);
+  TORCH_CHECK(bytes <= ctx->rank_buffer_size);
+  shm_cc_ops::gather(ctx, rank, data, bytes);
   using scalar_vec_t = typename KernelVecType<scalar_t>::scalar_vec_t;
   constexpr int VEC_ELEM_NUM = scalar_vec_t::get_elem_num();
   constexpr int CACHELINE_SIZE = 64;
-  constexpr int UNROLL_FACTOR = 4;
+  constexpr int PACKED_FACTOR =
+      CACHELINE_SIZE / (sizeof(scalar_t) * VEC_ELEM_NUM);
+  TORCH_CHECK(elem_num % VEC_ELEM_NUM == 0);
+
+  ctx->barrier(RankStat::READY);
+
+  int thread_num = omp_get_max_threads();
+  size_t partition_num =
+      (elem_num + thread_num * VEC_ELEM_NUM * PACKED_FACTOR - 1) /
+      (thread_num * VEC_ELEM_NUM * PACKED_FACTOR);
+#pragma omp parallel for schedule(static, 1)
+  for (int i = 0; i < thread_num; ++i) {
+    size_t offset = i * partition_num * VEC_ELEM_NUM * PACKED_FACTOR;
+    if (offset < elem_num) {
+      const size_t partition_len = std::min(
+          VEC_ELEM_NUM * PACKED_FACTOR * partition_num, elem_num - offset);
+      scalar_t *rank_ptrs[RANKS];
+      vec_op::unroll_loop<int, RANKS>([&](int idx) {
+        rank_ptrs[idx] = ctx->rank_ptr<scalar_t>(idx) + offset;
+        TORCH_CHECK((size_t)rank_ptrs[idx] % 64 == 0);
+      });
+
+#pragma GCC unroll 4
+      for (int i = 0; i < partition_len; i += VEC_ELEM_NUM) {
+        size_t curr_offset = i;
+        scalar_vec_t data_0(rank_ptrs[0] + curr_offset);
+        vec_op::FP32Vec16 fp32_data_0(data_0);
+        vec_op::unroll_loop<int, RANKS - 1>([&](int k) {
+          scalar_vec_t data_x(rank_ptrs[k + 1] + curr_offset);
+          vec_op::FP32Vec16 fp32_data_x(data_x);
+          fp32_data_0 = fp32_data_0 + fp32_data_x;
+        });
+        data_0 = scalar_vec_t(fp32_data_0);
+        data_0.save(data + offset + curr_offset);
+      }
+    }
+  }
+  ctx->barrier(RankStat::DONE);
+}
+
+template <typename scalar_t, int RANKS>
+void all_reduce_sum_v2(SHMContext *ctx, int rank, scalar_t *data,
+                       size_t elem_num) {
+  CPU_KERNEL_GUARD_IN(all_reduce_sum_v2)
+  const size_t bytes = elem_num * sizeof(scalar_t);
+  TORCH_CHECK(bytes <= ctx->rank_buffer_size);
+  shm_cc_ops::gather(ctx, rank, data, bytes);
+  using scalar_vec_t = typename KernelVecType<scalar_t>::scalar_vec_t;
+  constexpr int VEC_ELEM_NUM = scalar_vec_t::get_elem_num();
+  constexpr int CACHELINE_SIZE = 64;
   constexpr int PACKED_FACTOR =
       CACHELINE_SIZE / (sizeof(scalar_t) * VEC_ELEM_NUM);
   TORCH_CHECK(elem_num % VEC_ELEM_NUM == 0);
@@ -224,33 +269,14 @@ void all_reduce_sum(SHMContext *ctx, int rank, size_t elem_num) {
     if (offset < rank_elem_num) {
       const size_t partition_len = std::min(
           VEC_ELEM_NUM * PACKED_FACTOR * partition_num, rank_elem_num - offset);
-      const size_t round_partition_len =
-          partition_len - (partition_len % (UNROLL_FACTOR * VEC_ELEM_NUM));
-
       scalar_t *rank_ptrs[RANKS];
       vec_op::unroll_loop<int, RANKS>([&](int idx) {
         rank_ptrs[idx] = ctx->rank_ptr<scalar_t>(idx) + rank_offset + offset;
         TORCH_CHECK((size_t)rank_ptrs[idx] % 64 == 0);
       });
 
-      int i = 0;
-      for (; i < round_partition_len; i += UNROLL_FACTOR * VEC_ELEM_NUM) {
-        vec_op::unroll_loop<int, UNROLL_FACTOR>([&](int j) {
-          size_t curr_offset = i + j * VEC_ELEM_NUM;
-          scalar_vec_t data_0(rank_ptrs[0] + curr_offset);
-          vec_op::FP32Vec16 fp32_data_0(data_0);
-          vec_op::unroll_loop<int, RANKS - 1>([&](int k) {
-            scalar_vec_t data_x(rank_ptrs[k + 1] + curr_offset);
-            vec_op::FP32Vec16 fp32_data_x(data_x);
-            fp32_data_0 = fp32_data_0 + fp32_data_x;
-          });
-          data_0 = scalar_vec_t(fp32_data_0);
-          vec_op::unroll_loop<int, RANKS>([&](int k) {
-            vec_op::non_temporal_save(data_0, rank_ptrs[k] + curr_offset);
-          });
-        });
-      }
-      for (; i < partition_len; i += VEC_ELEM_NUM) {
+#pragma GCC unroll 4
+      for (int i = 0; i < partition_len; i += VEC_ELEM_NUM) {
         size_t curr_offset = i;
         scalar_vec_t data_0(rank_ptrs[0] + curr_offset);
         vec_op::FP32Vec16 fp32_data_0(data_0);
@@ -267,6 +293,8 @@ void all_reduce_sum(SHMContext *ctx, int rank, size_t elem_num) {
     }
   }
   ctx->barrier(RankStat::DONE);
+
+  shm_cc_ops::scatter(ctx, rank, data, bytes);
 }
 }; // namespace shm_cc_ops
 
@@ -369,75 +397,23 @@ private:
 
 static std::unique_ptr<SHMManager> shm_manager_singleton = nullptr;
 
-// template <typename scalar_t>
-// void shm_allreduce_sum(SHMContext *ctx, const int rank, scalar_t *data,
-//                        size_t elem_num) {
-//   using scalar_vec_t = vec_op::vec_t<scalar_t>;
-//   constexpr int VEC_ELEM_NUM = scalar_vec_t::get_elem_num();
-//   TORCH_CHECK(elem_num % VEC_ELEM_NUM == 0);
-
-//   const size_t bytes = elem_num * sizeof(scalar_t);
-//   TORCH_CHECK(bytes <= ctx->rank_buffer_size);
-
-//   shm_cc_ops::gather(ctx, rank, data, bytes);
-
-//   if (ctx->is_last()) {
-//     const int thread_num = omp_get_max_threads();
-//     const int vec_num = elem_num / VEC_ELEM_NUM;
-//     const int partition_vec_num = (vec_num + thread_num - 1) / thread_num;
-//     const int tail_partition_vec_num =
-//         vec_num - partition_vec_num * (thread_num - 1);
-//     for (int i = 1; i < ctx->group_size; ++i) {
-// #pragma omp parallel for schedule(static, 1)
-//       for (int j = 0; j < thread_num; ++j) {
-//         const int curr_thread_vec_num =
-//             (j == thread_num - 1) ? tail_partition_vec_num :
-//             partition_vec_num;
-//         scalar_t *rank_0_ptr =
-//             ctx->rank_ptr<scalar_t>(0) + j * partition_vec_num *
-//             VEC_ELEM_NUM;
-//         scalar_t *rank_i_ptr =
-//             ctx->rank_ptr<scalar_t>(i) + j * partition_vec_num *
-//             VEC_ELEM_NUM;
-//         for (int k = 0; k < curr_thread_vec_num; ++k) {
-//           scalar_vec_t rank_0_data(rank_0_ptr + k * VEC_ELEM_NUM);
-//           scalar_vec_t rank_i_data(rank_i_ptr + k * VEC_ELEM_NUM);
-//           vec_op::FP32Vec8 rank_0_data_fp32(rank_0_data);
-//           vec_op::FP32Vec8 rank_i_data_fp32(rank_i_data);
-//           scalar_vec_t result(rank_0_data_fp32 + rank_i_data_fp32);
-//           result.save(rank_0_ptr + k * VEC_ELEM_NUM);
-//         }
-//       }
-//     }
-//   }
-
-//   shm_cc_ops::broadcast(ctx, rank, data, bytes);
-// }
-
 template <typename scalar_t>
 void shm_allreduce_sum(SHMContext *ctx, const int rank, scalar_t *data,
                        size_t elem_num) {
-  const size_t bytes = elem_num * sizeof(scalar_t);
-  TORCH_CHECK(bytes <= ctx->rank_buffer_size);
-
-  shm_cc_ops::gather(ctx, rank, data, bytes);
-
   switch (ctx->group_size) {
   case 2:
-    shm_cc_ops::all_reduce_sum<scalar_t, 2>(ctx, rank, elem_num);
+    shm_cc_ops::all_reduce_sum_v1<scalar_t, 2>(ctx, rank, data, elem_num);
     break;
   case 4:
-    shm_cc_ops::all_reduce_sum<scalar_t, 4>(ctx, rank, elem_num);
+    shm_cc_ops::all_reduce_sum_v2<scalar_t, 4>(ctx, rank, data, elem_num);
     break;
   case 8:
-    shm_cc_ops::all_reduce_sum<scalar_t, 8>(ctx, rank, elem_num);
+    shm_cc_ops::all_reduce_sum_v2<scalar_t, 8>(ctx, rank, data, elem_num);
     break;
   default:
     TORCH_CHECK(false,
                 "Invalid world size: " + std::to_string(ctx->group_size));
   }
-
-  shm_cc_ops::scatter(ctx, rank, data, bytes);
 }
 
 } // namespace
