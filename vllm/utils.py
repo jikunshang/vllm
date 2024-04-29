@@ -20,18 +20,18 @@ from typing import (Any, AsyncIterator, Awaitable, Callable, Dict, Generic,
 import psutil
 import torch
 
-try:
-    import intel_extension_for_pytorch  # noqa: F401
-    _import_ipex = True
-except ImportError as e:
-    print(f"Import Error for IPEX: {e.msg}")
-    _import_ipex = False
-
 import vllm.envs as envs
 from vllm.logger import enable_trace_function_call, init_logger
 
 T = TypeVar("T")
 logger = init_logger(__name__)
+
+try:
+    import intel_extension_for_pytorch as ipex  # noqa: F401
+    _import_ipex = True
+except ImportError as e:
+    logger.warning("Import Error for IPEX: %s", e.msg)
+    _import_ipex = False
 
 STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.half,

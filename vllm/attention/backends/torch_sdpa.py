@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple, Type
 import torch
 from torch.nn.functional import scaled_dot_product_attention
 
+from vllm._ipex_ops import ipex_ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata,
                                               AttentionMetadataPerStage)
@@ -195,22 +196,20 @@ class TorchSDPABackendImpl(AttentionImpl):
                     max_seqlen = max(attn_metadata.seq_lens)
                     seqlen_q = torch.cumsum(seqlen,
                                             dim=0).to(device=query.device)
-                    import intel_extension_for_pytorch as ipex
-                    ipex.llm.functional.varlen_attention(
-                        query.contiguous(),
-                        key,
-                        value,
-                        out,
-                        seqlen_q,
-                        seqlen_q,
-                        max_seqlen,
-                        max_seqlen,
-                        pdropout=0.0,
-                        softmax_scale=self.scale,
-                        zero_tensors=False,
-                        is_causal=True,
-                        return_softmax=False,
-                        gen_=None)
+                    ipex_ops.varlen_attention(query.contiguous(),
+                                              key,
+                                              value,
+                                              out,
+                                              seqlen_q,
+                                              seqlen_q,
+                                              max_seqlen,
+                                              max_seqlen,
+                                              pdropout=0.0,
+                                              softmax_scale=self.scale,
+                                              zero_tensors=False,
+                                              is_causal=True,
+                                              return_softmax=False,
+                                              gen_=None)
                 else:
                     query = query.movedim(0, query.dim() - 2)
                     key = key.movedim(0, key.dim() - 2)

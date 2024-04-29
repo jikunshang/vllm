@@ -2,17 +2,23 @@ from typing import Optional, Tuple
 
 import torch
 
+from vllm.logger import init_logger
+from vllm.utils import is_xpu
+
+logger = init_logger(__name__)
+
 try:
     from vllm._C import cache_ops as vllm_cache_ops
     from vllm._C import ops as vllm_ops
-except ImportError:
-    pass
-
-from vllm.utils import is_xpu
+except ImportError as e:
+    logger.warning("Import error msg: %s", e.msg)
 
 if is_xpu():
-    from vllm._ipex_ops import ipex_cache_ops as vllm_cache_ops
-    from vllm._ipex_ops import ipex_ops as vllm_ops
+    try:
+        from vllm._ipex_ops import ipex_cache_ops as vllm_cache_ops
+        from vllm._ipex_ops import ipex_ops as vllm_ops
+    except ImportError as e:
+        logger.warning("Import error msg: %s", e.msg)
 
 
 # activation ops
