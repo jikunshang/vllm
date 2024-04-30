@@ -64,6 +64,7 @@ Documentation
    getting_started/amd-installation
    getting_started/neuron-installation
    getting_started/cpu-installation
+   getting_started/xpu-installation
    getting_started/quickstart
    getting_started/examples/examples_index
 
