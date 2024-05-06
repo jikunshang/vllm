@@ -349,8 +349,6 @@ class AsyncLLMEngine:
             from vllm.executor.neuron_executor import NeuronExecutorAsync
             executor_class = NeuronExecutorAsync
         elif engine_config.device_config.device_type == "cpu":
-            assert not engine_config.parallel_config.worker_use_ray, (
-                "Ray is not supported with the CPU backend.")
             from vllm.executor.cpu_executor import CPUExecutorAsync
             executor_class = CPUExecutorAsync
         elif engine_config.parallel_config.worker_use_ray:
