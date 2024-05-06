@@ -221,7 +221,7 @@ class TorchSDPABackendImpl(AttentionImpl):
                         dtype=query.dtype,
                         device=query.device)
                     for seq_len, mask in zip(attn_metadata.seq_lens,
-                                                attn_metadata.attn_bias):
+                                             attn_metadata.attn_bias):
                         end = start + seq_len
                         sub_out = scaled_dot_product_attention(
                             query[:, start:end, :],
@@ -267,9 +267,7 @@ def _make_alibi_bias(
 ) -> List[torch.Tensor]:
     attn_biases = []
     for seq_len in seq_lens:
-        bias = torch.arange(seq_len,
-                            dtype=dtype,
-                            device=alibi_slopes.device)
+        bias = torch.arange(seq_len, dtype=dtype, device=alibi_slopes.device)
         # NOTE(zhuohan): HF uses
         #     `bias = bias[None, :].repeat(seq_len, 1)`
         # here. We find that both biases give the same results, but
