@@ -274,7 +274,7 @@ def reshape_and_cache_flash(
 
 def copy_blocks(key_caches: List[torch.Tensor],
                 value_caches: List[torch.Tensor],
-                block_mapping: Dict[int, List[int]]) -> None:
+                block_mapping: torch.Tensor) -> None:
     vllm_cache_ops.copy_blocks(key_caches, value_caches, block_mapping)
 
 
