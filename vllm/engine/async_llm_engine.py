@@ -431,12 +431,20 @@ class AsyncLLMEngine:
             # order of the arguments.
             cache_config = kwargs["cache_config"]
             parallel_config = kwargs["parallel_config"]
-            if parallel_config.tensor_parallel_size == 1:
-                num_gpus = cache_config.gpu_memory_utilization
+            device_config = kwargs["device_config"]
+            if device_config.device_type == "cpu":
+                import os
+                omp_thread_num = int(os.getenv("OMP_NUM_THREADS"))
+                print("omp_thread_num", omp_thread_num)
+                engine_class = ray.remote(num_cpus=omp_thread_num)(
+                    self._engine_class).remote 
             else:
-                num_gpus = 1
-            engine_class = ray.remote(num_gpus=num_gpus)(
-                self._engine_class).remote
+                if parallel_config.tensor_parallel_size == 1:
+                    num_gpus = cache_config.gpu_memory_utilization
+                else:
+                    num_gpus = 1
+                engine_class = ray.remote(num_gpus=num_gpus)(
+                    self._engine_class).remote
         return engine_class(*args, **kwargs)
 
     async def engine_step(self) -> bool:
@@ -543,19 +551,20 @@ class AsyncLLMEngine:
         if arrival_time is None:
             arrival_time = time.time()
 
-        if self.engine_use_ray:
-            prompt_token_ids = await (
-                self.engine.encode_request_async.remote(  # type: ignore
+        if prompt_token_ids is None:
+            if self.engine_use_ray:
+                prompt_token_ids = await (
+                    self.engine.encode_request_async.remote(  # type: ignore
+                        request_id=request_id,
+                        prompt=prompt,
+                        prompt_token_ids=prompt_token_ids,
+                        lora_request=lora_request))
+            else:
+                prompt_token_ids = await self.engine.encode_request_async(
                     request_id=request_id,
                     prompt=prompt,
                     prompt_token_ids=prompt_token_ids,
-                    lora_request=lora_request))
-        else:
-            prompt_token_ids = await self.engine.encode_request_async(
-                request_id=request_id,
-                prompt=prompt,
-                prompt_token_ids=prompt_token_ids,
-                lora_request=lora_request)
+                    lora_request=lora_request)
 
         stream = self._request_tracker.add_request(
             request_id,
