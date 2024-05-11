@@ -70,7 +70,7 @@ class CPUExecutor(ExecutorBase):
         )
 
         #FIXME: Specify cluster addr explicitly.
-        ray.init(address="auto")
+        ray.init(address="auto", ignore_reinit_error=True)
         threads_num_per_node = torch.get_num_threads()
         nodes = ray.nodes()
 
@@ -81,14 +81,20 @@ class CPUExecutor(ExecutorBase):
                     f"Number of OMP threads {node_thread_num} in child node "
                     f"doesn't match with the number {threads_num_per_node} in "
                     "driver worker.") 
-        
-        placement_group_specs = (
-            [{"CPU": threads_num_per_node}] * \
-            (self.parallel_config.world_size - 1))
-        placement_group = ray.util.placement_group(
-            placement_group_specs)
-        ray.get(placement_group.ready(), timeout=1800)
-        self.parallel_config.placement_group = placement_group
+
+        if self.parallel_config.placement_group is None:
+            placement_group_specs = (
+                [{"CPU": threads_num_per_node}] * \
+                (self.parallel_config.world_size - 1))
+            placement_group = ray.util.placement_group(
+                placement_group_specs, strategy="STRICT_SPREAD")
+            ray.get(placement_group.ready(), timeout=1800)
+            self.parallel_config.placement_group = placement_group
+            bundle_offset = 0
+        else:
+            placement_group = self.parallel_config.placement_group
+            bundle_offset = 1
+
         
         model_config = copy.deepcopy(self.model_config)
         parallel_config = copy.deepcopy(self.parallel_config)
@@ -98,11 +104,11 @@ class CPUExecutor(ExecutorBase):
         cache_config = copy.deepcopy(self.cache_config)
         load_config = copy.deepcopy(self.load_config)
         distributed_init_method = copy.deepcopy(self.distributed_init_method)
-        for bundle_id, bundle in enumerate(placement_group.bundle_specs):
+        for bundle_id in range(0, parallel_config.world_size - 1):
             scheduling_strategy = PlacementGroupSchedulingStrategy(
                 placement_group=placement_group,
                 placement_group_capture_child_tasks=True,
-                placement_group_bundle_index=bundle_id,
+                placement_group_bundle_index=bundle_id + bundle_offset,
             )
 
             child_worker = ray.remote(
