@@ -299,11 +299,9 @@ class CPUModelRunner:
             attn_metadata = self.attn_backend.make_metadata(**metadata_dict)
             sampling_metadata = SamplingMetadata(
                 seq_groups=None,
-                seq_data=None,
-                seq_lens=None,
                 selected_token_indices=selected_token_indices,
                 categorized_sample_indices=None,
-                generators=None,
+                num_prompts=0,
             )
 
         return (input_tokens, input_positions, attn_metadata,
