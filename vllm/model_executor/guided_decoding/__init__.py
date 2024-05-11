@@ -23,3 +23,14 @@ async def get_guided_decoding_logits_processor(
     raise ValueError(
         f"Unknown guided decoding backend '{guided_decoding_backend}'. "
         "Must be one of 'outlines, 'lm-format-enforcer'")
+
+def is_guided(request: Union[CompletionRequest, ChatCompletionRequest]) -> bool:
+    if (request.guided_json or
+        request.guided_choice or
+        request.guided_regex or 
+        request.guided_grammar or 
+        (request.response_format is not None 
+         and request.response_format.type == "json_object")):
+        return True
+    else:
+        return False
