@@ -170,7 +170,7 @@ if __name__ == '__main__':
         "--device",
         type=str,
         default="cuda",
-        choices=["cuda", "cpu"],
+        choices=["cuda", "cpu", "xpu"],
         help='device type for vLLM execution, supporting CUDA and CPU.')
     parser.add_argument('--block-size',
                         type=int,
