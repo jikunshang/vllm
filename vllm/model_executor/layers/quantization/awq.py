@@ -4,6 +4,7 @@ import torch
 from torch.nn.parameter import Parameter
 
 from vllm._C import ops
+from vllm.utils import is_xpu
 from vllm.model_executor.layers.linear import (LinearMethodBase,
                                                set_weight_attrs)
 from vllm.model_executor.layers.quantization.base_config import (
@@ -156,7 +157,7 @@ class AWQLinearMethod(LinearMethodBase):
         # num_tokens >= threshold
         FP16_MATMUL_HEURISTIC_CONDITION = x.shape[:-1].numel() >= 256
 
-        if FP16_MATMUL_HEURISTIC_CONDITION:
+        if FP16_MATMUL_HEURISTIC_CONDITION or is_xpu():
             out = ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
             out = torch.matmul(reshaped_x, out)
         else:

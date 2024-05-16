@@ -7,12 +7,12 @@ import torch.nn as nn
 
 from vllm.config import DeviceConfig, ModelConfig
 from vllm.model_executor.models import ModelRegistry
-from vllm.model_executor.models.llava import LlavaForConditionalGeneration
+# from vllm.model_executor.models.llava import LlavaForConditionalGeneration
 from vllm.model_executor.weight_utils import (get_quant_config,
                                               initialize_dummy_weights)
 
 _VISION_MODEL_CLASSES = [
-    LlavaForConditionalGeneration,
+    # LlavaForConditionalGeneration,
 ]
 
 
@@ -57,14 +57,15 @@ def get_model(model_config: ModelConfig, device_config: DeviceConfig,
     linear_method = None
     if model_config.quantization is not None:
         quant_config = get_quant_config(model_config)
-        capability = torch.cuda.get_device_capability()
-        capability = capability[0] * 10 + capability[1]
-        if capability < quant_config.get_min_capability():
-            raise ValueError(
-                f"The quantization method {model_config.quantization} is not "
-                "supported for the current GPU. "
-                f"Minimum capability: {quant_config.get_min_capability()}. "
-                f"Current capability: {capability}.")
+        if torch.cuda.is_available():
+            capability = torch.cuda.get_device_capability()
+            capability = capability[0] * 10 + capability[1]
+            if capability < quant_config.get_min_capability():
+                raise ValueError(
+                    f"The quantization method {model_config.quantization} is not "
+                    "supported for the current GPU. "
+                    f"Minimum capability: {quant_config.get_min_capability()}. "
+                    f"Current capability: {capability}.")
         supported_dtypes = quant_config.get_supported_act_dtypes()
         if model_config.dtype not in supported_dtypes:
             raise ValueError(

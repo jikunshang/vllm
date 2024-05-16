@@ -69,4 +69,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     "reshape_and_cache",
     &reshape_and_cache,
     "Reshape the key and value tensors and cache them");
+
+  // Quant
+  ops.def(
+    "awq_dequantize",
+    &awq_dequantize,
+    "dequant method for awq");
 }
