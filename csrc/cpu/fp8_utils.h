@@ -10,6 +10,8 @@ static inline __m512i _mm512_cvte5m2_fp16 (__m256i a) {
   return _mm512_slli_epi16 (_mm512_cvtepi8_epi16 (a), 8);
 }
 
+
+
 static inline __m256i _mm256_cvte5m2_fp16 (__m128i a) {
   return _mm256_slli_epi16(_mm256_cvtepi8_epi16(a), 8);
 }
@@ -134,6 +136,32 @@ static inline void cast_fp32xn_to_fp8xn(const float *__restrict__ in,
     cvt_fp32_e5m2_noinf_rne_intrinsic(in, out, n, 0);
 }
 
+static inline uint8_t cast_bf16x1_to_fp8x1(int16_t bf16bits) {
+    // Define the FP32 bias and the target FP8 bias
+    const int fp16Bias = 127;
+    const int fp8Bias = 15;
+    uint8_t sign = (bf16bits >> 15) & 0x01;
+    int8_t shift = (bf16bits >> 7) & 0xFF;
+    if (shift == (int8_t)0xFF) {
+        return (sign << 7) | 0x7F;
+    }
+    if (shift <= (int8_t)0x70 && shift >= (int8_t)0x91) {
+        return (sign << 7);
+    }
+
+    int8_t exponent = shift - fp16Bias;
+    uint16_t mantissa = bf16bits & 0x007F;
+
+        // Adjust the exponent and mantissa for FP8
+    exponent += fp8Bias;
+
+    // Handle special cases and rounding (not shown for brevity)
+    // Assemble the FP8 value (manual bit manipulation)
+    uint8_t fp8 = (sign << 7) | ((exponent & 0x1F) << 2) | ((mantissa >> 5) & 0x03);
+
+    return fp8;
+}
+
 static inline uint8_t cast_fp32x1_to_fp8x1(float fp32) {
     // Define the FP32 bias and the target FP8 bias
     const int fp32Bias = 127;
@@ -145,7 +173,6 @@ static inline uint8_t cast_fp32x1_to_fp8x1(float fp32) {
 
     // Extract sign, exponent, and mantissa from FP32
     uint8_t sign = (fp32Bits >> 31) & 0x01;
-    int sign_ = sign == 0 ? 1 : -1;
     int8_t shift = (fp32Bits >> 23) & 0xFF;
     if (shift == (int8_t)0xFF) {
         return (sign << 7) | 0x7F;
@@ -198,15 +225,30 @@ static inline uint32_t cast_fp8x1_to_fp32x1(uint8_t fp8) {
     return fp32Bits;
 }
 
+static inline __m256 cast_fp8x16_to_fp16x16(__m128 fp8x16) {
+    return (__m256)_mm256_cvte5m2_fp16((__m128i)fp8x16);
+}
+
 static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
     __m512 res{0};
+#if 1
+    // perf is better
     uint8_t *fp8s = (uint8_t *)(&fp8x16);
     uint32_t *fp32s = (uint32_t *)(&res);
-#pragma omp parallel for
+// #pragma omp parallel for
     for (int i = 0; i < 16; ++i) {
         uint32_t fp32 = cast_fp8x1_to_fp32x1(fp8s[i]);
         fp32s[i] = fp32;
     }
+#else
+    // fp8x16 -> fp16x16 -> fp32x16
+    __m256 fp16x16 = cast_fp8x16_to_fp16x16(fp8x16);
+    uint16_t *fp16s = (uint16_t *)(&fp16x16);
+    uint32_t *fp32s = (uint32_t *)(&res);
+    for (int i = 0; i < 16; ++i) {
+        fp32s[i] = _cvtsh_ss(fp16s[i]);
+    }
+#endif
     return res;
 }
 

@@ -42,6 +42,12 @@ uint8_t assign_cache_value<float, uint8_t>(const float* src) {
     return res;
 }
 
+template<>
+uint8_t assign_cache_value<int16_t, uint8_t>(const int16_t* src) {
+    uint8_t res = cast_bf16x1_to_fp8x1(*src);
+    return res;
+}
+
 template <typename scalar_t, typename cache_t=scalar_t, bool use_fp8=false>
 void reshape_and_cache_cpu_impl(
     const scalar_t *__restrict__ key, const scalar_t *__restrict__ value,

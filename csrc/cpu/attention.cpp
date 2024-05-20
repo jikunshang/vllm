@@ -57,14 +57,14 @@ template <> struct KernelVecType<c10::BFloat16> {
   using v_load_vec_type = vec_op::BF16Vec16;
 };
 
-// template <> struct KernelVecType<c10::BFloat16, cpu_fp8> {
-//   using q_load_vec_type = vec_op::BF16Vec16;
-//   using q_vec_type = vec_op::FP32Vec16;
-//   using k_load_vec_type = vec_op::FP8Vec16; // ?
-//   using k_vec_type = vec_op::FP32Vec16;
-//   using qk_acc_vec_type = vec_op::FP32Vec16;
-//   using v_load_vec_type = vec_op::FP8Vec16; // ?
-// };
+template <> struct KernelVecType<c10::BFloat16, cpu_fp8> {
+  using q_load_vec_type = vec_op::BF16Vec16;
+  using q_vec_type = vec_op::FP32Vec16;
+  using k_load_vec_type = vec_op::FP8Vec16; // ?
+  using k_vec_type = vec_op::FP32Vec16;
+  using qk_acc_vec_type = vec_op::FP32Vec16;
+  using v_load_vec_type = vec_op::FP8Vec16; // ?
+};
 #endif
 
 template <typename T>
@@ -462,7 +462,7 @@ void paged_attention_v1(torch::Tensor &out, torch::Tensor &query,
       TORCH_CHECK(false, "Unsupported data type: ", query.dtype());
       // CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(uint16_t, cpu_fp8, true);
     } else if (query.dtype() == at::ScalarType::BFloat16) {
-      // CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(c10::BFloat16, cpu_fp8, true);
+      CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(c10::BFloat16, cpu_fp8, true);
     } else {
       TORCH_CHECK(false, "Unsupported data type: ", query.dtype());
     }
