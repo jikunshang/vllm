@@ -40,7 +40,8 @@ if (AVX512_FOUND)
         "-mavx512f"
         "-mavx512vl"
         "-mavx512bw"
-        "-mavx512dq")
+        "-mavx512dq"
+        "-mf16c")
 
     find_isa(${CPUINFO} "avx512_bf16" AVX512BF16_FOUND)
     if (AVX512BF16_FOUND OR ENABLE_AVX512BF16)
