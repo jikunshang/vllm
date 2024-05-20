@@ -5,12 +5,16 @@
 #include <immintrin.h>
 #include <torch/extension.h>
 
+#include "fp8_utils.h"
+
+typedef uint8_t cpu_fp8;
+
 namespace vec_op {
 
 // FIXME: FP16 is not fully supported in Torch-CPU
 #define VLLM_DISPATCH_CASE_FLOATING_TYPES(...)                                 \
-  AT_DISPATCH_CASE(at::ScalarType::Float, __VA_ARGS__)                         \
-  AT_DISPATCH_CASE(at::ScalarType::BFloat16, __VA_ARGS__)
+  AT_DISPATCH_CASE(at::ScalarType::Float, __VA_ARGS__)                         
+  // AT_DISPATCH_CASE(at::ScalarType::BFloat16, __VA_ARGS__)
 
 #define VLLM_DISPATCH_FLOATING_TYPES(TYPE, NAME, ...)                          \
   AT_DISPATCH_SWITCH(TYPE, NAME, VLLM_DISPATCH_CASE_FLOATING_TYPES(__VA_ARGS__))
@@ -45,6 +49,20 @@ template <typename T> struct Vec {
 
 struct FP32Vec8;
 struct FP32Vec16;
+
+struct FP8Vec16 : public Vec<FP8Vec16> {
+  constexpr static int VEC_ELEM_NUM = 16;
+  union AliasReg {
+    __m128 reg;
+    cpu_fp8 values[VEC_ELEM_NUM];
+  };
+  __m128 reg;
+
+  explicit FP8Vec16() : reg(_mm_set1_ps(0)) {}
+  // explicit FP8Vec16(const float *ptr) : reg(_mm_loadu_ps(ptr)) {}
+  explicit FP8Vec16(const cpu_fp8 *ptr) : reg((__m128)_mm_loadu_epi8(ptr)) {}
+
+};
 
 #ifdef __AVX512FP16__
 struct FP16Vec8 : public Vec<FP16Vec8> {
@@ -262,6 +280,8 @@ struct FP32Vec16 : public Vec<FP32Vec16> {
             _mm512_bslli_epi128(_mm512_cvtepu16_epi32(v.reg), 2))) {}
 
   explicit FP32Vec16(const BF16Vec8 &v) : FP32Vec16(FP32Vec8(v)) {}
+
+  explicit FP32Vec16(const FP8Vec16 &data) : reg(cast_fp8x16_to_fp32x16((__m128)data.reg)) {}
 
   FP32Vec16 operator*(const FP32Vec16 &b) const {
     return FP32Vec16(_mm512_mul_ps(reg, b.reg));
