@@ -225,6 +225,12 @@ static inline uint32_t cast_fp8x1_to_fp32x1(uint8_t fp8) {
     return fp32Bits;
 }
 
+static inline float cast_fp8x1_to_fp32x1_f(uint8_t fp8) {
+  uint32_t fp32_i = cast_fp8x1_to_fp32x1(fp8);
+  float fp32 = *(float*)(&fp32_i);
+  return fp32;
+}
+
 static inline __m256 cast_fp8x16_to_fp16x16(__m128 fp8x16) {
     return (__m256)_mm256_cvte5m2_fp16((__m128i)fp8x16);
 }
@@ -233,10 +239,10 @@ static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
     __m512 res{0};
 #if 1
     uint8_t *fp8s = (uint8_t *)(&fp8x16);
-    uint32_t *fp32s = (uint32_t *)(&res);
+    float *fp32s = (float *)(&res);
     for (int i = 0; i < 16; ++i) {
-        uint32_t fp32 = cast_fp8x1_to_fp32x1(fp8s[i]);
-        fp32s[i] = fp32;
+      float fp32 = cast_fp8x1_to_fp32x1_f(fp8s[i]);
+      fp32s[i] = fp32;
     }
 #else
     // fp8x16 -> fp16x16 -> fp32x16
