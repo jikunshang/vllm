@@ -232,10 +232,8 @@ static inline __m256 cast_fp8x16_to_fp16x16(__m128 fp8x16) {
 static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
     __m512 res{0};
 #if 1
-    // perf is better
     uint8_t *fp8s = (uint8_t *)(&fp8x16);
     uint32_t *fp32s = (uint32_t *)(&res);
-// #pragma omp parallel for
     for (int i = 0; i < 16; ++i) {
         uint32_t fp32 = cast_fp8x1_to_fp32x1(fp8s[i]);
         fp32s[i] = fp32;
@@ -243,11 +241,7 @@ static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
 #else
     // fp8x16 -> fp16x16 -> fp32x16
     __m256 fp16x16 = cast_fp8x16_to_fp16x16(fp8x16);
-    uint16_t *fp16s = (uint16_t *)(&fp16x16);
-    uint32_t *fp32s = (uint32_t *)(&res);
-    for (int i = 0; i < 16; ++i) {
-        fp32s[i] = _cvtsh_ss(fp16s[i]);
-    }
+    res = _mm512_cvtph_ps((__m256i)fp16x16);
 #endif
     return res;
 }
