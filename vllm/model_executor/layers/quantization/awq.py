@@ -8,6 +8,7 @@ from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.utils import is_cpu
 
 
 class AWQConfig(QuantizationConfig):
@@ -41,7 +42,7 @@ class AWQConfig(QuantizationConfig):
         return "awq"
 
     def get_supported_act_dtypes(self) -> List[torch.dtype]:
-        return [torch.half]
+        return [torch.half, torch.bfloat16]
 
     def get_min_capability(self) -> int:
         # The AWQ kernel only supports Turing or newer GPUs.
@@ -99,12 +100,12 @@ class AWQLinearMethod(LinearMethodBase):
                 "The output size is not aligned with the quantized "
                 "weight shape. This can be caused by too large "
                 "tensor parallel size.")
-
+        print(f"pack fac: {self.quant_config.pack_factor}")
         qweight = Parameter(
             torch.empty(
                 input_size_per_partition,
-                output_size_per_partition // self.quant_config.pack_factor,
-                dtype=torch.int32,
+                output_size_per_partition // self.quant_config.pack_factor * 4,
+                dtype=torch.int8,
             ),
             requires_grad=False,
         )
@@ -115,11 +116,12 @@ class AWQLinearMethod(LinearMethodBase):
                 "packed_dim": 1,
                 "pack_factor": self.quant_config.pack_factor,
             })
+        print(f"qweight: {qweight.shape}")
         qzeros = Parameter(
             torch.empty(
                 input_size_per_partition // self.quant_config.group_size,
-                output_size_per_partition // self.quant_config.pack_factor,
-                dtype=torch.int32,
+                output_size_per_partition // self.quant_config.pack_factor * 4,
+                dtype=torch.int8,
             ),
             requires_grad=False,
         )
@@ -130,6 +132,7 @@ class AWQLinearMethod(LinearMethodBase):
                 "packed_dim": 1,
                 "pack_factor": self.quant_config.pack_factor,
             })
+        print(f"qzeros: {qzeros.shape}")
         scales = Parameter(
             torch.empty(
                 input_size_per_partition // self.quant_config.group_size,
@@ -164,7 +167,29 @@ class AWQLinearMethod(LinearMethodBase):
         # num_tokens >= threshold
         FP16_MATMUL_HEURISTIC_CONDITION = x.shape[:-1].numel() >= 256
 
-        if FP16_MATMUL_HEURISTIC_CONDITION:
+        if is_cpu():
+            scales_f = scales.float()
+            print(f"reshaped_x shape: {reshaped_x.shape} dtype: {reshaped_x.dtype}")
+            print(f"qweight shape: {qweight.shape} dtype: {qweight.dtype}")
+            print(f"scales_f shape: {scales_f.shape} dtype: {scales_f.dtype}")
+            print(f"qzeros shape: {qzeros.shape} dtype: {qzeros.dtype}")
+            g_idx = torch.empty(0, dtype=torch.int32)
+            print(f"g_idx shape: {g_idx.shape} dtype: {g_idx.numel()}")
+            import intel_extension_for_transformers.qbits as qbits
+            pack_weight = qbits.repack_quantized_weight(qweight.contiguous(), scales_f.contiguous(),
+                                                        qzeros.contiguous(), g_idx.contiguous(),
+                                                        "int4_clip", 
+                                                        "fp32", "bf16", 
+                                                        self.quant_config.zero_point,
+                                                        self.quant_config.group_size)
+            out = torch.empty_like(qweight, dtype="bfloat16")
+            print(f"out shape: {out.shape}")
+            
+            qbits.woq_linear(reshaped_x, pack_weight, bias, out, "bf16", 
+                             "int4_clip", "fp32", self.quant_config.zero_point)
+            print(f"out: {out}")
+
+        elif FP16_MATMUL_HEURISTIC_CONDITION:
             out = ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
             out = torch.matmul(reshaped_x, out)
         else:
