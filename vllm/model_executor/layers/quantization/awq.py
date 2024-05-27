@@ -104,8 +104,8 @@ class AWQLinearMethod(LinearMethodBase):
         qweight = Parameter(
             torch.empty(
                 input_size_per_partition,
-                output_size_per_partition // self.quant_config.pack_factor * 4,
-                dtype=torch.int8,
+                output_size_per_partition // self.quant_config.pack_factor,
+                dtype=torch.int32,
             ),
             requires_grad=False,
         )
@@ -120,8 +120,8 @@ class AWQLinearMethod(LinearMethodBase):
         qzeros = Parameter(
             torch.empty(
                 input_size_per_partition // self.quant_config.group_size,
-                output_size_per_partition // self.quant_config.pack_factor * 4,
-                dtype=torch.int8,
+                output_size_per_partition // self.quant_config.pack_factor,
+                dtype=torch.int32,
             ),
             requires_grad=False,
         )
@@ -176,8 +176,29 @@ class AWQLinearMethod(LinearMethodBase):
             g_idx = torch.empty(0, dtype=torch.int32)
             print(f"g_idx shape: {g_idx.shape} dtype: {g_idx.numel()}")
             import intel_extension_for_transformers.qbits as qbits
-            pack_weight = qbits.repack_quantized_weight(qweight.contiguous(), scales_f.contiguous(),
-                                                        qzeros.contiguous(), g_idx.contiguous(),
+            # will core dump...
+
+            def unpack_awq(qweight: torch.Tensor, qzeros: torch.Tensor, bits: int):
+                shifts = torch.arange(0, 32, bits, device=qzeros.device)
+
+                # unpacking columnwise
+                iweights = torch.bitwise_right_shift(qweight[:, :, None], shifts[None, None, :]).to(
+                    torch.int8  # smallest dtype available
+                )
+                iweights = iweights.view(iweights.shape[0], -1)
+
+                # unpacking columnwise
+                izeros = torch.bitwise_right_shift(qzeros[:, :, None], shifts[None, None, :]).to(
+                    torch.int8  # smallest dtype available
+                )
+                izeros = izeros.view(izeros.shape[0], -1)
+
+                return iweights, izeros
+
+            intweight, zeros = unpack_awq(qweight, qzeros, 4)
+
+            pack_weight = qbits.repack_quantized_weight(intweight, scales_f.contiguous(),
+                                                        zeros, g_idx,
                                                         "int4_clip", 
                                                         "fp32", "bf16", 
                                                         self.quant_config.zero_point,
