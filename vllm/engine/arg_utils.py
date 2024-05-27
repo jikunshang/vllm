@@ -34,7 +34,7 @@ class EngineArgs:
     swap_space: int = 4  # GiB
     gpu_memory_utilization: float = 0.90
     max_num_batched_tokens: Optional[int] = None
-    max_num_seqs: int = 256
+    max_num_seqs: int = 32
     max_logprobs: int = 5  # OpenAI default value
     disable_log_stats: bool = False
     revision: Optional[str] = None
