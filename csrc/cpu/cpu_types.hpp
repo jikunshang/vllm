@@ -64,6 +64,20 @@ struct FP8Vec16 : public Vec<FP8Vec16> {
 
 };
 
+struct FP8Vec32 : public Vec<FP8Vec32> {
+  constexpr static int VEC_ELEM_NUM = 32;
+  union AliasReg {
+    __m256 reg;
+    cpu_fp8 values[VEC_ELEM_NUM];
+  };
+  __m256 reg;
+
+  explicit FP8Vec32() : reg(_mm256_set1_ps(0.0)) {}
+  // explicit FP8Vec16(const float *ptr) : reg(_mm_loadu_ps(ptr)) {}
+  explicit FP8Vec32(const cpu_fp8 *ptr) : reg((__m256)_mm256_loadu_si256((__m256i *)ptr)) {}
+
+};
+
 #ifdef __AVX512FP16__
 struct FP16Vec8 : public Vec<FP16Vec8> {
   constexpr static int VEC_ELEM_NUM = 8;
@@ -138,6 +152,8 @@ struct BF16Vec32 : public Vec<BF16Vec32> {
                                                   (__m128i)vec8_data.reg, 1),
                                (__m128i)vec8_data.reg, 2),
             (__m128i)vec8_data.reg, 3)) {}
+
+  explicit BF16Vec32(FP8Vec32 &fp8x32) :reg((__m512i) (cast_fp8x32_to_bf16x32(fp8x32.reg))) {}
 
   void save(void *ptr) const { *reinterpret_cast<__m512i *>(ptr) = reg; }
 };

@@ -42,7 +42,7 @@ template <> struct KernelVecType<c10::BFloat16> {
 template <> struct KernelVecType<c10::BFloat16, cpu_fp8> {
   using q_load_vec_type = vec_op::BF16Vec8;
   using q_vec_type = vec_op::BF16Vec32;
-  using k_load_vec_type = vec_op::FP8Vec16; // ?
+  using k_load_vec_type = vec_op::FP8Vec32; // ?
   using k_vec_type = vec_op::BF16Vec32;
   using qk_acc_vec_type = vec_op::FP32Vec16;
   using v_load_vec_type = vec_op::FP8Vec16; // ?

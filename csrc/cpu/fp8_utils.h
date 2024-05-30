@@ -252,4 +252,19 @@ static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
     return res;
 }
 
+
+static inline uint16_t cast_fp8x1_to_bf16x1(uint8_t fp8x1) {
+  uint32_t fp32_bits = cast_fp8x1_to_fp32x1(fp8x1);
+  uint16_t fp16_bits = (uint16_t)(fp32_bits >> 16);
+  return fp16_bits;
+}
+
+static inline __m512 cast_fp8x32_to_bf16x32(__m256 fp8x32) {
+  __m512 res{0};
+  uint16_t* bf16s = (uint16_t*)(&res);
+  uint8_t *fp8s = (uint8_t *)(&fp8x32);
+  for(int i=0; i < 32; ++i) {
+    bf16s[i] = cast_fp8x1_to_bf16x1(fp8s[i]);
+  }
+}
 #endif
