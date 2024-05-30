@@ -259,12 +259,13 @@ static inline uint16_t cast_fp8x1_to_bf16x1(uint8_t fp8x1) {
   return fp16_bits;
 }
 
-static inline __m512 cast_fp8x32_to_bf16x32(__m256 fp8x32) {
-  __m512 res{0};
+static inline __m512i cast_fp8x32_to_bf16x32(__m256i fp8x32) {
+  __m512i res{0};
   uint16_t* bf16s = (uint16_t*)(&res);
   uint8_t *fp8s = (uint8_t *)(&fp8x32);
   for(int i=0; i < 32; ++i) {
     bf16s[i] = cast_fp8x1_to_bf16x1(fp8s[i]);
   }
+  return res;
 }
 #endif

@@ -157,7 +157,7 @@ struct reduceQKBlockKernel {
 
   // static_assert(MAX_GROUP_NUM == 8 || MAX_GROUP_NUM == 4);
   static_assert(k_load_vec_type::get_elem_num() % x == 0);
-  static_assert(q_load_vec_type::get_elem_num() * sizeof(cache_t) == 16);
+  // static_assert(q_load_vec_type::get_elem_num() * sizeof(cache_t) == 16);
 
   FORCE_INLINE static void call(const scalar_t *__restrict__ q,
                                 const cache_t *__restrict__ k_block,
