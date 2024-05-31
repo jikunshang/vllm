@@ -71,23 +71,6 @@ inline sycl::half2 h0_h0(sycl::half a) {
   return sycl::half2{a, a};
 }
 
-inline float half_to_float(sycl::half h) {
-  return float(h);
-}
-
-inline sycl::float2 half2_to_float2(sycl::half2 v) {
-
-  return sycl::float2(half_to_float(v.x()), half_to_float(v.y()));
-}
-
-inline sycl::half float_to_half(float f) {
-  return sycl::half(f);
-}
-
-inline sycl::half2 float2_to_half2(sycl::float2 f) {
-  return sycl::half2{float_to_half(f.x()), float_to_half(f.y())};
-}
-
 // Vector addition.
 inline sycl::half add(sycl::half a, sycl::half b) {
   return sycl_half_add(a,b);

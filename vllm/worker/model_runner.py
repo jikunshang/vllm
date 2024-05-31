@@ -701,7 +701,7 @@ class ModelRunner:
         # Enable top-k sampling to reflect the accurate memory usage.
         sampling_params = SamplingParams(top_p=0.99, top_k=self.vocab_size - 1)
         max_num_batched_tokens = self.scheduler_config.max_num_batched_tokens
-        if max_num_batched_tokens >=2048:
+        if max_num_batched_tokens >= 2048:
             max_num_batched_tokens = 2048
         max_num_seqs = self.scheduler_config.max_num_seqs
 

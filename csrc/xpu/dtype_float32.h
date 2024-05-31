@@ -21,6 +21,7 @@
 #include <sycl/sycl.hpp>
 #include <dpct/dpct.hpp>
 #include "attention_generic.h"
+#include "dtype_float16.h"
 
 #include <stdint.h>
 

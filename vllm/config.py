@@ -377,12 +377,12 @@ class CacheConfig:
         if self.cache_dtype == "auto":
             pass
         elif self.cache_dtype == "fp8":
-            if not is_hip():
-                nvcc_cuda_version = get_nvcc_cuda_version()
-                if nvcc_cuda_version < Version("11.8"):
-                    raise ValueError(
-                        "FP8 is not supported when cuda version is"
-                        "lower than 11.8.")
+            # if not is_hip():
+            #     nvcc_cuda_version = get_nvcc_cuda_version()
+            #     if nvcc_cuda_version < Version("11.8"):
+            #         raise ValueError(
+            #             "FP8 is not supported when cuda version is"
+            #             "lower than 11.8.")
             logger.info(
                 "Using fp8 data type to store kv cache. It reduces the GPU "
                 "memory footprint and boosts the performance. "

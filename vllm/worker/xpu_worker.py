@@ -121,7 +121,7 @@ class XPUWorker():
 
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
-        self.model_runner.profile_run()
+        # self.model_runner.profile_run()
 
         # Calculate the number of blocks that can be allocated with the
         # profiled peak memory.
@@ -130,12 +130,14 @@ class XPUWorker():
         used_memory = torch.xpu.memory_allocated()
         total_gpu_memory = torch.xpu.get_device_properties(
             self.local_rank).total_memory
-        # print(f"rank:{self.local_rank}, used_memory:{used_memory}")
 
         free_gpu_memory = total_gpu_memory - used_memory
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
         peak_memory = self.init_gpu_memory - free_gpu_memory
+        print(
+            f"rank:{self.local_rank}, used_memory:{used_memory}, total_gpu_memory: {total_gpu_memory}, free_gpu_memory: {free_gpu_memory}, peak_memory: {peak_memory}"
+        )
 
         cache_block_size = self.get_cache_block_size_bytes(
             block_size, cache_dtype)

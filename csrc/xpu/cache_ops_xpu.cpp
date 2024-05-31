@@ -9,14 +9,15 @@
 
 #include <torch/extension.h>
 #include "utils.h"
+#include "attention_generic.h"
 
-template <typename scalar_t>
+template <typename scalar_t, typename cache_t>
 void reshape_and_cache_kernel(
     const scalar_t* __restrict__ key, // [num_tokens, num_heads, head_size]
     const scalar_t* __restrict__ value, // [num_tokens, num_heads, head_size]
-    scalar_t* __restrict__ key_cache, // [num_blocks, num_heads, head_size/x,
+    cache_t* __restrict__ key_cache, // [num_blocks, num_heads, head_size/x,
                                       // block_size, x]
-    scalar_t* __restrict__ value_cache, // [num_blocks, num_heads, head_size,
+    cache_t* __restrict__ value_cache, // [num_blocks, num_heads, head_size,
                                         // block_size]
     const int64_t* __restrict__ slot_mapping, // [num_tokens]
     const int key_stride,
@@ -55,17 +56,19 @@ void reshape_and_cache_kernel(
         block_idx * num_heads * head_size * block_size +
         head_idx * head_size * block_size + head_offset * block_size +
         block_offset;
-    key_cache[tgt_key_idx] = key[src_key_idx];
-    value_cache[tgt_value_idx] = value[src_value_idx];
+    // key_cache[tgt_key_idx] = key[src_key_idx];
+    // value_cache[tgt_value_idx] = value[src_value_idx];
+    key_cache[tgt_key_idx] = vllm::convert<cache_t, scalar_t>(key + src_key_idx);
+    value_cache[tgt_value_idx] = vllm::convert<cache_t, scalar_t>(value + src_value_idx);    
   }
 }
 
-template <typename scalar_t>
+template <typename scalar_t, typename cache_t>
 void call_reshape_and_cache_kernel(
     const scalar_t* __restrict__ key,
     const scalar_t* __restrict__ value,
-    scalar_t* __restrict__ key_cache,
-    scalar_t* __restrict__ value_cache,
+    cache_t* __restrict__ key_cache,
+    cache_t* __restrict__ value_cache,
     const int64_t* __restrict__ slot_mapping,
     const int num_tokens,
     const int key_stride,
@@ -75,17 +78,18 @@ void call_reshape_and_cache_kernel(
     const int block_size,
     const int x) {
   using sycl_t = vllm::xpu::SyclTypeTrait<scalar_t>::Type;
+  using cache_s_t = vllm::xpu::SyclTypeTrait<cache_t>::Type;
   sycl::range<3> grid(1, 1, num_tokens);
   sycl::range<3> block(1, 1, std::min(num_heads * head_size, 512));
   auto& queue = vllm::xpu::vllmGetQueue();
   queue.submit([&](sycl::handler& cgh) {
     cgh.parallel_for(
         sycl::nd_range<3>(grid * block, block), [=](sycl::nd_item<3> item_ct1) {
-          reshape_and_cache_kernel<sycl_t>(
+          reshape_and_cache_kernel<sycl_t, cache_s_t>(
               (const sycl_t* __restrict__)key,
               (const sycl_t* __restrict__)value,
-              (sycl_t* __restrict__)key_cache,
-              (sycl_t* __restrict__)value_cache,
+              (cache_s_t* __restrict__)key_cache,
+              (cache_s_t* __restrict__)value_cache,
               slot_mapping,
               key_stride,
               value_stride,
@@ -114,23 +118,42 @@ void reshape_and_cache(
 
   int key_stride = key.stride(0);
   int value_stride = value.stride(0);
+  if (kv_cache_dtype == "auto") {
+    VLLM_XPU_DISPATCH_FLOATING_TYPES(
+        key.scalar_type(), "call_reshape_and_cache_kernel", [&] {
+          call_reshape_and_cache_kernel<scalar_t, scalar_t>(
+              key.data_ptr<scalar_t>(),
+              value.data_ptr<scalar_t>(),
+              key_cache.data_ptr<scalar_t>(),
+              value_cache.data_ptr<scalar_t>(),
+              slot_mapping.data_ptr<int64_t>(),
+              num_tokens,
+              key_stride,
+              value_stride,
+              num_heads,
+              head_size,
+              block_size,
+              x);
+        });
+  } else if(kv_cache_dtype == "fp8"){
+    VLLM_XPU_DISPATCH_FLOATING_TYPES(
+        key.scalar_type(), "call_reshape_and_cache_kernel", [&] {
+          call_reshape_and_cache_kernel<scalar_t, uint8_t>(
+              key.data_ptr<scalar_t>(),
+              value.data_ptr<scalar_t>(),
+              key_cache.data_ptr<uint8_t>(),
+              value_cache.data_ptr<uint8_t>(),
+              slot_mapping.data_ptr<int64_t>(),
+              num_tokens,
+              key_stride,
+              value_stride,
+              num_heads,
+              head_size,
+              block_size,
+              x);
+        });
+  }
 
-  VLLM_XPU_DISPATCH_FLOATING_TYPES(
-      key.scalar_type(), "call_reshape_and_cache_kernel", [&] {
-        call_reshape_and_cache_kernel<scalar_t>(
-            key.data_ptr<scalar_t>(),
-            value.data_ptr<scalar_t>(),
-            key_cache.data_ptr<scalar_t>(),
-            value_cache.data_ptr<scalar_t>(),
-            slot_mapping.data_ptr<int64_t>(),
-            num_tokens,
-            key_stride,
-            value_stride,
-            num_heads,
-            head_size,
-            block_size,
-            x);
-      });
 }
 
 template <typename scalar_t>

@@ -141,6 +141,7 @@ inline float block_sum(
 
 template <
     typename scalar_t,
+    typename cache_t,
     typename Q_Vec_t,
     int HEAD_SIZE,
     int BLOCK_SIZE,
@@ -153,9 +154,9 @@ void paged_attention_kernel(
     scalar_t* __restrict__ out, // [num_seqs, num_heads, max_num_partitions,
                                 // head_size]
     const scalar_t* __restrict__ q, // [num_seqs, num_heads, head_size]
-    const scalar_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
                                           // head_size/x, block_size, x]
-    const scalar_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int num_kv_heads, // [num_heads]
     const float scale,
@@ -264,7 +265,7 @@ void paged_attention_kernel(
 
   // x == THREAD_GROUP_SIZE * VEC_SIZE
   // Each thread group fetches x elements from the key at a time.
-  constexpr int x = 16 / sizeof(scalar_t);
+  constexpr int x = 16 / sizeof(cache_t);
   float qk_max = -FLT_MAX;
 
   // Iterate over the key blocks.
@@ -296,15 +297,17 @@ void paged_attention_kernel(
 
 #pragma unroll
       for (int j = 0; j < NUM_VECS_PER_THREAD; j++) {
-        const scalar_t* k_ptr = k_cache +
+        const cache_t* k_ptr = k_cache +
             physical_block_number * kv_block_stride +
             kv_head_idx * kv_head_stride + physical_block_offset * x;
 
         const int vec_idx = thread_group_offset + j * THREAD_GROUP_SIZE;
         const int offset1 = (vec_idx * VEC_SIZE) / x;
         const int offset2 = (vec_idx * VEC_SIZE) % x;
-        k_vecs[j] = *reinterpret_cast<const Q_Vec_t*>(
-            k_ptr + offset1 * BLOCK_SIZE * x + offset2);
+        // k_vecs[j] = *reinterpret_cast<const Q_Vec_t*>(
+        //     k_ptr + offset1 * BLOCK_SIZE * x + offset2);
+        k_vecs[j] = vllm::convert<Q_Vec_t, cache_t>(
+          k_ptr + offset1 * BLOCK_SIZE * x + offset2);
       }
 
       // Compute dot product.
@@ -448,14 +451,15 @@ void paged_attention_kernel(
         logits_vec,
         *reinterpret_cast<Float_L_vec*>(logits + token_idx - start_token_idx));
 
-    const scalar_t* v_ptr = v_cache + physical_block_number * kv_block_stride +
+    const cache_t* v_ptr = v_cache + physical_block_number * kv_block_stride +
         kv_head_idx * kv_head_stride;
 #pragma unroll
     for (int i = 0; i < NUM_ROWS_PER_THREAD; i++) {
       const int row_idx = lane / NUM_V_VECS_PER_ROW + i * NUM_ROWS_PER_ITER;
       if (row_idx < HEAD_SIZE) {
         const int offset = row_idx * BLOCK_SIZE + physical_block_offset;
-        V_vec v_vec = *reinterpret_cast<const V_vec*>(v_ptr + offset);
+        // V_vec v_vec = *reinterpret_cast<const V_vec*>(v_ptr + offset);
+        V_vec v_vec = vllm::convert<V_vec, cache_t>(v_ptr + offset);
         if (block_idx == num_context_blocks - 1) {
           // NOTE(woosuk): When v_vec contains the tokens that are out of the
           // context, we should explicitly zero out the values since they may
@@ -550,6 +554,7 @@ void paged_attention_kernel(
 // Grid: (num_heads, num_seqs, 1).
 template <
     typename scalar_t,
+    typename cache_t,
     typename Q_Vec_t,
     int HEAD_SIZE,
     int BLOCK_SIZE,
@@ -558,9 +563,9 @@ template <
 void paged_attention_v1_kernel(
     scalar_t* __restrict__ out, // [num_seqs, num_heads, head_size]
     const scalar_t* __restrict__ q, // [num_seqs, num_heads, head_size]
-    const scalar_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
                                           // head_size/x, block_size, x]
-    const scalar_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int num_kv_heads, // [num_heads]
     const float scale,
@@ -577,6 +582,7 @@ void paged_attention_v1_kernel(
     float* red_smem) {
   paged_attention_kernel<
       scalar_t,
+      cache_t,
       Q_Vec_t,
       HEAD_SIZE,
       BLOCK_SIZE,
@@ -649,6 +655,7 @@ void paged_attention_v1_kernel(
         [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
           paged_attention_v1_kernel<                                        \
               sycl_t,                                                       \
+              cache_t,                                                      \
               Q_Vec,                                                        \
               HEAD_SIZE,                                                    \
               BLOCK_SIZE,                                                   \
@@ -674,7 +681,7 @@ void paged_attention_v1_kernel(
         });                                                                 \
   });
 
-template <typename T, int BLOCK_SIZE, int NUM_THREADS = 128>
+template <typename T, typename CACHE_T,  int BLOCK_SIZE, int NUM_THREADS = 128>
 void paged_attention_xpu_v1_impl_launcher(
     torch::Tensor& out,
     torch::Tensor& query,
@@ -697,6 +704,7 @@ void paged_attention_xpu_v1_impl_launcher(
   constexpr int THREAD_GROUP_SIZE = MAX(WARP_SIZE / BLOCK_SIZE, 1);
   constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
   using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
+  using cache_t = vllm::xpu::SyclTypeTrait<CACHE_T>::Type;
   using Q_Vec = typename Vec<sycl_t, VEC_SIZE>::Type;
 
   int num_vecs_per_thread = head_size / THREAD_GROUP_SIZE / VEC_SIZE;
@@ -709,8 +717,8 @@ void paged_attention_xpu_v1_impl_launcher(
 
   sycl_t* out_ptr = reinterpret_cast<sycl_t*>(out.data_ptr());
   sycl_t* query_ptr = reinterpret_cast<sycl_t*>(query.data_ptr());
-  sycl_t* key_cache_ptr = reinterpret_cast<sycl_t*>(key_cache.data_ptr());
-  sycl_t* value_cache_ptr = reinterpret_cast<sycl_t*>(value_cache.data_ptr());
+  cache_t* key_cache_ptr = reinterpret_cast<cache_t*>(key_cache.data_ptr());
+  cache_t* value_cache_ptr = reinterpret_cast<cache_t*>(value_cache.data_ptr());
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* context_lens_ptr = context_lens.data_ptr<int>();
 
@@ -757,8 +765,8 @@ void paged_attention_xpu_v1_impl_launcher(
   // queue.wait();
 }
 
-#define CALL_KERNEL_LAUNCHER(T, BLOCK_SIZE)                  \
-  vllm::paged_attention_xpu_v1_impl_launcher<T, BLOCK_SIZE>( \
+#define CALL_KERNEL_LAUNCHER(T, CACHE_T, BLOCK_SIZE)                  \
+  vllm::paged_attention_xpu_v1_impl_launcher<T, CACHE_T, BLOCK_SIZE>( \
       out,                                                   \
       query,                                                 \
       key_cache,                                             \
@@ -770,13 +778,13 @@ void paged_attention_xpu_v1_impl_launcher(
       max_context_len,                                       \
       alibi_slopes);
 
-#define CALL_KERNEL_LAUNCHER_BLOCK_SIZE(T)                        \
+#define CALL_KERNEL_LAUNCHER_BLOCK_SIZE(T, CACHE_T)               \
   switch (block_size) {                                           \
     case 16:                                                      \
-      CALL_KERNEL_LAUNCHER(T, 16);                                \
+      CALL_KERNEL_LAUNCHER(T, CACHE_T, 16);                       \
       break;                                                      \
     case 32:                                                      \
-      CALL_KERNEL_LAUNCHER(T, 32);                                \
+      CALL_KERNEL_LAUNCHER(T, CACHE_T, 32);                       \
       break;                                                      \
     default:                                                      \
       TORCH_CHECK(false, "Unsupported block size: ", block_size); \
@@ -934,6 +942,7 @@ void paged_attention_v2_reduce_kernel(
 // Grid: (num_heads, num_seqs, max_num_partitions).
 template <
     typename scalar_t,
+    typename cache_t,
     typename Q_Vec_t,
     int HEAD_SIZE,
     int BLOCK_SIZE,
@@ -946,9 +955,9 @@ void paged_attention_v2_kernel(
     scalar_t* __restrict__ tmp_out, // [num_seqs, num_heads, max_num_partitions,
                                     // head_size]
     const scalar_t* __restrict__ q, // [num_seqs, num_heads, head_size]
-    const scalar_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ k_cache, // [num_blocks, num_kv_heads,
                                           // head_size/x, block_size, x]
-    const scalar_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
+    const cache_t* __restrict__ v_cache, // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int num_kv_heads, // [num_heads]
     const float scale,
@@ -965,6 +974,7 @@ void paged_attention_v2_kernel(
     float* red_smem) {
   paged_attention_kernel<
       scalar_t,
+      cache_t,
       Q_Vec_t,
       HEAD_SIZE,
       BLOCK_SIZE,
@@ -1021,6 +1031,7 @@ void paged_attention_v2_kernel(
         [=](sycl::nd_item<3> item_ct1) [[intel::reqd_sub_group_size(32)]] { \
           vllm::paged_attention_v2_kernel<                                  \
               sycl_t,                                                       \
+              cache_t,                                                      \
               Q_Vec,                                                        \
               HEAD_SIZE,                                                    \
               BLOCK_SIZE,                                                   \
@@ -1083,6 +1094,7 @@ void paged_attention_v2_kernel(
 
 template <
     typename T,
+    typename CACHE_T,
     int BLOCK_SIZE,
     int NUM_THREADS = 128,
     int PARTITION_SIZE = 512>
@@ -1112,6 +1124,7 @@ void paged_attention_v2_launcher(
   assert(head_size % THREAD_GROUP_SIZE == 0);
   constexpr int VEC_SIZE = MAX(16 / (THREAD_GROUP_SIZE * sizeof(T)), 1);
   using sycl_t = vllm::xpu::SyclTypeTrait<T>::Type;
+  using cache_t = vllm::xpu::SyclTypeTrait<CACHE_T>::Type;
   using Q_Vec = typename Vec<sycl_t, VEC_SIZE>::Type;
 
   int num_vecs_per_thread = head_size / THREAD_GROUP_SIZE / VEC_SIZE;
@@ -1127,8 +1140,8 @@ void paged_attention_v2_launcher(
   float* max_logits_ptr = reinterpret_cast<float*>(max_logits.data_ptr());
   sycl_t* tmp_out_ptr = reinterpret_cast<sycl_t*>(tmp_out.data_ptr());
   sycl_t* query_ptr = reinterpret_cast<sycl_t*>(query.data_ptr());
-  sycl_t* key_cache_ptr = reinterpret_cast<sycl_t*>(key_cache.data_ptr());
-  sycl_t* value_cache_ptr = reinterpret_cast<sycl_t*>(value_cache.data_ptr());
+  cache_t* key_cache_ptr = reinterpret_cast<cache_t*>(key_cache.data_ptr());
+  cache_t* value_cache_ptr = reinterpret_cast<cache_t*>(value_cache.data_ptr());
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* context_lens_ptr = context_lens.data_ptr<int>();
 
@@ -1176,8 +1189,8 @@ void paged_attention_v2_launcher(
   }
 }
 
-#define CALL_V2_LAUNCHER(T, BLOCK_SIZE)             \
-  vllm::paged_attention_v2_launcher<T, BLOCK_SIZE>( \
+#define CALL_V2_LAUNCHER(T, CACHE_T, BLOCK_SIZE)             \
+  vllm::paged_attention_v2_launcher<T, CACHE_T, BLOCK_SIZE>( \
       out,                                          \
       exp_sums,                                     \
       max_logits,                                   \
@@ -1192,16 +1205,16 @@ void paged_attention_v2_launcher(
       max_context_len,                              \
       alibi_slopes);
 
-#define CALL_V2_LAUNCHER_BLOCK_SIZE(T)                            \
+#define CALL_V2_LAUNCHER_BLOCK_SIZE(T, CACHE_T)                   \
   switch (block_size) {                                           \
     case 8:                                                       \
-      CALL_V2_LAUNCHER(T, 8);                                     \
+      CALL_V2_LAUNCHER(T, CACHE_T, 8);                            \
       break;                                                      \
     case 16:                                                      \
-      CALL_V2_LAUNCHER(T, 16);                                    \
+      CALL_V2_LAUNCHER(T, CACHE_T, 16);                           \
       break;                                                      \
     case 32:                                                      \
-      CALL_V2_LAUNCHER(T, 32);                                    \
+      CALL_V2_LAUNCHER(T, CACHE_T, 32);                           \
       break;                                                      \
     default:                                                      \
       TORCH_CHECK(false, "Unsupported block size: ", block_size); \
@@ -1224,10 +1237,20 @@ void paged_attention_v1(
     const c10::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype,
     const float kv_scale) {
-  VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
-      query.scalar_type(), "paged_attention_xpu_v1_impl", [&] {
-        CALL_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t);
-      });
+  if(kv_cache_dtype == "auto") {
+
+    VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
+        query.scalar_type(), "paged_attention_xpu_v1_impl", [&] {
+          CALL_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t, scalar_t);
+        });
+  } else if(kv_cache_dtype == "fp8") {
+
+    VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
+        query.scalar_type(), "paged_attention_xpu_v1_impl", [&] {
+          CALL_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t, uint8_t);
+        });
+  }
+
 }
 
 void paged_attention_v2(
@@ -1247,8 +1270,16 @@ void paged_attention_v2(
     const c10::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype,
     const float kv_scale) {
-  VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
-      query.scalar_type(), "paged_attention_xpu_v2_impl", [&] {
-        CALL_V2_LAUNCHER_BLOCK_SIZE(scalar_t);
-      });
+  if(kv_cache_dtype == "auto") {
+    VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
+        query.scalar_type(), "paged_attention_xpu_v2_impl", [&] {
+          CALL_V2_LAUNCHER_BLOCK_SIZE(scalar_t, scalar_t);
+        });
+  } else if(kv_cache_dtype == "fp8") {
+        VLLM_XPU_DISPATCH_FLOATING_TYPES_FLOAT_ONLY(
+        query.scalar_type(), "paged_attention_xpu_v2_impl", [&] {
+          CALL_V2_LAUNCHER_BLOCK_SIZE(scalar_t, uint8_t);
+        });
+  }
+
 }
