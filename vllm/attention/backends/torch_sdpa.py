@@ -99,7 +99,7 @@ class TorchSDPABackendImpl(AttentionImpl):
         self.alibi_slopes = alibi_slopes
         self.need_mask = (self.alibi_slopes is not None
                           or self.sliding_window is not None)
-        self.fuse_batch = is_xpu()
+        self.fuse_batch = False
 
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
