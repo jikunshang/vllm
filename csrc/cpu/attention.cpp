@@ -151,9 +151,9 @@ struct reduceQKBlockKernel {
   using k_vec_type = typename KernelVecType<scalar_t, cache_t>::k_vec_type;
   using qk_acc_vec_type = typename KernelVecType<scalar_t, cache_t>::qk_acc_vec_type;
 
-  constexpr static int TOKEN_PER_GROUP = k_load_vec_type::get_elem_num() / x; // 16/16 = 1
-  constexpr static int MAX_GROUP_NUM = 16 / TOKEN_PER_GROUP;  // 16/1 =16
-  constexpr static int UNROLL_GROUP_NUM = MAX_GROUP_NUM / 4;  //16/4=4 ?
+  constexpr static int TOKEN_PER_GROUP = k_load_vec_type::get_elem_num() / x;
+  constexpr static int MAX_GROUP_NUM = 16 / TOKEN_PER_GROUP;
+  constexpr static int UNROLL_GROUP_NUM = MAX_GROUP_NUM / 4;
 
   // static_assert(MAX_GROUP_NUM == 8 || MAX_GROUP_NUM == 4);
   static_assert(k_load_vec_type::get_elem_num() % x == 0);
@@ -164,7 +164,6 @@ struct reduceQKBlockKernel {
                                 float *__restrict__ logits, float scale,
                                 const int token_num) {
     const int group_num = (token_num + TOKEN_PER_GROUP - 1) / TOKEN_PER_GROUP;
-    // printf("!!!!!!group num: %d", group_num);
     qk_acc_vec_type group_accums[MAX_GROUP_NUM];
     if (true) {
       for (int q_offset = 0; q_offset < HEAD_SIZE;
@@ -449,10 +448,10 @@ void paged_attention_v1(torch::Tensor &out, torch::Tensor &query,
                         const std::string &kv_cache_dtype, float kv_scale) {
   TORCH_CHECK(kv_scale == 1.0f);
   if(kv_cache_dtype == "auto") {
-  VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "paged_attention_v1_impl",
+    VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "paged_attention_v1_impl",
                                [&] {
                                  CPU_KERNEL_GUARD_IN(paged_attention_v1_impl)
-                                 CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t,scalar_t, false);
+                                 CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t, scalar_t, false);
                                  CPU_KERNEL_GUARD_OUT(paged_attention_v1_impl)
                                });
   } else if (kv_cache_dtype == "fp8") {
@@ -537,13 +536,13 @@ struct paged_attention_v2_impl {
           // Compute logits
           for (int block_idx = 0; block_idx < block_num; ++block_idx) {
             const int64_t physical_block_idx = seq_block_table[block_idx];
-            const scalar_t *__restrict__ k_block_cache_ptr =
+            const cache_t *__restrict__ k_block_cache_ptr =
                 k_cache + physical_block_idx * kv_block_stride +
                 kv_head_idx * kv_head_stride;
             float *__restrict__ head_block_logits =
                 logits + block_idx * BLOCK_SIZE;
 
-            reduceQKBlockKernel<scalar_t, HEAD_SIZE, BLOCK_SIZE, x>::call(
+            reduceQKBlockKernel<scalar_t, HEAD_SIZE, BLOCK_SIZE, x, cache_t>::call(
                 q_vec_ptr, k_block_cache_ptr, head_block_logits, scale,
                 block_idx == block_num - 1 ? last_block_token_num : BLOCK_SIZE);
           }
@@ -599,7 +598,7 @@ struct paged_attention_v2_impl {
               if (block_idx != block_num - 1) {
                 const int64_t next_physical_block_idx =
                     seq_block_table[block_idx + 1];
-                const scalar_t *__restrict__ next_v_block_cache_ptr =
+                const cache_t *__restrict__ next_v_block_cache_ptr =
                     v_cache + next_physical_block_idx * kv_block_stride +
                     kv_head_idx * kv_head_stride +
                     BLOCK_SIZE * head_part_idx * head_elem_num_per_partition;
@@ -689,15 +688,15 @@ struct paged_attention_v2_impl {
   }
 };
 
-#define LAUNCH_V2_ATTENTION_KERNEL(T, HEAD_SIZE, BLOCK_SIZE)                   \
-  paged_attention_v2_impl<T, HEAD_SIZE, BLOCK_SIZE, PARTITION_SIZE>::call(     \
-      out_ptr, exp_sums_ptr, max_logits_ptr, tmp_out_ptr, query_ptr,           \
-      key_cache_ptr, value_cache_ptr, num_kv_heads, scale, block_tables_ptr,   \
-      seq_lens_ptr, max_num_blocks_per_seq, alibi_slopes_ptr, q_stride,    \
-      kv_block_stride, kv_head_stride, num_seqs, num_heads,                    \
+#define LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, HEAD_SIZE, BLOCK_SIZE)                   \
+  paged_attention_v2_impl<T, HEAD_SIZE, BLOCK_SIZE, PARTITION_SIZE, CACHE_T>::call(     \
+      out_ptr, exp_sums_ptr, max_logits_ptr, tmp_out_ptr, query_ptr,                    \
+      key_cache_ptr, value_cache_ptr, num_kv_heads, scale, block_tables_ptr,            \
+      seq_lens_ptr, max_num_blocks_per_seq, alibi_slopes_ptr, q_stride,                 \
+      kv_block_stride, kv_head_stride, num_seqs, num_heads,                             \
       max_num_partitions);
 
-template <typename T, int BLOCK_SIZE, int PARTITION_SIZE = 512>
+template <typename T, typename CACHE_T, int BLOCK_SIZE, int PARTITION_SIZE = 512>
 void paged_attention_v2_impl_launcher(
     torch::Tensor &out, torch::Tensor &exp_sums, torch::Tensor &max_logits,
     torch::Tensor &tmp_out, torch::Tensor &query, torch::Tensor &key_cache,
@@ -724,29 +723,29 @@ void paged_attention_v2_impl_launcher(
   float *max_logits_ptr = reinterpret_cast<float *>(max_logits.data_ptr());
   T *tmp_out_ptr = reinterpret_cast<T *>(tmp_out.data_ptr());
   T *query_ptr = reinterpret_cast<T *>(query.data_ptr());
-  T *key_cache_ptr = reinterpret_cast<T *>(key_cache.data_ptr());
-  T *value_cache_ptr = reinterpret_cast<T *>(value_cache.data_ptr());
+  CACHE_T *key_cache_ptr = reinterpret_cast<CACHE_T *>(key_cache.data_ptr());
+  CACHE_T *value_cache_ptr = reinterpret_cast<CACHE_T *>(value_cache.data_ptr());
   int *block_tables_ptr = block_tables.data_ptr<int>();
   int *seq_lens_ptr = seq_lens.data_ptr<int>();
 
   switch (head_size) {
   case 64:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 64, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 64, BLOCK_SIZE);
     break;
   case 80:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 80, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 80, BLOCK_SIZE);
     break;
   case 96:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 96, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 96, BLOCK_SIZE);
     break;
   case 112:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 112, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 112, BLOCK_SIZE);
     break;
   case 128:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 128, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 128, BLOCK_SIZE);
     break;
   case 256:
-    LAUNCH_V2_ATTENTION_KERNEL(T, 256, BLOCK_SIZE);
+    LAUNCH_V2_ATTENTION_KERNEL(T, CACHE_T, 256, BLOCK_SIZE);
     break;
   default:
     TORCH_CHECK(false, "Unsupported head size: ", head_size);
@@ -754,16 +753,16 @@ void paged_attention_v2_impl_launcher(
   }
 }
 
-#define CALL_V2_KERNEL_LAUNCHER(T, BLOCK_SIZE)                                 \
-  paged_attention_v2_impl_launcher<T, BLOCK_SIZE>(                             \
+#define CALL_V2_KERNEL_LAUNCHER(T, CACHE_T, BLOCK_SIZE)                        \
+  paged_attention_v2_impl_launcher<T, CACHE_T, BLOCK_SIZE>(                    \
       out, exp_sums, max_logits, tmp_out, query, key_cache, value_cache,       \
-      num_kv_heads, scale, block_tables, seq_lens, block_size,             \
+      num_kv_heads, scale, block_tables, seq_lens, block_size,                 \
       max_seq_len, alibi_slopes);
 
-#define CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(T)                                  \
+#define CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(T, CACHE_T)                         \
   switch (block_size) {                                                        \
   case 16:                                                                     \
-    CALL_V2_KERNEL_LAUNCHER(T, 16);                                            \
+    CALL_V2_KERNEL_LAUNCHER(T, CACHE_T, 16);                                            \
     break;                                                                     \
   default:                                                                     \
     TORCH_CHECK(false, "Unsupported block size: ", block_size);                \
@@ -781,10 +780,20 @@ void paged_attention_v2(torch::Tensor &out, torch::Tensor &exp_sums,
                         const c10::optional<torch::Tensor> &alibi_slopes,
                         const std::string &kv_cache_dtype, float kv_scale) {
   TORCH_CHECK(kv_scale == 1.0f);
-  VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "paged_attention_v2_impl",
-                               [&] {
-                                 CPU_KERNEL_GUARD_IN(paged_attention_v2_impl)
-                                 CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t);
-                                 CPU_KERNEL_GUARD_OUT(paged_attention_v2_impl)
-                               });
+  if(kv_cache_dtype == "auto") {
+    VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "paged_attention_v2_impl",
+                                 [&] {
+                                   CPU_KERNEL_GUARD_IN(paged_attention_v2_impl)
+                                   CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t, scalar_t);
+                                   CPU_KERNEL_GUARD_OUT(paged_attention_v2_impl)
+                                 });
+  } else if(kv_cache_dtype == "fp8") {
+    VLLM_DISPATCH_FLOATING_TYPES(query.scalar_type(), "paged_attention_v2_impl",
+                                 [&] {
+                                   CPU_KERNEL_GUARD_IN(paged_attention_v2_impl)
+                                   CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(scalar_t, cpu_fp8);
+                                   CPU_KERNEL_GUARD_OUT(paged_attention_v2_impl)
+                                 });
+  }
+
 }
