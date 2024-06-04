@@ -237,7 +237,7 @@ static inline __m256 cast_fp8x16_to_fp16x16(__m128 fp8x16) {
 
 static inline __m512 cast_fp8x16_to_fp32x16(__m128 fp8x16) {
     __m512 res{0};
-#if 1
+#if 0
     uint8_t *fp8s = (uint8_t *)(&fp8x16);
     float *fp32s = (float *)(&res);
     for (int i = 0; i < 16; ++i) {
