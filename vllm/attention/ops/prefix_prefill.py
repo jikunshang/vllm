@@ -5,6 +5,8 @@ import torch
 import triton
 import triton.language as tl
 
+from vllm.utils import is_xpu
+
 if triton.__version__ >= "2.1.0":
 
     @triton.jit
@@ -683,8 +685,11 @@ if triton.__version__ >= "2.1.0":
                               alibi_slopes=None,
                               sliding_window=None):
 
-        cap = torch.cuda.get_device_capability()
-        BLOCK = 128 if cap[0] >= 8 else 64
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability()
+            BLOCK = 128 if cap[0] >= 8 else 64
+        elif is_xpu():
+            BLOCK = 128
         # shape constraints
         Lq, Lk, Lv = q.shape[-1], k.shape[-1], v.shape[-1]
         assert Lq == Lk and Lk == Lv
