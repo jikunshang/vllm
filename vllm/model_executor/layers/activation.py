@@ -135,10 +135,7 @@ class FastGELU(CustomOp):
 
     def forward_xpu(self, x: torch.Tensor) -> torch.Tensor:
         from vllm._ipex_ops import ipex_ops as ops
-
-        out = torch.empty_like(x)
-        ops.gelu_fast(out, x)
-        return out
+        return ops.gelu_fast(x)
 
 
 class QuickGELU(CustomOp):
@@ -150,10 +147,7 @@ class QuickGELU(CustomOp):
 
     def forward_cuda(self, x: torch.Tensor) -> torch.Tensor:
         from vllm import _custom_ops as ops
-
-        out = torch.empty_like(x)
-        ops.gelu_quick(out, x)
-        return out
+        return ops.gelu_quick(x)
 
     # TODO implement forward_xpu for QuickGELU
     # def forward_xpu(self, x: torch.Tensor) -> torch.Tensor:

@@ -37,11 +37,11 @@ class ipex_ops:
         x1, x2 = ipex_ops._reshape_activation_tensor(x)
         ipex.llm.functional.gelu_mul(x1, x2, out, "tanh")
 
-    def gelu_fast(out: torch.Tensor, x: torch.Tensor) -> None:
-        out.copy_(torch.nn.functional.gelu(x))
+    def gelu_fast( x: torch.Tensor) -> None:
+        return torch.nn.functional.gelu(x)
 
-    def gelu_new(out: torch.Tensor, x: torch.Tensor) -> None:
-        out.copy_(torch.nn.functional.gelu(x))
+    def gelu_new(x: torch.Tensor) -> None:
+        return torch.nn.functional.gelu(x)
 
     # TODO add implementation of gelu_quick here
     # def gelu_quick(out: torch.Tensor, x: torch.Tensor) -> None:
@@ -187,10 +187,9 @@ class ipex_ops:
         ipex.llm.functional.rotary_embedding(query_rot, key_rot, sin, cos,
                                              rotary_dim, is_neox, positions)
 
-    def rms_norm(out: torch.Tensor, input: torch.Tensor, weight: torch.Tensor,
-                 epsilon: float) -> None:
-        tmp = ipex.llm.functional.rms_norm(input, weight, epsilon)
-        out.copy_(tmp)
+    def rms_norm(input: torch.Tensor, weight: torch.Tensor,
+                 epsilon: float) -> torch.Tensor:
+        return ipex.llm.functional.rms_norm(input, weight, epsilon)
 
     def fused_add_rms_norm(input: torch.Tensor, residual: torch.Tensor,
                            weight: torch.Tensor, epsilon: float) -> None:
