@@ -224,7 +224,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
         attn_metadata: IpexAttnMetadata,
         kv_scale: float = 1.0,
     ) -> torch.Tensor:
-        """Forward pass with xFormers and PagedAttention.
+        """Forward pass with VarlenAttention and PagedAttention.
 
         Args:
             query: shape = [num_tokens, num_heads * head_size]
@@ -273,7 +273,10 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
             assert attn_metadata.seq_lens is not None
             if kv_cache is None or prefill_meta.block_tables.numel() == 0:
                 # normal attention.
-
+                if self.num_kv_heads != self.num_heads:
+                    key = key.repeat_interleave(self.num_queries_per_kv, dim=1)
+                    value = value.repeat_interleave(self.num_queries_per_kv,
+                                                    dim=1)
                 if attn_metadata.attn_bias is None:
                     if self.alibi_slopes is not None:
                         att_masks = _make_alibi_bias(
@@ -335,7 +338,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
             max_seq_len = decode_meta.max_decode_seq_len
             out = torch.empty_like(decode_query)
             block_size = value_cache.shape[3]
-            num_seqs, num_heads, head_size = query.shape
+            num_seqs, num_heads, head_size = decode_query.shape
             max_num_partitions = ((max_seq_len + _PARTITION_SIZE - 1) //
                                   _PARTITION_SIZE)
             # NOTE(woosuk): We use a simple heuristic to decide whether to use
@@ -384,7 +387,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                     exp_sums,
                     max_logits,
                     tmp_output,
-                    query,
+                    decode_query,
                     key_cache,
                     value_cache,
                     self.num_kv_heads,
