@@ -67,6 +67,36 @@ class RMSNorm(CustomOp):
         )
         return out
 
+    def forward_cpu(
+        self,
+        x: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        import intel_extension_for_pytorch as ipex
+        def rms_norm(input: torch.Tensor, weight: torch.Tensor,
+                     epsilon: float) -> torch.Tensor:
+            return ipex.llm.functional.rms_norm(input, weight, epsilon)
+
+        def fused_add_rms_norm(input: torch.Tensor, residual: torch.Tensor,
+                               weight: torch.Tensor, epsilon: float) -> None:
+            tmp = ipex.llm.functional.add_rms_norm(residual, input, weight, None,
+                                                   epsilon, True)
+            input.copy_(tmp)
+            
+        if residual is not None:
+            fused_add_rms_norm(
+                x,
+                residual,
+                self.weight.data,
+                self.variance_epsilon,
+            )
+            return x, residual
+        return rms_norm(
+            x,
+            self.weight.data,
+            self.variance_epsilon,
+        )
+
     def forward_xpu(
         self,
         x: torch.Tensor,
