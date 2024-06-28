@@ -13,6 +13,7 @@ from vllm.utils import is_cpu
 
 if is_cpu():
     try:
+        from vllm._ipex_ops import ipex_ops
         from vllm.attention.ops.ipex_attn import PagedAttention
         use_ipex = True
     except ImportError:
@@ -71,6 +72,8 @@ class TorchSDPAMetadata(AttentionMetadata, PagedAttentionMetadata):
     is_prompt: bool
     slot_mapping: torch.Tensor
     seq_lens: Optional[List[int]]
+    max_seqlen: Optional[int] = None
+    seqlen_q: Optional[torch.tensor] = None
 
     def __post_init__(self):
         # Set during the execution of the first attention op.
@@ -182,31 +185,26 @@ class TorchSDPABackendImpl(AttentionImpl[TorchSDPAMetadata]):
                     value = value.repeat_interleave(self.num_queries_per_kv,
                                                     dim=1)
                 if use_ipex:
-                    import intel_extension_for_pytorch as ipex
-                    max_seqlen = max(attn_metadata.seq_lens)
-                    tmp = [0]
-                    tmp.extend(attn_metadata.seq_lens)
-                    seqlen = torch.tensor(tmp)
-                    seqlen_q = torch.cumsum(seqlen, dim=0).to("cpu")
                     output = torch.empty(
                         (num_tokens, self.num_heads, self.head_size),
                         dtype=query.dtype,
                         device=query.device)
-                    ipex.llm.functional.varlen_attention(
-                        query,
-                        key,
-                        value,
-                        output,
-                        seqlen_q,
-                        seqlen_q,
-                        max_seqlen,
-                        max_seqlen,
-                        pdropout=0.0,
-                        softmax_scale=self.scale,
-                        zero_tensors=False,
-                        is_causal=True,
-                        return_softmax=False,
-                        gen_=None)
+                    # ipex-cpu provide varlen_attention API
+                    # which could perform better than torch.sdpa
+                    ipex_ops.varlen_attention(query,
+                                              key,
+                                              value,
+                                              output,
+                                              attn_metadata.seqlen_q,
+                                              attn_metadata.seqlen_q,
+                                              attn_metadata.max_seqlen,
+                                              attn_metadata.max_seqlen,
+                                              pdropout=0.0,
+                                              softmax_scale=self.scale,
+                                              zero_tensors=False,
+                                              is_causal=True,
+                                              return_softmax=False,
+                                              gen_=None)
                 else:
                     if attn_metadata.attn_bias is None:
                         if self.alibi_slopes is not None:
