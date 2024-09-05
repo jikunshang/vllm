@@ -42,7 +42,9 @@ def block2batch(tensor, block_mapping):
 
 
 def block_softmax(batch_size, attn, block_mapping):
-    attn.sub_(10.0)
+    max_val = torch.max(attn, -1).values.unsqueeze(-1)
+    max_val = torch.where(max_val == -torch.inf, 1.0e-12, max_val)
+    attn.sub_(max_val)
     attn = attn.exp_()
     sums = attn.sum(dim=-1).unsqueeze(-1)
     sums = block2batch(sums, block_mapping)
