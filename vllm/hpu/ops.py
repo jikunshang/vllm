@@ -40,7 +40,25 @@ def block2batch(tensor, block_mapping):
 
 
 def block_softmax(batch_size, attn, block_mapping):
-    attn.sub_(10.0)
+    # max_val for current block
+    max_val = torch.amax(attn, -1, keepdim=True) 
+    # find same group
+    group_ids = torch.argmax(block_mapping, dim=-1)
+    x = torch.nonzero(torch.diff(group_ids)).squeeze() + 1
+    x = torch.cat((torch.tensor([0]).to("hpu"), x))
+
+    # find the real max value in same sequence but different blocks
+    for i in range(x.size(0)-1):
+        group_data = max_val[x[i]:x[i+1],]
+        tmp = torch.amax(group_data, dim=0)
+        max_val[x[i]:x[i+1]] = tmp
+    # process last sequence
+    group_data = max_val[x[-1]:,]
+    tmp = torch.amax(group_data, dim=0)
+    max_val[x[-1]:,] = tmp
+    # handle all -inf case
+    max_val = torch.where(max_val == -torch.inf, 1.0e-12, max_val)
+    attn.sub_(max_val)
     attn = attn.exp_()
     sums = attn.sum(dim=-1).unsqueeze(-1)
     sums = block2batch(sums, block_mapping)
