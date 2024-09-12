@@ -2,8 +2,8 @@ import dataclasses
 import time
 import weakref
 from dataclasses import dataclass
-from typing import (TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type,
-                    TypeVar)
+from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple,
+                    Type, TypeVar)
 
 import torch
 import torch.nn as nn
@@ -17,6 +17,7 @@ from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.model_executor.model_loader import get_model
+from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
 from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
                              MultiModalInputs, MultiModalRegistry)
 from vllm.sampling_params import SamplingParams
@@ -56,6 +57,7 @@ class ModelInputForXPU(ModelRunnerInputBase):
     virtual_engine: Optional[int] = None
     seq_lens: Optional[List[int]] = None
     query_lens: Optional[List[int]] = None
+    async_callback: Optional[Callable] = None
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         tensor_dict = {
@@ -111,7 +113,7 @@ class ModelInputForXPUWithSamplingMetadata(ModelInputForXPU):
 class ModelInputForXPUBuilder(ModelRunnerInputBuilderBase[ModelInputForXPU]):
 
     def __init__(self,
-                 runner: "XPUModelRunner",
+                 runner: "XPUModelRunnerBase",
                  finished_requests_ids: Optional[List[str]] = None) -> None:
         super().__init__()
         self.seq_group_metadata_list: List[SequenceGroupMetadata] = []
@@ -328,10 +330,10 @@ class ModelInputForXPUBuilder(ModelRunnerInputBuilderBase[ModelInputForXPU]):
         )
 
 
-class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
-    _model_input_cls: Type[ModelInputForXPUWithSamplingMetadata] = (
-        ModelInputForXPUWithSamplingMetadata)
-    _builder_cls: Type[ModelInputForXPUBuilder] = ModelInputForXPUBuilder
+class XPUModelRunnerBase(ModelRunnerBase[TModelInputForXPU]):
+
+    _model_input_cls: Type[TModelInputForXPU]
+    _builder_cls: Type[ModelInputForXPUBuilder]
 
     def __init__(
         self,
@@ -478,21 +480,35 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
         torch.xpu.synchronize()
         return
 
-    def make_model_input_from_broadcasted_tensor_dict(
-            self,
-            tensor_dict: Dict[str,
-                              Any]) -> ModelInputForXPUWithSamplingMetadata:
-        return (
-            ModelInputForXPUWithSamplingMetadata.from_broadcasted_tensor_dict(
-                tensor_dict,
-                attn_backend=self.attn_backend,
-            ))
+    def save_sharded_state(
+        self,
+        path: str,
+        pattern: Optional[str] = None,
+        max_size: Optional[int] = None,
+    ) -> None:
+        from vllm.model_executor.model_loader.loader import ShardedStateLoader
+        ShardedStateLoader.save_model(
+            self.model,
+            path,
+            pattern=pattern,
+            max_size=max_size,
+        )
+
+    def save_tensorized_model(
+        self,
+        tensorizer_config: TensorizerConfig,
+    ) -> None:
+        from vllm.model_executor.model_loader.loader import TensorizerLoader
+        TensorizerLoader.save_model(
+            self.model,
+            tensorizer_config=tensorizer_config,
+        )
 
     def _prepare_model_input_tensors(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
         finished_requests_ids: Optional[List[str]] = None
-    ) -> ModelInputForXPUWithSamplingMetadata:
+    ) -> TModelInputForXPU:
         """Helper method to prepare the model input based on a given sequence
         group. Prepares metadata needed for the base model forward pass but not
         metadata for possible additional steps, e.g., sampling.
@@ -503,6 +519,22 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
             builder.add_seq_group(seq_group_metadata)
 
         return builder.build()  # type: ignore
+
+
+class XPUModelRunner(XPUModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
+    _model_input_cls: Type[ModelInputForXPUWithSamplingMetadata] = (
+        ModelInputForXPUWithSamplingMetadata)
+    _builder_cls: Type[ModelInputForXPUBuilder] = ModelInputForXPUBuilder
+
+    def make_model_input_from_broadcasted_tensor_dict(
+            self,
+            tensor_dict: Dict[str,
+                              Any]) -> ModelInputForXPUWithSamplingMetadata:
+        return (
+            ModelInputForXPUWithSamplingMetadata.from_broadcasted_tensor_dict(
+                tensor_dict,
+                attn_backend=self.attn_backend,
+            ))
 
     def prepare_model_input(
         self,
