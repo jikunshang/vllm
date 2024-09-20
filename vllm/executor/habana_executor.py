@@ -56,10 +56,16 @@ class HabanaExecutor(ExecutorBase):
                        local_rank: int = 0,
                        rank: int = 0,
                        distributed_init_method: Optional[str] = None):
-        wrapper = WorkerWrapperBase(
-            worker_module_name="vllm.worker.habana_worker",
-            worker_class_name="HabanaWorker",
-        )
+        if self.scheduler_config.is_multi_step:
+            wrapper = WorkerWrapperBase(
+                worker_module_name="vllm.worker.multi_step_habana_worker",
+                worker_class_name="MultiStepHabanaWorker",
+            )
+        else:
+            wrapper = WorkerWrapperBase(
+                worker_module_name="vllm.worker.habana_worker",
+                worker_class_name="HabanaWorker",
+            )
         wrapper.init_worker(**self._get_worker_kwargs(local_rank, rank,
                                                       distributed_init_method))
         return wrapper.worker

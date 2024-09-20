@@ -428,6 +428,8 @@ class ModelInputForHPU(ModelRunnerInputBase):
     lora_mask: Optional[torch.Tensor] = None
     lora_logits_mask: Optional[torch.Tensor] = None
     async_callback: Optional[Callable] = None
+    is_first_multi_step: bool = True
+    is_last_step: bool = True
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         tensor_dict = {
@@ -441,6 +443,8 @@ class ModelInputForHPU(ModelRunnerInputBase):
             "virtual_engine": self.virtual_engine,
             "lora_mask": self.lora_mask,
             "lora_logits_mask": self.lora_logits_mask,
+            "is_first_multi_step": self.is_first_multi_step,
+            "is_last_step": self.is_last_step,
         }
         _add_attn_metadata_broadcastable_dict(tensor_dict, self.attn_metadata)
         return tensor_dict
@@ -568,6 +572,7 @@ class HabanaModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.seen_configs: set = set()
         self._mem_margin: Optional[int] = None
         self._setup_buckets()
+        self.cached_step_outputs: List[torch.Tensor] = []
         self._set_gc_threshold()
 
     def _set_gc_threshold(self) -> None:
@@ -1862,10 +1867,37 @@ class HabanaModelRunner(
         num_steps: int = 1,
         warmup_mode=False,
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
-        if num_steps > 1:
-            raise ValueError(
-                "num_steps > 1 is not supported in HabanaModelRunner")
+        if not model_input.is_first_multi_step:
+            if not model_input.is_last_step:
+                return []
 
+            use_async_out_proc = model_input.async_callback is not None
+       
+            sampler_outputs = []
+            num_outputs = len(self.cached_step_outputs)
+            for i in range(num_outputs):
+                next_token_ids = self.cached_step_outputs.pop(0)
+                next_token_ids = next_token_ids.cpu().tolist()
+                sampler_output = _make_decode_output(next_token_ids,
+                                                     model_input.seq_groups)
+                sampler_outputs.append(sampler_output)
+
+                if i < num_outputs - 1 and use_async_out_proc:
+                    assert model_input.async_callback is not None
+                    ctx = model_input.async_callback.keywords[  # type: ignore
+                        "ctx"]
+                    ctx.append_output(
+                        outputs=[sampler_output],
+                        seq_group_metadata_list=ctx.seq_group_metadata_list,
+                        scheduler_outputs=ctx.scheduler_outputs,
+                        is_async=False,
+                        is_last_step=False)
+                    model_input.async_callback()
+            if use_async_out_proc:
+                return [sampler_outputs[-1]]
+            else:
+                return sampler_outputs
+        
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
@@ -1883,86 +1915,144 @@ class HabanaModelRunner(
         assert attn_metadata is not None
         is_prompt = attn_metadata.is_prompt
         assert is_prompt is not None
-        batch_size = input_tokens.size(0)
-        seq_len = self._seq_len(attn_metadata)
-        use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
-        self._check_config(batch_size, seq_len, is_prompt, warmup_mode)
-        execute_model_kwargs = {
-            "input_ids": input_tokens,
-            "positions": input_positions,
-            "kv_caches": kv_caches,
-            "attn_metadata": self.trim_attn_metadata(attn_metadata),
-            "intermediate_tensors": intermediate_tensors,
-            "lora_mask": model_input.lora_mask,
-            **(model_input.multi_modal_kwargs or {}),
-        }
-        if htorch.utils.internal.is_lazy():
-            execute_model_kwargs.update({"bypass_hpu_graphs": not use_graphs})
+        
+        if is_prompt:
+            batch_size = input_tokens.size(0)
+            seq_len = self._seq_len(attn_metadata)
+            use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
+            self._check_config(batch_size, seq_len, is_prompt, warmup_mode)
+            execute_model_kwargs = {
+                "input_ids": input_tokens,
+                "positions": input_positions,
+                "kv_caches": kv_caches,
+                "attn_metadata": self.trim_attn_metadata(attn_metadata),
+                "intermediate_tensors": intermediate_tensors,
+                "lora_mask": model_input.lora_mask,
+                **(model_input.multi_modal_kwargs or {}),
+            }
+            if htorch.utils.internal.is_lazy():
+                execute_model_kwargs.update({"bypass_hpu_graphs": not use_graphs})
 
-        htorch.core.mark_step()
-        if self.is_driver_worker:
-            model_event_name = ("model_"
-                                f"{'prompt' if is_prompt else 'decode'}_"
-                                f"bs{batch_size}_"
-                                f"seq{seq_len}_"
-                                f"graphs{'T' if use_graphs else 'F'}")
-        else:
-            model_event_name = 'model_executable'
-        with self.profiler.record_event('internal', model_event_name):
-            hidden_states = self.model.forward(
-                **execute_model_kwargs,
-                selected_token_indices=sampling_metadata.selected_token_indices
-            )
+            htorch.core.mark_step()
+            if self.is_driver_worker:
+                model_event_name = ("model_"
+                                    f"{'prompt' if is_prompt else 'decode'}_"
+                                    f"bs{batch_size}_"
+                                    f"seq{seq_len}_"
+                                    f"graphs{'T' if use_graphs else 'F'}")
+            else:
+                model_event_name = 'model_executable'
+            with self.profiler.record_event('internal', model_event_name):
+                hidden_states = self.model.forward(
+                    **execute_model_kwargs,
+                    selected_token_indices=sampling_metadata.selected_token_indices
+                )
 
-        if self.lora_config:
+            if self.lora_config:
+            from vllm.lora.layers import VocabParallelEmbeddingWithLoRA
+            modules = unwrap_model(self.model.model)
+            for module in modules:
+                if isinstance(module, VocabParallelEmbeddingWithLoRA):
+                    for i in range(0, len(module.indices_len)):
+                        module.indices_len[
+                            i] = sampling_metadata.selected_token_indices.numel(
+                            )
             lora_logits_mask: torch.Tensor = model_input.lora_logits_mask
             LoraMask.setLoraMask(
                 lora_logits_mask.index_select(
                     0, sampling_metadata.selected_token_indices))
 
-        # Compute the logits.
-        with self.profiler.record_event(
-                'internal', ('compute_logits_'
-                             f'{"prompt" if is_prompt else "decode"}_bs'
-                             f'{batch_size}_'
-                             f'seq{seq_len}')):
-            sampling_metadata.selected_token_indices = None
-            logits = self.model.compute_logits(hidden_states,
-                                               sampling_metadata)
-        htorch.core.mark_step()
-        # Only perform sampling in the driver worker.
-        if not self.is_driver_worker:
-            return []
+            # Compute the logits.
+            with self.profiler.record_event(
+                    'internal', ('compute_logits_'
+                                 f'{"prompt" if is_prompt else "decode"}_bs'
+                                 f'{batch_size}_'
+                                 f'seq{seq_len}')):
+                sampling_metadata.selected_token_indices = None
+                logits = self.model.compute_logits(hidden_states,
+                                                   sampling_metadata)
+            htorch.core.mark_step()
+            # Only perform sampling in the driver worker.
+            if not self.is_driver_worker:
+                return []
 
-        if model_input.async_callback is not None:
-            model_input.async_callback()
+            if model_input.async_callback is not None:
+                model_input.async_callback()
 
         # Sample the next token.
-        with self.profiler.record_event(
-                'internal', ('sample_'
-                             f'{"prompt" if is_prompt else "decode"}_'
-                             f'bs{batch_size}_'
-                             f'seq{seq_len}')):
-            output = self.model.sample(
-                logits=logits,
-                sampling_metadata=sampling_metadata,
-            )
-        output.outputs = output.outputs[:real_batch_size]
-        htorch.core.mark_step()
+            with self.profiler.record_event(
+                    'internal', ('sample_'
+                                 f'{"prompt" if is_prompt else "decode"}_'
+                                 f'bs{batch_size}_'
+                                 f'seq{seq_len}')):
+                output = self.model.sample(
+                    logits=logits,
+                    sampling_metadata=sampling_metadata,
+                )
+            output.outputs = output.outputs[:real_batch_size]
+            htorch.core.mark_step()
 
-        if self.is_driver_worker and self.profiler.enabled:
-            # Stop recording 'execute_model' event
-            self.profiler.end()
-            event_end = self.profiler.get_timestamp_us()
-            counters = self.profiler_counter_helper.get_counter_dict(
-                cache_config=self.cache_config,
-                duration=event_end - self.event_start,
-                seq_len=seq_len,
-                batch_size_padded=batch_size_padded,
-                real_batch_size=real_batch_size,
-                is_prompt=is_prompt)
-            self.profiler.record_counter(self.event_start, counters)
-        return [output]
+            if self.is_driver_worker and self.profiler.enabled:
+                # Stop recording 'execute_model' event
+                self.profiler.end()
+                event_end = self.profiler.get_timestamp_us()
+                counters = self.profiler_counter_helper.get_counter_dict(
+                    cache_config=self.cache_config,
+                    duration=event_end - self.event_start,
+                    seq_len=seq_len,
+                    batch_size_padded=batch_size_padded,
+                    real_batch_size=real_batch_size,
+                    is_prompt=is_prompt)
+                self.profiler.record_counter(self.event_start, counters)
+            return [output]
+
+        else:
+            batch_size = input_tokens.size(0)
+            seq_len = self._seq_len(attn_metadata)
+            use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
+            self._check_config(batch_size, seq_len, is_prompt, warmup_mode)
+            execute_model_kwargs = {
+                "input_ids": input_tokens,
+                "positions": input_positions,
+                "kv_caches": kv_caches,
+                "attn_metadata": self.trim_attn_metadata(attn_metadata),
+                "intermediate_tensors": intermediate_tensors,
+                "lora_mask": model_input.lora_mask
+            }
+            for i in range(num_steps):
+                slot_mapping = attn_metadata.slot_mapping
+                htorch.core.mark_step()
+                if self.is_driver_worker:
+                    model_event_name = ("model_"
+                                        f"{'prompt' if is_prompt else 'decode'}_"
+                                        f"bs{batch_size}_"
+                                        f"seq{seq_len}_"
+                                        f"graphs{'T' if use_graphs else 'F'}")
+                else:
+                    model_event_name = 'model_executable'
+                with self.profiler.record_event('internal', model_event_name):
+                    hidden_states = self.model.forward(
+                        **execute_model_kwargs,
+                        selected_token_indices=sampling_metadata.selected_token_indices
+                    )
+                sampling_metadata.selected_token_indices = None
+                logits = self.model.compute_logits(hidden_states,
+                                                   sampling_metadata)
+                if self.is_driver_worker:
+                    output = self.model.sample(
+                    logits=logits,
+                    sampling_metadata=sampling_metadata,
+                )
+                
+                self.cached_step_outputs.append(output)
+                if i < num_steps - 1:
+                    print(output)
+                    print(input_positions)
+
+        if num_steps > 1:
+            return []
+        next_token_ids = self.cached_step_outputs.pop(0)
+        return [next_token_ids]   
 
     def shutdown_inc(self):
         can_finalize_inc = False
@@ -1980,3 +2070,23 @@ class HabanaModelRunner(
 
     def __del__(self):
         self.shutdown_inc()
+
+def _make_decode_output(
+    next_token_ids: List[int],
+    seq_groups: List[List[int]],
+) -> SamplerOutput:
+    zero_logprob = Logprob(0.0)
+    sampler_outputs = []
+    batch_idx = 0
+    for seq_group in seq_groups:
+        seq_ids = seq_group
+        seq_outputs = []
+        for seq_id in seq_ids:
+            next_token_id = next_token_ids[batch_idx]
+            seq_outputs.append(
+                SequenceOutput(seq_id, next_token_id,
+                               {next_token_id: zero_logprob}))
+            batch_idx += 1
+        sampler_outputs.append(CompletionSequenceGroupOutput(
+            seq_outputs, None))
+    return SamplerOutput(sampler_outputs)
