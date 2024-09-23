@@ -1961,16 +1961,17 @@ class HabanaModelRunner(
                         **execute_model_kwargs,
                         selected_token_indices=sampling_metadata.selected_token_indices
                     )
-                sampling_metadata.selected_token_indices = None
+                # sampling_metadata.selected_token_indices = None
                 logits = self.model.compute_logits(hidden_states,
                                                    sampling_metadata)
                 if self.is_driver_worker:
                     output = self.model.sample(
-                    logits=logits,
-                    sampling_metadata=sampling_metadata,
-                )
+                        logits=logits,
+                        sampling_metadata=sampling_metadata,
+                    )
+                    output_token_ids = output.outputs[:real_batch_size]
                 
-                self.cached_step_outputs.append(output)
+                self.cached_step_outputs.append(output_token_ids)
                 if i < num_steps - 1:
                     print(output)
                     print(input_positions)
