@@ -12,6 +12,7 @@ RUN apt-get update  -y \
 
 RUN git clone https://github.com/intel/pti-gpu && \
     cd pti-gpu/sdk && \
+    git checkout 6c491f07a777ed872c2654ca9942f1d0dde0a082 && \
     mkdir build && \
     cd build && \
     cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchains/icpx_toolchain.cmake -DBUILD_TESTING=OFF .. && \
@@ -23,6 +24,8 @@ COPY ./ /workspace/vllm
 WORKDIR /workspace/vllm
 
 RUN pip install -v -r requirements-xpu.txt
+
+ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/usr/local/lib/"
 
 RUN VLLM_TARGET_DEVICE=xpu python3 setup.py install
 
