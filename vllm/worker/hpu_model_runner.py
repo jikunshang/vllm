@@ -259,6 +259,7 @@ class HpuModelAdapter():
 
     def __init__(self, model, block_size, dtype, enforce_eager):
         self.model = model
+        self.model.sampler.include_gpu_probs_tensor = True
         self.prefill_use_fusedsdpa = os.getenv('VLLM_PROMPT_USE_FUSEDSDPA',
                                                '0').lower() in ['1', 'true']
         self.block_size = block_size
@@ -1885,10 +1886,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
             sampler_outputs = []
             num_outputs = len(self.cached_step_outputs)
             for i in range(num_outputs):
-                next_token_ids = self.cached_step_outputs.pop(0)
-                next_token_ids = next_token_ids.cpu().tolist()
-                sampler_output = _make_decode_output(next_token_ids,
-                                                     model_input.seq_groups)
+                sampler_output = self.cached_step_outputs.pop(0)
                 sampler_outputs.append(sampler_output)
 
                 if i < num_outputs - 1 and use_async_out_proc:
@@ -2019,15 +2017,16 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
             seq_len = self._seq_len(attn_metadata)
             use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
             self._check_config(batch_size, seq_len, is_prompt, warmup_mode)
-            execute_model_kwargs = {
-                "input_ids": input_tokens,
-                "positions": input_positions,
-                "kv_caches": kv_caches,
-                "attn_metadata": self.trim_attn_metadata(attn_metadata),
-                "intermediate_tensors": intermediate_tensors,
-                "lora_mask": model_input.lora_mask
-            }
+
             for i in range(num_steps):
+                execute_model_kwargs = {
+                    "input_ids": input_tokens,
+                    "positions": input_positions,
+                    "kv_caches": kv_caches,
+                    "attn_metadata": self.trim_attn_metadata(attn_metadata),
+                    "intermediate_tensors": intermediate_tensors,
+                    "lora_mask": model_input.lora_mask
+                }
                 slot_mapping = attn_metadata.slot_mapping
                 htorch.core.mark_step()
                 if self.is_driver_worker:
@@ -2051,12 +2050,20 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         logits=logits,
                         sampling_metadata=sampling_metadata,
                     )
-                    output_token_ids = output.outputs[:real_batch_size]
+                    # output_token_ids = output.sampled_token_ids
                 
-                self.cached_step_outputs.append(output_token_ids)
+                self.cached_step_outputs.append(output[:real_batch_size])
+
                 if i < num_steps - 1:
-                    print(output)
-                    print(input_positions)
+                    tmp = torch.zeros(batch_size, 1, dtype=torch.int)
+                    for idx in range(real_batch_size):
+                        tmp[idx][0] = output.outputs[idx].samples[0].output_token
+                    
+                    # Prepare the inputs for the next step.
+                    input_tokens = tmp.to("hpu")
+                    input_positions.add_(1)
+                    attn_metadata.slot_mapping.add_(1)
+                    attn_metadata.num_decode_tokens += batch_size
 
         if num_steps > 1:
             return []
