@@ -1,14 +1,14 @@
 import dataclasses
 from typing import Dict, Optional, Tuple
 import torch
-from vllm.worker.habana_worker import HabanaWorker
+from vllm.worker.hpu_worker import HPUWorker
 
 from vllm.worker.habana_model_runner import ModelInputForHPU
 from vllm.worker.worker_base import WorkerInput
 from vllm.sequence import ExecuteModelRequest
 from vllm.distributed import broadcast_tensor_dict
 
-class MultiStepHPUWorker(HabanaWorker):
+class MultiStepHPUWorker(HPUWorker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cached_model_input: Optional[ModelInputForHPU] = None
