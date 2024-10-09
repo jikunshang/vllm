@@ -1918,7 +1918,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         if num_steps > 1:
             raise ValueError(
                 "num_steps > 1 is not supported in HPUModelRunner")
-
+        self.model.model.sampler.include_gpu_probs_tensor = (
+                True)
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
@@ -1986,9 +1987,12 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                              f'{"prompt" if is_prompt else "decode"}_bs'
                              f'{batch_size}_'
                              f'seq{seq_len}')):
+            tmp = sampling_metadata.selected_token_indices
             sampling_metadata.selected_token_indices = None
             logits = self.model.compute_logits(hidden_states,
                                                sampling_metadata)
+            sampling_metadata.selected_token_indices = tmp
+
         htorch.core.mark_step()
         # Only perform sampling in the driver worker.
         if not self.is_driver_worker:

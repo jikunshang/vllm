@@ -315,6 +315,7 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         Execute the model for a single step and update multi-step
         metadata
         """
+        self._base_model_runner.model.model.sampler.include_gpu_probs_tensor = True
         assert num_steps == 1, "MultiStepModelRunner only supports num_steps=1"
         frozen_model_input = model_input.frozen_model_input
         assert frozen_model_input is not None
@@ -481,14 +482,15 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
             frozen_model_input.input_positions[i] = next_input_pos
             block_index = next_input_pos // self.block_size
             block_offset = next_input_pos % self.block_size
-            slot = attn_metadata.block_tables[i]
-            slot_num = slot[block_index] * self.block_size + block_offset
-            attn_metadata.slot_mapping[i] = slot_num
+            attn_metadata.block_offset[i] += 1
+            # slot = attn_metadata.block_list[i]
+            # slot_num = slot[block_index] * self.block_size + block_offset
+            # attn_metadata.block_mapping[i] = slot_num
 
 
         if frozen_model_input.seq_lens is not None:
             for i in range(num_queries):
-                frozen_model_input.seq_lens[i] = attn_metadata.seq_lens[i]
+                frozen_model_input.seq_lens[i] +=1 #= attn_metadata.seq_lens[i]
 
         return model_input
 
@@ -549,7 +551,7 @@ def _pythonize_sampler_output(
     pinned_buffer = pinned_sampled_token_buffer[:model_input.num_queries]
 
     # CPU GPU sync
-    pinned_buffer = pinned_buffer.copy_(sampled_token_ids, non_blocking=False)
+    pinned_buffer = pinned_buffer.copy_(output.sampled_token_ids[:model_input.num_queries], non_blocking=False)
 
     # this will not block as the tensors are already on CPU
     samples_list = pinned_buffer.tolist()
