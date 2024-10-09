@@ -1076,6 +1076,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         slot_mapping = torch.tensor(slot_mapping,
                                     dtype=torch.long,
                                     device=self.device)
+        seq_lens_tensor = torch.tensor(seq_lens,
+                                       dtype=torch.long,
+                                       device=self.device)
 
         block_indices, block_offsets = precompute_indices_and_offsets(
             self.block_size, slot_mapping, False)
@@ -1093,7 +1096,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             block_scales=block_scales,
             block_groups=block_groups,
             attn_bias=None,
-            seq_lens_tensor=None,
+            seq_lens_tensor=seq_lens_tensor,
             num_prefills=0,
             num_prefill_tokens=0,
             num_decode_tokens=num_decode_tokens,

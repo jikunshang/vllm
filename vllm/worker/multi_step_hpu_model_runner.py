@@ -467,10 +467,10 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         attn_metadata = frozen_model_input.attn_metadata
         # attn_metadata.advance_step(num_seqs, num_queries)
 
-        for i in range(num_queries):
-            attn_metadata.seq_lens[i] += 1
-        attn_metadata.max_decode_seq_len = max(attn_metadata.seq_lens)
-        
+        # for i in range(num_queries):
+        #     attn_metadata.seq_lens[i] += 1
+        # attn_metadata.max_decode_seq_len = max(attn_metadata.seq_lens)
+
         # refer ops.advance_step()
         for i in range(num_queries) :
             frozen_model_input.input_tokens[i] = model_input.cached_outputs[-1].sampled_token_ids[i]
