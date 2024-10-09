@@ -1151,13 +1151,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 prefill_reqs.append(seq_group_meta)
             else:
                 decode_reqs.append(seq_group_meta)
-
+        print(f"prefill req len: {len(prefill_reqs)}, decode req len: {len(decode_reqs)} ")
         # Prepare input tensors.
         (
             input_tokens,
             input_positions,
             prefill_attn_metadata,
-            seq_lens,
+            prefill_seq_lens,
             query_lens,
             lora_index_mapping,
             lora_prompt_mapping,
@@ -1177,8 +1177,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             decode_lora_ids,
             decode_seq_lens,
         ) = self._prepare_decode(decode_reqs)
-        seq_lens = seq_lens if decode_seq_lens == 0 else decode_seq_lens
-        query_lens = query_lens if decode_seq_lens == 0 else decode_seq_lens
+        seq_lens = prefill_seq_lens if len(decode_reqs) == 0 else decode_seq_lens
+        query_lens = query_lens if len(decode_reqs) == 0 else decode_seq_lens
         sampling_metadata = SamplingMetadata.prepare(seq_group_metadata_list,
                                                      seq_lens, query_lens,
                                                      self.device,
@@ -1187,7 +1187,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         if not self.scheduler_config.chunked_prefill_enabled:
             assert (len(prefill_reqs) and len(decode_reqs)) == 0
 
-        num_prefills = len(seq_lens)
+        num_prefills = len(prefill_seq_lens)
         num_prefill_tokens = len(input_tokens)
         num_decode_tokens = len(decode_input_tokens)
 
@@ -1209,14 +1209,14 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         # FIXME: We need to adjust selected_token_indices to accommodate
         # for padding
         max_len = input_tokens.size(1)
-        paddings = [max_len - s for s in seq_lens]
+        paddings = [max_len - s for s in prefill_seq_lens]
         paddings = [0] + paddings[:-1]
         paddings = list(itertools.accumulate(paddings))
         paddings_prompt_logprobs = []
         for i, seq_group_metadata in enumerate(seq_group_metadata_list):
             if seq_group_metadata.sampling_params.prompt_logprobs is not None \
                               and seq_group_metadata.is_prompt:
-                paddings_prompt_logprobs += ([paddings[i]] * seq_lens[i])
+                paddings_prompt_logprobs += ([paddings[i]] * prefill_seq_lens[i])
         paddings = torch.tensor(
             paddings_prompt_logprobs if paddings_prompt_logprobs else paddings,
             dtype=sampling_metadata.selected_token_indices.dtype,
