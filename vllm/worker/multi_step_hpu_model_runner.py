@@ -332,9 +332,9 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
                     (self.scheduler_config.max_num_seqs, 1),
                     dtype=torch.long,
                     device="cpu",
-                    pin_memory=True)
+                    pin_memory=False)
 
-            self._base_model_runner.model.sampler.include_gpu_probs_tensor = (
+            self._base_model_runner.model.model.sampler.include_gpu_probs_tensor = (
                 True)
             if frozen_model_input.sampling_metadata:
                 frozen_model_input.sampling_metadata.skip_sampler_cpu_output = (
@@ -465,9 +465,12 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         assert num_seqs >= num_queries
 
         attn_metadata = frozen_model_input.attn_metadata
-        assert isinstance(attn_metadata, IpexAttnMetadata)
-        attn_metadata.advance_step(num_seqs, num_queries)
+        # attn_metadata.advance_step(num_seqs, num_queries)
 
+        for i in range(num_queries):
+            attn_metadata.seq_lens[i] += 1
+        attn_metadata.max_decode_seq_len = max(attn_metadata.seq_lens)
+        
         # refer ops.advance_step()
         for i in range(num_queries) :
             frozen_model_input.input_tokens[i] = model_input.cached_outputs[-1].sampled_token_ids[i]

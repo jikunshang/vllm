@@ -405,6 +405,7 @@ class PrepareDecodeMetadata(NamedTuple):
     lora_requests: Set[LoRARequest]
     slot_mapping: List[List[int]]
     lora_ids: List[int]
+    seq_lens: List[int]
 
     @classmethod
     def empty(cls):
@@ -415,7 +416,8 @@ class PrepareDecodeMetadata(NamedTuple):
                                      lora_prompt_mapping=[],
                                      lora_requests=set(),
                                      slot_mapping=[],
-                                     lora_ids=[])
+                                     lora_ids=[],
+                                     seq_lens=[])
 
 
 # How batches are constructed.
@@ -1104,7 +1106,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                      lora_prompt_mapping=lora_prompt_mapping,
                                      lora_requests=lora_requests,
                                      slot_mapping=slot_mapping,
-                                     lora_ids=lora_ids)
+                                     lora_ids=lora_ids,
+                                     seq_lens=seq_lens)
 
     def prepare_input_tensors(
         self,
@@ -1172,7 +1175,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             decode_lora_requests,
             decode_slot_mapping,
             decode_lora_ids,
+            decode_seq_lens,
         ) = self._prepare_decode(decode_reqs)
+        seq_lens = seq_lens if decode_seq_lens == 0 else decode_seq_lens
+        query_lens = query_lens if decode_seq_lens == 0 else decode_seq_lens
         sampling_metadata = SamplingMetadata.prepare(seq_group_metadata_list,
                                                      seq_lens, query_lens,
                                                      self.device,
