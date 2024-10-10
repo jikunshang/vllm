@@ -168,7 +168,7 @@ class HPUMultiStepWorker(HPUWorker):
                 # cache the worker input and model input for the next steps
                 self.multi_step_states[virtual_engine] = HPUMultiStepState(
                     worker_input=worker_input, model_input=model_input)
-                print(f"states model input: {self.multi_step_states[virtual_engine].model_input.frozen_model_input}")
+                # print(f"states model input: {self.multi_step_states[virtual_engine].model_input.frozen_model_input}")
         # if TP workers
         else:
             broadcast_data = self._get_worker_input_from_broadcast()

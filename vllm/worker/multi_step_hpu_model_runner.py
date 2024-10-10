@@ -482,7 +482,7 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
             frozen_model_input.input_positions[i] = next_input_pos
             block_index = next_input_pos // self.block_size
             block_offset = next_input_pos % self.block_size
-            attn_metadata.block_offset[i] += 1
+            attn_metadata.block_offsets[i] += 1
             # slot = attn_metadata.block_list[i]
             # slot_num = slot[block_index] * self.block_size + block_offset
             # attn_metadata.block_mapping[i] = slot_num
