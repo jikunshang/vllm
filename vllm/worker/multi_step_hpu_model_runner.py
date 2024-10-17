@@ -311,6 +311,7 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         kv_caches: List[torch.Tensor],
         intermediate_tensors: Optional[IntermediateTensors] = None,
         num_steps: int = 1,
+        warmup_mode=False,
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         """ 
         Execute the model for a single step and update multi-step
@@ -322,9 +323,10 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         assert frozen_model_input is not None
 
         # path for warm up runs
-        if not model_input.is_multi_step:
+        if not model_input.is_multi_step or warmup_mode:
             return self._base_model_runner.execute_model(
-                frozen_model_input, kv_caches, intermediate_tensors, num_steps)
+                frozen_model_input, kv_caches, intermediate_tensors, num_steps,
+                warmup_mode)
 
         # make sure we skip the sampler on the lask rank and only pythonize
         # if CPU is ahead.
@@ -467,61 +469,44 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         assert num_seqs >= num_queries
 
         attn_metadata = frozen_model_input.attn_metadata
-        # attn_metadata.advance_step(num_seqs, num_queries)
 
-        # for i in range(num_queries):
-        #     attn_metadata.seq_lens[i] += 1
-        # attn_metadata.max_decode_seq_len = max(attn_metadata.seq_lens)
+        next_seq_len = attn_metadata.seq_lens_tensor + 1
+        next_input_pos = next_seq_len - 1
+        block_index = next_input_pos // self.block_size
+        block_offset = next_input_pos % self.block_size
 
-        # refer ops.advance_step()
-        for i in range(num_queries):
-            frozen_model_input.input_tokens[i] = model_input.cached_outputs[
-                -1].sampled_token_ids[i]
-            seq_len = attn_metadata.seq_lens_tensor[i]
-            next_seq_len = seq_len + 1
-            next_input_pos = next_seq_len - 1
-            attn_metadata.seq_lens_tensor[i] += 1
-            frozen_model_input.input_positions[i] = next_input_pos
-            block_index = next_input_pos // self.block_size
-            block_offset = next_input_pos % self.block_size
-            attn_metadata.block_offsets[i] += 1
-            index1 = attn_metadata.block_indices[i] - 1
-            index = attn_metadata.block_list[index1] - 1
-            attn_metadata.block_usage[index] += 1
-            attn_metadata.slot_mapping[i] += 1
-            # slot = attn_metadata.block_list[i]
-            # slot_num = slot[block_index] * self.block_size + block_offset
-            # attn_metadata.block_mapping[i] = slot_num
+        attn_metadata.seq_lens_tensor = next_seq_len
+        attn_metadata.block_offsets = block_offset
 
-        # next_seq_len = attn_metadata.seq_lens_tensor + 1
-        # next_input_pos = next_seq_len - 1
-        # attn_metadata.seq_lens_tensor = next_seq_len
-        # index1 = attn_metadata.block_indices - 1
-        # index = attn_metadata.block_list[index1] - 1
-        # attn_metadata.block_usage[index] += 1
-        # attn_metadata.slot_mapping += 1
+        next_block = torch.eq(block_offset, 0)
+        attn_metadata.block_indices = torch.where(
+            next_block, attn_metadata.block_indices + num_queries,
+            attn_metadata.block_indices)
+        attn_metadata.slot_mapping = attn_metadata.block_indices * self.block_size + block_offset
 
-        # tmp_input_tokens = frozen_model_input.input_tokens
-        # sampled_token_ids = model_input.cached_outputs[-1].sampled_token_ids
-        # if sampled_token_ids.dim() > 1 and sampled_token_ids.size(-1) == 1:
-        #     sampled_token_ids = sampled_token_ids.squeeze(-1)
-        # tmp_input_tokens = sampled_token_ids[:num_queries]
-        # tmp_input_positions = frozen_model_input.input_positions
-        # tmp_input_positions[:num_queries] = next_input_pos[:num_queries]
-        # frozen_model_input = dataclasses.replace(
-        #     frozen_model_input,
-        #     input_tokens=tmp_input_tokens,
-        #     input_positions=tmp_input_positions,
-        # )
+        attn_metadata.block_usage[:num_queries] += 1  # fixme
 
+        tmp_input_tokens = frozen_model_input.input_tokens
+        sampled_token_ids = model_input.cached_outputs[-1].sampled_token_ids
+        if sampled_token_ids.dim() > 1 and sampled_token_ids.size(-1) == 1:
+            sampled_token_ids = sampled_token_ids.squeeze(-1)
+        tmp_input_tokens = sampled_token_ids[:num_queries].unsquezee(-1)
+        tmp_input_positions = frozen_model_input.input_positionsq
+        tmp_input_positions[:num_queries] = next_input_pos.unsqueeze(
+            -1)[:num_queries]
+        frozen_model_input = dataclasses.replace(
+            frozen_model_input,
+            input_tokens=tmp_input_tokens,
+            input_positions=tmp_input_positions,
+        )
         if frozen_model_input.seq_lens is not None:
-            # tmp_seq_lens = frozen_model_input.seq_lens
-            # tmp_seq_lens[:num_queries] = attn_metadata.seq_lens[:num_queries]
-            # frozen_model_input = dataclasses.replace(frozen_model_input,
-            #                                          seq_len=tmp_seq_lens)
-            for i in range(num_queries):
-                frozen_model_input.seq_lens[
-                    i] += 1  #= attn_metadata.seq_lens[i]
+            tmp_seq_lens = frozen_model_input.seq_lens
+            tmp_seq_lens[:
+                         num_queries] = attn_metadata.seq_lens_tensor[:
+                                                                      num_queries]
+            frozen_model_input = dataclasses.replace(frozen_model_input,
+                                                     seq_lens=tmp_seq_lens)
+        model_input.frozen_model_input = frozen_model_input
 
         return model_input
 
