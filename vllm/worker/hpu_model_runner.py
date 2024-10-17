@@ -610,6 +610,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             pattern=pattern,
             max_size=max_size,
         )
+
     def save_tensorized_model(
         self,
         tensorizer_config: TensorizerConfig,
@@ -1154,7 +1155,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 prefill_reqs.append(seq_group_meta)
             else:
                 decode_reqs.append(seq_group_meta)
-        print(f"prefill req len: {len(prefill_reqs)}, decode req len: {len(decode_reqs)} ")
+
         # Prepare input tensors.
         (
             input_tokens,
@@ -1180,12 +1181,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             decode_lora_ids,
             decode_seq_lens,
         ) = self._prepare_decode(decode_reqs)
-        seq_lens = prefill_seq_lens if len(decode_reqs) == 0 else decode_seq_lens
-        query_lens = query_lens if len(decode_reqs) == 0 else decode_seq_lens
+        seq_lens = prefill_seq_lens if len(
+            decode_reqs) == 0 else decode_seq_lens
         sampling_metadata = SamplingMetadata.prepare(seq_group_metadata_list,
                                                      seq_lens, query_lens,
                                                      self.device,
                                                      self.pin_memory)
+        query_lens = query_lens if len(decode_reqs) == 0 else decode_seq_lens
 
         if not self.scheduler_config.chunked_prefill_enabled:
             assert (len(prefill_reqs) and len(decode_reqs)) == 0
@@ -1219,7 +1221,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         for i, seq_group_metadata in enumerate(seq_group_metadata_list):
             if seq_group_metadata.sampling_params.prompt_logprobs is not None \
                               and seq_group_metadata.is_prompt:
-                paddings_prompt_logprobs += ([paddings[i]] * prefill_seq_lens[i])
+                paddings_prompt_logprobs += ([paddings[i]] *
+                                             prefill_seq_lens[i])
         paddings = torch.tensor(
             paddings_prompt_logprobs if paddings_prompt_logprobs else paddings,
             dtype=sampling_metadata.selected_token_indices.dtype,
@@ -1952,8 +1955,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         if num_steps > 1:
             raise ValueError(
                 "num_steps > 1 is not supported in HPUModelRunner")
-        self.model.model.sampler.include_gpu_probs_tensor = (
-                True)
+        self.model.model.sampler.include_gpu_probs_tensor = True
         if self.lora_config:
             assert model_input.lora_requests is not None
             assert model_input.lora_mapping is not None
