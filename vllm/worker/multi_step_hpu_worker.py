@@ -8,12 +8,13 @@ from vllm.distributed import broadcast_tensor_dict, get_pp_group
 from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.sequence import ExecuteModelRequest
 from vllm.worker.model_runner_base import BroadcastableModelInput
-from vllm.worker.multi_step_hpu_model_runner import HPUMultiStepModelRunner,HPUStatefulModelInput
+from vllm.worker.multi_step_hpu_model_runner import HPUMultiStepModelRunner, HPUStatefulModelInput
 from vllm.worker.worker import Worker, WorkerInput
 
 from vllm.worker.multi_step_worker import MultiStepWorker
 from vllm.worker.hpu_worker import HPUWorker
 from vllm.worker.hpu_model_runner import HPUModelRunnerBase
+
 
 @dataclass
 class HPUMultiStepState:
@@ -26,8 +27,8 @@ class HPUMultiStepWorker(HPUWorker):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         base_model_runner = self.model_runner
-        self.model_runner = HPUMultiStepModelRunner( # type: ignore
-            base_model_runner, # type: ignore
+        self.model_runner = HPUMultiStepModelRunner(  # type: ignore
+            base_model_runner,  # type: ignore
             base_model_runner.model_config,
             base_model_runner.parallel_config,
             base_model_runner.scheduler_config,
@@ -44,6 +45,7 @@ class HPUMultiStepWorker(HPUWorker):
         self.multi_step_states: List[
             Optional[HPUMultiStepState]] = [None] * pipeline_parallel_size
         self.temp_output = None
+
     def _get_driver_input_and_broadcast(
         self, execute_model_req: ExecuteModelRequest
     ) -> Tuple[BroadcastableModelInput, WorkerInput, Dict[str, torch.Tensor]]:
@@ -142,8 +144,8 @@ class HPUMultiStepWorker(HPUWorker):
     def prepare_input(
         self,
         execute_model_req: Optional[ExecuteModelRequest] = None,
-    ) -> Optional[Tuple[HPUStatefulModelInput, WorkerInput, Dict[str,
-                                                              torch.Tensor]]]:
+    ) -> Optional[Tuple[HPUStatefulModelInput, WorkerInput, Dict[
+            str, torch.Tensor]]]:
         """
         Depending on the current state of the request and multi step worker,
         this method may skip the normal _prepare_model_input and

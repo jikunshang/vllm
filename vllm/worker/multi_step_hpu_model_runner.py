@@ -16,7 +16,7 @@ from vllm.model_executor.layers.sampler import (PromptLogprobs, SampleLogprobs,
 from vllm.sequence import (CompletionSequenceGroupOutput, IntermediateTensors,
                            Logprob, SequenceGroupMetadata, SequenceOutput)
 from vllm.worker.hpu_model_runner import (HPUModelRunnerBase,
-                                        ModelInputForHPUWithSamplingMetadata)
+                                          ModelInputForHPUWithSamplingMetadata)
 from vllm.worker.multi_step_model_runner import PythonizationCache, deferred_pythonize_logprobs
 from vllm.worker.model_runner_base import (
     BroadcastableModelInput, _init_attn_metadata_from_tensor_dict,
@@ -27,6 +27,7 @@ from ..model_executor.model_loader.tensorizer import TensorizerConfig
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
+
 
 @dataclass
 class HPUModelOutput:
@@ -70,7 +71,8 @@ class HPUModelOutput:
                 input_metadata, copy_stream, pinned_sampled_token_buffer,
                 False)
 
-    def _pythonize_sampler_output(self, input_metadata: "HPUStatefulModelInput",
+    def _pythonize_sampler_output(self,
+                                  input_metadata: "HPUStatefulModelInput",
                                   copy_stream: torch.hpu.Stream,
                                   pinned_sampled_token_buffer: torch.Tensor,
                                   blocking: bool) -> bool:
@@ -102,7 +104,6 @@ class HPUModelOutput:
         return True
 
 
-
 @dataclass(frozen=False)
 class HPUStatefulModelInput(BroadcastableModelInput):
     # actual frozen model input dataclass passed to _base_model_runner
@@ -121,8 +122,8 @@ class HPUStatefulModelInput(BroadcastableModelInput):
     # ping-pong data structures for multi-step to wait on the previous step
     step_hpu_events: List[torch.hpu.Event] = field(
         default_factory=lambda: [torch.hpu.Event()] * 2)
-        # FIXME: use blocking
-        # default_factory=lambda: [torch.hpu.Event(blocking=True)] * 2)
+    # FIXME: use blocking
+    # default_factory=lambda: [torch.hpu.Event(blocking=True)] * 2)
     num_seqs: int = -1
     num_queries: int = -1
 
@@ -161,10 +162,10 @@ class HPUStatefulModelInput(BroadcastableModelInput):
         # on it. We modulo by 2 to keep the events in a circular buffer and
         # support any attn backends that may be supported in the future. ie
         # Flashinfer would want two DecodeWrappers to overlap the CPU and GPU.
-        
+
         self.step_hpu_events[self.current_step & 1] = \
             torch.hpu.Event()
-            # torch.hpu.Event(blocking=True)
+        # torch.hpu.Event(blocking=True)
         self.step_hpu_events[self.current_step & 1].record(current_stream)
 
     def wait_previous_step(self):
@@ -183,9 +184,9 @@ class HPUStatefulModelInput(BroadcastableModelInput):
                            sampled_token_ids: Optional[torch.Tensor] = None):
         self.cached_outputs.append(
             HPUModelOutput(sampler_output=sampler_output,
-                            sampler_output_ready_event=None,
-                            sampled_token_ids=sampled_token_ids,
-                            pythonized=False))
+                           sampler_output_ready_event=None,
+                           sampled_token_ids=sampled_token_ids,
+                           pythonized=False))
 
 
 # mypy: disable-error-code=type-var
@@ -193,11 +194,11 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
     # mypy: enable-error-code=type-var
     def __init__(self, base_model_runner: HPUModelRunnerBase, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # uses the base model runner to execute the model and wraps it with
         # multi-step logic
         self._base_model_runner: HPUModelRunnerBase = base_model_runner
-    
+
         self.is_multi_step = self.scheduler_config.is_multi_step
         # used to copy tensors from GPU to CPU asynchronously
         self._copy_stream = torch.hpu.Stream()
@@ -243,7 +244,7 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
                 if model_output.pythonized:
                     ctx = output_proc_callback.keywords["ctx"]
                     ctx.append_output(
-                        outputs=[model_output.sampler_output], 
+                        outputs=[model_output.sampler_output],
                         seq_group_metadata_list=ctx.seq_group_metadata_list,
                         scheduler_outputs=ctx.scheduler_outputs,
                         is_async=False,
@@ -302,7 +303,7 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
                 outputs.append(output.sampler_output)
 
         return outputs
-    
+
     @torch.inference_mode()
     def execute_model(
         self,
@@ -397,8 +398,8 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
                     0].sampled_token_ids.cpu()
             model_input.cached_outputs.append(
                 HPUModelOutput(output[0], output_ready_event,
-                            output[0].sampled_token_ids, False,
-                            output[0].logprobs, self.pythonization_cache))
+                               output[0].sampled_token_ids, False,
+                               output[0].logprobs, self.pythonization_cache))
 
             # These GPU tensors are not required by multi-step;
             # erase them to ensure they are not pythonized or
@@ -473,8 +474,9 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         # attn_metadata.max_decode_seq_len = max(attn_metadata.seq_lens)
 
         # refer ops.advance_step()
-        for i in range(num_queries) :
-            frozen_model_input.input_tokens[i] = model_input.cached_outputs[-1].sampled_token_ids[i]
+        for i in range(num_queries):
+            frozen_model_input.input_tokens[i] = model_input.cached_outputs[
+                -1].sampled_token_ids[i]
             seq_len = attn_metadata.seq_lens_tensor[i]
             next_seq_len = seq_len + 1
             next_input_pos = next_seq_len - 1
@@ -483,22 +485,49 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
             block_index = next_input_pos // self.block_size
             block_offset = next_input_pos % self.block_size
             attn_metadata.block_offsets[i] += 1
-            attn_metadata.block_usage[i] += 1
+            index1 = attn_metadata.block_indices[i] - 1
+            index = attn_metadata.block_list[index1] - 1
+            attn_metadata.block_usage[index] += 1
             attn_metadata.slot_mapping[i] += 1
             # slot = attn_metadata.block_list[i]
             # slot_num = slot[block_index] * self.block_size + block_offset
             # attn_metadata.block_mapping[i] = slot_num
 
+        # next_seq_len = attn_metadata.seq_lens_tensor + 1
+        # next_input_pos = next_seq_len - 1
+        # attn_metadata.seq_lens_tensor = next_seq_len
+        # index1 = attn_metadata.block_indices - 1
+        # index = attn_metadata.block_list[index1] - 1
+        # attn_metadata.block_usage[index] += 1
+        # attn_metadata.slot_mapping += 1
+
+        # tmp_input_tokens = frozen_model_input.input_tokens
+        # sampled_token_ids = model_input.cached_outputs[-1].sampled_token_ids
+        # if sampled_token_ids.dim() > 1 and sampled_token_ids.size(-1) == 1:
+        #     sampled_token_ids = sampled_token_ids.squeeze(-1)
+        # tmp_input_tokens = sampled_token_ids[:num_queries]
+        # tmp_input_positions = frozen_model_input.input_positions
+        # tmp_input_positions[:num_queries] = next_input_pos[:num_queries]
+        # frozen_model_input = dataclasses.replace(
+        #     frozen_model_input,
+        #     input_tokens=tmp_input_tokens,
+        #     input_positions=tmp_input_positions,
+        # )
 
         if frozen_model_input.seq_lens is not None:
+            # tmp_seq_lens = frozen_model_input.seq_lens
+            # tmp_seq_lens[:num_queries] = attn_metadata.seq_lens[:num_queries]
+            # frozen_model_input = dataclasses.replace(frozen_model_input,
+            #                                          seq_len=tmp_seq_lens)
             for i in range(num_queries):
-                frozen_model_input.seq_lens[i] +=1 #= attn_metadata.seq_lens[i]
+                frozen_model_input.seq_lens[
+                    i] += 1  #= attn_metadata.seq_lens[i]
 
         return model_input
 
     def load_model(self) -> None:
         return self._base_model_runner.load_model()
-    
+
     def save_sharded_state(
         self,
         path: str,
@@ -516,7 +545,6 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         return self._base_model_runner.profile_run()
 
 
-    
 def _pythonize_sampler_output(
     model_input: HPUStatefulModelInput,
     output: SamplerOutput,
@@ -553,7 +581,8 @@ def _pythonize_sampler_output(
     pinned_buffer = pinned_sampled_token_buffer[:model_input.num_queries]
 
     # CPU GPU sync
-    pinned_buffer = pinned_buffer.copy_(sampled_token_ids[:model_input.num_queries], non_blocking=False)
+    pinned_buffer = pinned_buffer.copy_(
+        sampled_token_ids[:model_input.num_queries], non_blocking=False)
 
     # this will not block as the tensors are already on CPU
     samples_list = pinned_buffer.tolist()
