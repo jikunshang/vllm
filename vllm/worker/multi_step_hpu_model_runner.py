@@ -490,8 +490,8 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         sampled_token_ids = model_input.cached_outputs[-1].sampled_token_ids
         if sampled_token_ids.dim() > 1 and sampled_token_ids.size(-1) == 1:
             sampled_token_ids = sampled_token_ids.squeeze(-1)
-        tmp_input_tokens = sampled_token_ids[:num_queries].unsquezee(-1)
-        tmp_input_positions = frozen_model_input.input_positionsq
+        tmp_input_tokens = sampled_token_ids[:num_queries].unsqueeze(-1)
+        tmp_input_positions = frozen_model_input.input_positions
         tmp_input_positions[:num_queries] = next_input_pos.unsqueeze(
             -1)[:num_queries]
         frozen_model_input = dataclasses.replace(
