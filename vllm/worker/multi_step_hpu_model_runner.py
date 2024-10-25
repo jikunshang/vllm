@@ -119,6 +119,7 @@ class HPUStatefulModelInput(BroadcastableModelInput):
     is_multi_step: bool = True
     is_last_step: bool = False
     is_first_multi_step: bool = False
+    base_output_proc_callback: Optional[Callable] = None
     # ping-pong data structures for multi-step to wait on the previous step
     step_hpu_events: List[torch.hpu.Event] = field(
         default_factory=lambda: [torch.hpu.Event()] * 2)
@@ -126,6 +127,7 @@ class HPUStatefulModelInput(BroadcastableModelInput):
     # default_factory=lambda: [torch.hpu.Event(blocking=True)] * 2)
     num_seqs: int = -1
     num_queries: int = -1
+    num_single_step_prefills: int = 0
 
     def as_broadcastable_tensor_dict(self) -> Dict[str, Any]:
         assert self.frozen_model_input is not None
@@ -138,6 +140,7 @@ class HPUStatefulModelInput(BroadcastableModelInput):
             'is_first_multi_step': self.is_first_multi_step,
             'num_seqs': self.num_seqs,
             'num_queries': self.num_queries,
+            'num_single_step_prefills': self.num_single_step_prefills,
         }
         tensor_dict.update(new_tensor_dict)
         return tensor_dict
@@ -223,11 +226,19 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         frozen_model_input = self._base_model_runner.prepare_model_input(
             seq_group_metadata_list, virtual_engine, finished_requests_ids)
 
+        assert frozen_model_input.query_lens is not None
+        assert frozen_model_input.seq_lens is not None
+        assert frozen_model_input.attn_metadata is not None
+        num_queries = len(frozen_model_input.query_lens)
+        num_seqs = len(frozen_model_input.seq_lens)
+        num_single_step_prefills = frozen_model_input.attn_metadata.num_prefills
+
         model_input = HPUStatefulModelInput(
             frozen_model_input=frozen_model_input,
-            num_seqs=len(frozen_model_input.seq_lens),
-            num_queries=len(frozen_model_input.query_lens),
-        )
+            num_seqs=num_seqs,
+            num_queries=num_queries,
+            num_single_step_prefills=num_single_step_prefills)
+
         return model_input
 
     def _async_process_outputs(self, model_input: HPUStatefulModelInput,
@@ -264,9 +275,8 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         has_async_callback = output_proc_callback is not None
 
         outputs = []
-        for output_id in range(len(model_input.cached_outputs)):
-            output = model_input.cached_outputs[output_id]
-            is_last_step = output_id == len(model_input.cached_outputs) - 1
+        for step_num, output in enumerate(model_input.cached_outputs):
+            is_last_step = step_num == len(model_input.cached_outputs) - 1
 
             # For non-async case:
             #   -- We simply add the outputs
@@ -289,12 +299,14 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
                     if not is_last_step:
                         ctx = output_proc_callback.keywords[  # type: ignore
                             "ctx"]  # type: ignore
-                        is_async = False
-                        is_last_step = False
-                        ctx.output_queue.append(
-                            ([output.sampler_output
-                              ], ctx.seq_group_metadata_list,
-                             ctx.scheduler_outputs, is_async, is_last_step))
+                        ctx.append_output(
+                            outputs=[output.sampler_output],
+                            seq_group_metadata_list=ctx.
+                            seq_group_metadata_list,
+                            scheduler_outputs=ctx.scheduler_outputs,
+                            is_async=False,
+                            is_last_step=False,
+                            is_first_step_output=step_num == 0)
                     else:
                         outputs.append(output.sampler_output)
             else:
@@ -363,18 +375,27 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
             model_input = self._advance_step(
                 model_input, model_input.cached_outputs[-1].sampler_output)
 
-        output_proc_callback = None
+            # frozen_model_input may have been updated
+            frozen_model_input = model_input.frozen_model_input
+            assert frozen_model_input is not None
+
+        if model_input.base_output_proc_callback is None:
+            assert frozen_model_input is not None
+            model_input.base_output_proc_callback = \
+                        frozen_model_input.async_callback
+
         if frozen_model_input.async_callback is not None:
-            output_proc_callback = frozen_model_input.async_callback
-            assert output_proc_callback is not None
+            assert model_input.base_output_proc_callback is not None
             async_callback = functools.partial(
                 self._async_process_outputs,
                 model_input=model_input,
-                output_proc_callback=output_proc_callback)
+                output_proc_callback=model_input.base_output_proc_callback)
 
-            frozen_model_input = dataclasses.replace(  # type: ignore
+            model_input.frozen_model_input = dataclasses.replace(  # type: ignore
                 model_input.frozen_model_input,
                 async_callback=async_callback)
+            # Update the local instance
+            frozen_model_input = model_input.frozen_model_input
             assert frozen_model_input is not None
 
         # Execute the model
@@ -429,8 +450,8 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
 
         # Pythonize the output and block if needed since it is the last step
         if model_input.is_last_step:
-            outputs = self._final_process_outputs(model_input,
-                                                  output_proc_callback)
+            outputs = self._final_process_outputs(
+                model_input, model_input.base_output_proc_callback)
             self.pythonization_cache.reset()
             return outputs
 
