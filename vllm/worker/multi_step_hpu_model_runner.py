@@ -490,22 +490,32 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         assert num_seqs >= num_queries
 
         attn_metadata = frozen_model_input.attn_metadata
+        real_batch_size = frozen_model_input.real_batch_size
 
         next_seq_len = attn_metadata.seq_lens_tensor + 1
         next_input_pos = next_seq_len - 1
         block_index = next_input_pos // self.block_size
         block_offset = next_input_pos % self.block_size
+        attn_metadata.seq_lens_tensor[:real_batch_size] = next_seq_len[:real_batch_size]
+        attn_metadata.block_offsets[:real_batch_size] = block_offset[:real_batch_size]
 
-        attn_metadata.seq_lens_tensor = next_seq_len
-        attn_metadata.block_offsets = block_offset
+        start = 0
+        for (i, s) in enumerate(block_index + 1):
+            end = start + s
+            attn_metadata.block_mapping[start:end] = i
+            attn_metadata.block_usage[start:end-1] = self.block_size
+            attn_metadata.block_usage[end-1] = attn_metadata.block_offsets[i]
+            attn_metadata.block_groups[start:end] = i
+            if i >= real_batch_size:
+                pass
+            else:
+                attn_metadata.block_scales[start:end] = 1.0 / s
+                attn_metadata.block_list[start:end] = attn_metadata.block_tables[i][:s]
+            start += s
 
-        next_block = torch.eq(block_offset, 0)
-        attn_metadata.block_indices = torch.where(
-            next_block, attn_metadata.block_indices + num_queries,
-            attn_metadata.block_indices)
+        attn_metadata.block_indices = torch.gather(attn_metadata.block_tables, 1, block_index.unsqueeze(-1)).squeeze(-1)
+
         attn_metadata.slot_mapping = attn_metadata.block_indices * self.block_size + block_offset
-
-        attn_metadata.block_usage[:num_queries] += 1  # fixme
 
         tmp_input_tokens = frozen_model_input.input_tokens
         sampled_token_ids = model_input.cached_outputs[-1].sampled_token_ids

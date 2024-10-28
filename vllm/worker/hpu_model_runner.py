@@ -940,6 +940,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             num_prefill_tokens=sum_query_len,
             num_decode_tokens=0,
             slot_mapping=slot_mapping,
+            block_tables=None,
         )
         multi_modal_kwargs = MultiModalInputs.batch(multi_modal_inputs_list)
 
@@ -1018,6 +1019,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                              self.block_size)
                     block_table = block_table[-sliding_window_blocks:]
                 block_tables.append(block_table)
+        real_blocks_used = [pos // self.block_size + 1 for pos in itertools.chain(*input_positions)]
 
         input_tokens = torch.tensor(input_tokens,
                                     dtype=torch.long,
@@ -1032,14 +1034,14 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         block_list = []
         block_scales = []
         for i, bt in enumerate(block_tables):
-            block_list.extend(bt)
+            block_list.extend(bt[:real_blocks_used[i]])
             blocks_in_group = len(bt)
             if blocks_in_group > 0:
                 scale = 1.0 / blocks_in_group
                 block_scales.extend([scale] * blocks_in_group)
 
         block_mapping_nested: List[List[int]] = [
-            [i] * b_u for i, b_u in enumerate(blocks_used)
+            [i] * b_u for i, b_u in enumerate(real_blocks_used)
         ]
         block_mapping: List[int] = list(
             itertools.chain.from_iterable(block_mapping_nested))
@@ -1048,7 +1050,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             sl % self.block_size + 1 for sl in itertools.chain(*slot_mapping)
         ]
         block_usage = [[self.block_size] * (b_u - 1) + [lb]
-                       for b_u, lb in zip(blocks_used, last_block)]
+                       for b_u, lb in zip(real_blocks_used, last_block)]
         block_usage = list(itertools.chain(*block_usage))
 
         block_bucket_size = find_bucket(
@@ -1061,6 +1063,10 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         block_usage = pad_list(block_usage, block_bucket_size, 1)
         block_scales = pad_list(block_scales, block_bucket_size, 0.0)
 
+        block_tables = make_tensor_with_pad(block_tables,
+                                            pad=0,
+                                            dtype=torch.int,
+                                            device=self.device)
         block_list = torch.tensor(block_list,
                                   dtype=torch.int,
                                   device=self.device)
@@ -1071,7 +1077,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                     dtype=torch.long,
                                     device=self.device)
         block_usage = torch.tensor(block_usage,
-                                   dtype=self.model_config.dtype,
+                                   dtype=torch.int,
                                    device=self.device)
 
         slot_mapping = torch.tensor(slot_mapping,
@@ -1102,6 +1108,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             num_prefill_tokens=0,
             num_decode_tokens=num_decode_tokens,
             slot_mapping=slot_mapping,
+            block_tables=block_tables,
         )
         return PrepareDecodeMetadata(input_tokens=input_tokens,
                                      input_positions=input_positions,
