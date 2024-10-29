@@ -496,15 +496,15 @@ class HPUMultiStepModelRunner(HPUModelRunnerBase[HPUStatefulModelInput]):
         next_input_pos = next_seq_len - 1
         block_index = next_input_pos // self.block_size
         block_offset = next_input_pos % self.block_size
-        attn_metadata.seq_lens_tensor[:real_batch_size] = next_seq_len[:real_batch_size]
-        attn_metadata.block_offsets[:real_batch_size] = block_offset[:real_batch_size]
+        attn_metadata.seq_lens_tensor = next_seq_len
+        attn_metadata.block_offsets = block_offset
 
         start = 0
         for (i, s) in enumerate(block_index + 1):
             end = start + s
             attn_metadata.block_mapping[start:end] = i
             attn_metadata.block_usage[start:end-1] = self.block_size
-            attn_metadata.block_usage[end-1] = attn_metadata.block_offsets[i]
+            attn_metadata.block_usage[end-1] = attn_metadata.block_offsets[i] + 1
             attn_metadata.block_groups[start:end] = i
             if i >= real_batch_size:
                 pass
