@@ -6,9 +6,17 @@ from vllm import _custom_ops as ops
 from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
+from vllm.platforms import current_platform
+
 from vllm.model_executor.parameter import (GroupQuantScaleParameter,
                                            PackedvLLMParameter)
 
+if current_platform.is_hpu():
+    try:
+        import habana_frameworks.torch.core as htcore
+        convert_from_uint4 = torch.ops.hpu.convert_from_uint4
+    except Exception as e:
+        hpu_import_exception = e
 
 class AWQConfig(QuantizationConfig):
     """Config class for AWQ.
@@ -41,7 +49,7 @@ class AWQConfig(QuantizationConfig):
         return "awq"
 
     def get_supported_act_dtypes(self) -> List[torch.dtype]:
-        return [torch.half]
+        return [torch.half, torch.bfloat16]
 
     @classmethod
     def get_min_capability(cls) -> int:
@@ -158,10 +166,14 @@ class AWQLinearMethod(LinearMethodBase):
         out_shape = (x.shape[:-1] + (qweight.shape[-1] * pack_factor, ))
         reshaped_x = x.reshape(-1, x.shape[-1])
 
+
+
         # num_tokens >= threshold
         FP16_MATMUL_HEURISTIC_CONDITION = x.shape[:-1].numel() >= 256
-
-        if FP16_MATMUL_HEURISTIC_CONDITION:
+        if current_platform.is_hpu():
+            out = convert_from_uint4(qweight, scales, qzeros, x.dtype)
+            out = torch.matmul(reshaped_x, out)
+        elif FP16_MATMUL_HEURISTIC_CONDITION:
             out = ops.awq_dequantize(qweight, scales, qzeros, 0, 0, 0)
             out = torch.matmul(reshaped_x, out)
         else:
