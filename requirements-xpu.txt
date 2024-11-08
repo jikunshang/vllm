@@ -9,8 +9,10 @@ setuptools-scm>=8
 wheel
 jinja2
 
-torch @ https://intel-extension-for-pytorch.s3.us-east-1.amazonaws.com/ipex_dev/xpu/torch-2.5.0a0%2Bgite84e33f-cp310-cp310-linux_x86_64.whl
-intel-extension-for-pytorch @ https://intel-extension-for-pytorch.s3.us-east-1.amazonaws.com/ipex_dev/xpu/intel_extension_for_pytorch-2.5.10%2Bgit9d489a8-cp310-cp310-linux_x86_64.whl
-oneccl_bind_pt @ https://intel-extension-for-pytorch.s3.us-east-1.amazonaws.com/ipex_dev/xpu/oneccl_bind_pt-2.5.0%2Bxpu-cp310-cp310-linux_x86_64.whl
+# for WW44, please use 885 build wheel. these wheels do not compatible with oneapi base
+# docker image version. will throw 'undefined symbol: _ZNK4sycl3_V13ext6oneapi12experimental6detail24modifiable_command_graph11print_graphENS0_6detail11string_viewEb'
+torch @ https://ubit-artifactory-sh.intel.com/artifactory/aipc_releases-sh-local/gpu/new/validation/IPEX/weekly/PVC/2024/ww44/py310/torch-2.5.0a0+git763ea37-cp310-cp310-linux_x86_64.whl
+intel-extension-for-pytorch @ https://ubit-artifactory-sh.intel.com/artifactory/aipc_releases-sh-local/gpu/new/validation/IPEX/weekly/PVC/2024/ww44/py310/intel_extension_for_pytorch-2.5.10+git1d2371c-cp310-cp310-linux_x86_64.whl
+oneccl_bind_pt @ https://ubit-artifactory-sh.intel.com/artifactory/aipc_releases-sh-local/gpu/new/validation/IPEX/weekly/PVC/2024/ww44/py310/oneccl_bind_pt-2.5.0+xpu-cp310-cp310-linux_x86_64.whl
 
 triton-xpu == 3.0.0b1
