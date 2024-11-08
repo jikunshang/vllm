@@ -455,7 +455,14 @@ def _run_in_subprocess(fn: Callable[[], _T]) -> _T:
 
         # check if the subprocess is successful
         try:
-            returned.check_returncode()
+            # vllm will start a new subprocess, the new subprocess will import ipex,
+            # while current oneapi/compiler may have a bug, when the subprocess exit, 
+            # some cleanup stuff will throw error, return a -11/ sigsegv error code.
+            # this is a workaround to bypass this issue.
+            if returned.returncode == -11:
+                print("xpu issue!! by pass")
+            else:
+                returned.check_returncode()
         except Exception as e:
             # wrap raised exception to provide more information
             raise RuntimeError(f"Error raised in subprocess:\n"
