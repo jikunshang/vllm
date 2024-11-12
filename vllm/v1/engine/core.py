@@ -21,6 +21,7 @@ from vllm.v1.engine import (EngineCoreOutput, EngineCoreOutputs,
                             EngineCoreRequestType)
 from vllm.v1.engine.mm_input_mapper import MMInputMapper
 from vllm.v1.executor.gpu_executor import GPUExecutor
+from vllm.v1.executor.xpu_executor import XPUExecutor
 from vllm.v1.request import Request, RequestStatus
 from vllm.v1.serial_utils import PickleEncoder
 from vllm.version import __version__ as VLLM_VERSION
@@ -38,7 +39,7 @@ class EngineCore:
     def __init__(
         self,
         vllm_config: VllmConfig,
-        executor_class: Type[GPUExecutor],
+        executor_class: Type[Union[GPUExecutor, XPUExecutor]],
         usage_context: UsageContext,
     ):
         assert vllm_config.model_config.task != "embedding"
@@ -124,7 +125,7 @@ class EngineCoreProc(EngineCore):
     def __init__(
         self,
         vllm_config: VllmConfig,
-        executor_class: Type[GPUExecutor],
+        executor_class: Type[Union[GPUExecutor, XPUExecutor]],
         usage_context: UsageContext,
         input_path: str,
         output_path: str,
@@ -209,7 +210,7 @@ class EngineCoreProc(EngineCore):
     @staticmethod
     def make_engine_core_process(
         vllm_config: VllmConfig,
-        executor_class: Type[GPUExecutor],
+        executor_class: Type[Union[GPUExecutor, XPUExecutor]],
         usage_context: UsageContext,
         input_path: str,
         output_path: str,

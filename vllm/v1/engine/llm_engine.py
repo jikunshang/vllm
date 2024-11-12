@@ -21,6 +21,7 @@ from vllm.v1.engine.core_client import EngineCoreClient
 from vllm.v1.engine.detokenizer import Detokenizer
 from vllm.v1.engine.processor import Processor
 from vllm.v1.executor.gpu_executor import GPUExecutor
+from vllm.v1.executor.xpu_executor import XPUExecutor
 
 logger = init_logger(__name__)
 
@@ -33,7 +34,7 @@ class LLMEngine:
     def __init__(
         self,
         vllm_config: VllmConfig,
-        executor_class: Type[GPUExecutor],
+        executor_class: Type[Union[GPUExecutor, XPUExecutor]],
         log_stats: bool,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
         stat_loggers: Optional[Dict[str, StatLoggerBase]] = None,
@@ -104,7 +105,7 @@ class LLMEngine:
 
     @classmethod
     def _get_executor_cls(cls, vllm_config: VllmConfig):
-        return GPUExecutor
+        return XPUExecutor
 
     def stop_remote_worker_execution_loop(self) -> None:
         raise NotImplementedError("TP not implemented yet.")
