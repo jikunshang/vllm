@@ -78,16 +78,16 @@ def rms_replacement_residual_static(result: torch.Tensor, input: torch.Tensor,
 
 
 def empty_bf16(*args, **kwargs):
-    return torch.empty(*args, **kwargs, dtype=torch.bfloat16, device="cuda")
+    return torch.empty(*args, **kwargs, dtype=torch.bfloat16, device="xpu")
 
 
 def empty_fp8(*args, **kwargs):
     fp8 = torch.float8_e4m3fn
-    return torch.empty(*args, **kwargs, dtype=fp8, device="cuda")
+    return torch.empty(*args, **kwargs, dtype=fp8, device="xpu")
 
 
 def empty_fp32(*args, **kwargs):
-    return torch.empty(*args, **kwargs, dtype=torch.float32, device="cuda")
+    return torch.empty(*args, **kwargs, dtype=torch.float32, device="xpu")
 
 
 # Utilities for post-processing multi-output matches
@@ -164,33 +164,33 @@ class FusionPass(VllmInductorPass):
 
         # Fuse rms_norm + static_scaled_fp8_quant into
         # rms_norm_static_fp8_quant
-        inputs = [
-            empty_fp8(5, 4),
-            empty_bf16(5, 4),
-            empty_bf16(5, 4),
-            empty_bf16(1, 5),
-            empty_fp32(1, 1)
-        ]
-        register_replacement(rms_pattern_static, rms_replacement_static,
-                             inputs, fwd_only, self.patterns)
+        # inputs = [
+        #     empty_fp8(5, 4),
+        #     empty_bf16(5, 4),
+        #     empty_bf16(5, 4),
+        #     empty_bf16(1, 5),
+        #     empty_fp32(1, 1)
+        # ]
+        # register_replacement(rms_pattern_static, rms_replacement_static,
+        #                      inputs, fwd_only, self.patterns)
 
         # Fuse fused_add_rms_norm + static_scaled_fp8_quant into
         # fused_add_rms_norm_static_fp8_quant
         # Because pattern has 2 outputs, we need to manually process the match
         # (see process_matches)
-        inputs = [
-            empty_fp8(5, 4),
-            empty_bf16(5, 4),
-            empty_bf16(5, 4),
-            empty_bf16(1, 5),
-            empty_fp32(1, 1)
-        ]
-        register_replacement(rms_pattern_residual_static,
-                             rms_replacement_residual_static,
-                             inputs,
-                             fwd_only,
-                             self.patterns,
-                             extra_check=lambda m: self.record_match(m))
+        # inputs = [
+        #     empty_fp8(5, 4),
+        #     empty_bf16(5, 4),
+        #     empty_bf16(5, 4),
+        #     empty_bf16(1, 5),
+        #     empty_fp32(1, 1)
+        # ]
+        # register_replacement(rms_pattern_residual_static,
+        #                      rms_replacement_residual_static,
+        #                      inputs,
+        #                      fwd_only,
+        #                      self.patterns,
+        #                      extra_check=lambda m: self.record_match(m))
 
     def record_match(self, match: Match) -> bool:
         # Hijack the extra_check to record the match and
