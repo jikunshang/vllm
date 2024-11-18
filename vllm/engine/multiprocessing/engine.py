@@ -105,13 +105,14 @@ class MQLLMEngine:
 
     @classmethod
     def from_engine_args(cls, engine_args: AsyncEngineArgs,
-                         usage_context: UsageContext, ipc_path: str):
+                         usage_context: UsageContext, ipc_path: str,
+                         model: str) -> "MQLLMEngine":
         """Creates an MQLLMEngine from the engine arguments."""
         # Setup plugins for each process
         from vllm.plugins import load_general_plugins
         load_general_plugins()
 
-        engine_config = engine_args.create_engine_config()
+        engine_config = engine_args.create_engine_config(model)
         executor_class = LLMEngine._get_executor_cls(engine_config)
 
         use_async_sockets = engine_config.model_config.use_async_output_proc
@@ -352,11 +353,12 @@ def signal_handler(*_) -> None:
 
 
 def run_mp_engine(engine_args: AsyncEngineArgs, usage_context: UsageContext,
-                  ipc_path: str, engine_alive):
+                  ipc_path: str, engine_alive, model= None):
     try:
         engine = MQLLMEngine.from_engine_args(engine_args=engine_args,
                                               usage_context=usage_context,
-                                              ipc_path=ipc_path)
+                                              ipc_path=ipc_path,
+                                              model=model)
 
         signal.signal(signal.SIGTERM, signal_handler)
 

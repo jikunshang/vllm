@@ -84,7 +84,7 @@ def nullable_kvs(val: str) -> Optional[Mapping[str, int]]:
 @dataclass
 class EngineArgs:
     """Arguments for vLLM engine."""
-    model: str = 'facebook/opt-125m'
+    model: Optional[Union[str, List[str]]] = None
     served_model_name: Optional[Union[str, List[str]]] = None
     tokenizer: Optional[str] = None
     task: TaskOption = "auto"
@@ -205,6 +205,8 @@ class EngineArgs:
         # Model arguments
         parser.add_argument(
             '--model',
+            '--names-list',
+            nargs="*",
             type=str,
             default=EngineArgs.model,
             help='Name or path of the huggingface model to use.')
@@ -878,12 +880,14 @@ class EngineArgs:
         engine_args = cls(**{attr: getattr(args, attr) for attr in attrs})
         return engine_args
 
-    def create_model_config(self) -> ModelConfig:
+    def create_model_config(self, model=None) -> ModelConfig:
+        if model is None:
+            model = self.model
         return ModelConfig(
-            model=self.model,
+            model=model,
             task=self.task,
             # We know this is not None because we set it in __post_init__
-            tokenizer=cast(str, self.tokenizer),
+            tokenizer=model,
             tokenizer_mode=self.tokenizer_mode,
             trust_remote_code=self.trust_remote_code,
             allowed_local_media_path=self.allowed_local_media_path,
@@ -911,6 +915,10 @@ class EngineArgs:
             override_neuron_config=self.override_neuron_config,
             override_pooler_config=self.override_pooler_config,
         )
+    
+    def create_model_configs(self) -> List[ModelConfig]:
+        model_configs = [self.create_engine_config(model) for model in self.model]
+        return model_configs
 
     def create_load_config(self) -> LoadConfig:
         return LoadConfig(
@@ -920,9 +928,11 @@ class EngineArgs:
             ignore_patterns=self.ignore_patterns,
         )
 
-    def create_engine_config(self) -> VllmConfig:
+    def create_engine_config(self, model=None) -> VllmConfig:
+        if model is None:
+            model = self.model
         # gguf file needs a specific model loader and doesn't use hf_repo
-        if check_gguf_file(self.model):
+        if check_gguf_file(model):
             self.quantization = self.load_format = "gguf"
 
         # bitsandbytes quantization needs a specific model loader
@@ -946,7 +956,7 @@ class EngineArgs:
             f", but got {self.cpu_offload_gb}")
 
         device_config = DeviceConfig(device=self.device)
-        model_config = self.create_model_config()
+        model_config = self.create_model_config(model)
 
         if model_config.is_multimodal_model:
             if self.enable_prefix_caching:

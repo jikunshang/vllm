@@ -81,7 +81,7 @@ _running_tasks: Set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     try:
         if app.state.log_stats:
-            engine_client: EngineClient = app.state.engine_client
+            engine_client: EngineClient = app.state.engine_clients[0]
 
             async def _force_log():
                 while True:
@@ -185,53 +185,62 @@ async def build_async_engine_client_from_engine_args(
         # not actually result in an exitcode being reported. As a result
         # we use a shared variable to communicate the information.
         engine_alive = multiprocessing.Value('b', True, lock=False)
-        engine_process = context.Process(target=run_mp_engine,
-                                         args=(engine_args,
-                                               UsageContext.OPENAI_API_SERVER,
-                                               ipc_path, engine_alive))
-        engine_process.start()
-        engine_pid = engine_process.pid
-        assert engine_pid is not None, "Engine process failed to start."
-        logger.info("Started engine process with PID %d", engine_pid)
+        engine_processes = []
+        for model in engine_args.model:
+            print(f"zzzz  {model}")
+            engine_process = context.Process(target=run_mp_engine,
+                                             args=(engine_args,
+                                                   UsageContext.OPENAI_API_SERVER,
+                                                   ipc_path, engine_alive, 
+                                                   model))
+            engine_process.start()
+            engine_pid = engine_process.pid
+            assert engine_pid is not None, "Engine process failed to start."
+            logger.info("Started engine process with PID %d", engine_pid)
+            engine_processes.append(engine_process)
+        print(f"bbbbb : {engine_args.model}")
+        
+        engine_configs =  [engine_args.create_engine_config(model) for model in engine_args.model] 
+        mq_engine_clients = []
+        for i, engine_config in enumerate( engine_configs):
+            # Build RPCClient, which conforms to EngineClient Protocol.
+            # engine_config = engine_args.create_engine_config()
+            build_client = partial(MQLLMEngineClient, ipc_path, engine_config,
+                                   engine_pid)
+            mq_engine_client = await asyncio.get_running_loop().run_in_executor(
+                None, build_client)
+            try:
+                while True:
+                    try:
+                        await mq_engine_client.setup()
+                        break
+                    except TimeoutError:
+                        if (not engine_process[i].is_alive()
+                                or not engine_alive.value):
+                            raise RuntimeError(
+                                "Engine process failed to start. See stack "
+                                "trace for the root cause.") from None
+                mq_engine_clients.append(mq_engine_client)
+                yield mq_engine_clients  # type: ignore[misc]
+            finally:
+                # Ensure rpc server process was terminated
+                engine_process[i].terminate()
 
-        # Build RPCClient, which conforms to EngineClient Protocol.
-        engine_config = engine_args.create_engine_config()
-        build_client = partial(MQLLMEngineClient, ipc_path, engine_config,
-                               engine_pid)
-        mq_engine_client = await asyncio.get_running_loop().run_in_executor(
-            None, build_client)
-        try:
-            while True:
-                try:
-                    await mq_engine_client.setup()
-                    break
-                except TimeoutError:
-                    if (not engine_process.is_alive()
-                            or not engine_alive.value):
-                        raise RuntimeError(
-                            "Engine process failed to start. See stack "
-                            "trace for the root cause.") from None
+                # Close all open connections to the backend
+                mq_engine_client.close()
 
-            yield mq_engine_client  # type: ignore[misc]
-        finally:
-            # Ensure rpc server process was terminated
-            engine_process.terminate()
+                # Wait for engine process to join
+                engine_process[i].join(4)
+                if engine_process[i].exitcode is None:
+                    # Kill if taking longer than 5 seconds to stop
+                    engine_process[i].kill()
 
-            # Close all open connections to the backend
-            mq_engine_client.close()
-
-            # Wait for engine process to join
-            engine_process.join(4)
-            if engine_process.exitcode is None:
-                # Kill if taking longer than 5 seconds to stop
-                engine_process.kill()
-
-            # Lazy import for prometheus multiprocessing.
-            # We need to set PROMETHEUS_MULTIPROC_DIR environment variable
-            # before prometheus_client is imported.
-            # See https://prometheus.github.io/client_python/multiprocess/
-            from prometheus_client import multiprocess
-            multiprocess.mark_process_dead(engine_process.pid)
+                # Lazy import for prometheus multiprocessing.
+                # We need to set PROMETHEUS_MULTIPROC_DIR environment variable
+                # before prometheus_client is imported.
+                # See https://prometheus.github.io/client_python/multiprocess/
+                from prometheus_client import multiprocess
+                multiprocess.mark_process_dead(engine_process[i].pid)
 
 
 router = APIRouter()
@@ -285,7 +294,7 @@ def tokenization(request: Request) -> OpenAIServingTokenization:
 
 
 def engine_client(request: Request) -> EngineClient:
-    return request.app.state.engine_client
+    return request.app.state.engine_clients[0]
 
 
 @router.get("/health")
@@ -507,15 +516,18 @@ def build_app(args: Namespace) -> FastAPI:
 
 
 def init_app_state(
-    engine_client: EngineClient,
-    model_config: ModelConfig,
+    engine_clients: list[EngineClient],
+    model_configs: list[ModelConfig],
     state: State,
     args: Namespace,
 ) -> None:
+    if len(engine_clients) != len(model_configs):
+        raise ValueError("Number of engine_clients and model_configs must be the same")
+
     if args.served_model_name is not None:
         served_model_names = args.served_model_name
     else:
-        served_model_names = [args.model]
+        served_model_names = [args.model] * len(engine_clients)
 
     if args.disable_log_requests:
         request_logger = None
@@ -527,53 +539,69 @@ def init_app_state(
         for name in served_model_names
     ]
 
-    state.engine_client = engine_client
+    state.engine_clients = engine_clients
     state.log_stats = not args.disable_log_stats
 
     resolved_chat_template = load_chat_template(args.chat_template)
     logger.info("Using supplied chat template:\n%s", resolved_chat_template)
+    for model_config in model_configs:
+        print(f"xxxxxx {model_config}")
+    state.openai_serving_chat = [
+        OpenAIServingChat(
+            engine_client,
+            model_config,
+            [base_model_paths[i]],
+            args.response_role,
+            lora_modules=args.lora_modules,
+            prompt_adapters=args.prompt_adapters,
+            request_logger=request_logger,
+            chat_template=resolved_chat_template,
+            chat_template_content_format=args.chat_template_content_format,
+            return_tokens_as_token_ids=args.return_tokens_as_token_ids,
+            enable_auto_tools=args.enable_auto_tool_choice,
+            tool_parser=args.tool_call_parser,
+            enable_prompt_tokens_details=args.enable_prompt_tokens_details,
+        ) if model_config.task == "generate" else None
+        for i, (engine_client, model_config) in enumerate(zip(engine_clients, model_configs))
+    ]
 
-    state.openai_serving_chat = OpenAIServingChat(
-        engine_client,
-        model_config,
-        base_model_paths,
-        args.response_role,
-        lora_modules=args.lora_modules,
-        prompt_adapters=args.prompt_adapters,
-        request_logger=request_logger,
-        chat_template=resolved_chat_template,
-        chat_template_content_format=args.chat_template_content_format,
-        return_tokens_as_token_ids=args.return_tokens_as_token_ids,
-        enable_auto_tools=args.enable_auto_tool_choice,
-        tool_parser=args.tool_call_parser,
-        enable_prompt_tokens_details=args.enable_prompt_tokens_details,
-    ) if model_config.task == "generate" else None
-    state.openai_serving_completion = OpenAIServingCompletion(
-        engine_client,
-        model_config,
-        base_model_paths,
-        lora_modules=args.lora_modules,
-        prompt_adapters=args.prompt_adapters,
-        request_logger=request_logger,
-        return_tokens_as_token_ids=args.return_tokens_as_token_ids,
-    ) if model_config.task == "generate" else None
-    state.openai_serving_embedding = OpenAIServingEmbedding(
-        engine_client,
-        model_config,
-        base_model_paths,
-        request_logger=request_logger,
-        chat_template=resolved_chat_template,
-        chat_template_content_format=args.chat_template_content_format,
-    ) if model_config.task == "embedding" else None
-    state.openai_serving_tokenization = OpenAIServingTokenization(
-        engine_client,
-        model_config,
-        base_model_paths,
-        lora_modules=args.lora_modules,
-        request_logger=request_logger,
-        chat_template=resolved_chat_template,
-        chat_template_content_format=args.chat_template_content_format,
-    )
+    state.openai_serving_completion = [
+        OpenAIServingCompletion(
+            engine_client,
+            model_config,
+            [base_model_paths[i]],
+            lora_modules=args.lora_modules,
+            prompt_adapters=args.prompt_adapters,
+            request_logger=request_logger,
+            return_tokens_as_token_ids=args.return_tokens_as_token_ids,
+        ) if model_config.task == "generate" else None
+        for i, (engine_client, model_config) in enumerate(zip(engine_clients, model_configs))
+    ]
+
+    state.openai_serving_embedding = [
+        OpenAIServingEmbedding(
+            engine_client,
+            model_config,
+            [base_model_paths[i]],
+            request_logger=request_logger,
+            chat_template=resolved_chat_template,
+            chat_template_content_format=args.chat_template_content_format,
+        ) if model_config.task == "embedding" else None
+        for i, (engine_client, model_config) in enumerate(zip(engine_clients, model_configs))
+    ]
+
+    state.openai_serving_tokenization = [
+        OpenAIServingTokenization(
+            engine_client,
+            model_config,
+            [base_model_paths[i]],
+            lora_modules=args.lora_modules,
+            request_logger=request_logger,
+            chat_template=resolved_chat_template,
+            chat_template_content_format=args.chat_template_content_format,
+        )
+        for i, (engine_client, model_config) in enumerate(zip(engine_clients, model_configs))
+    ]
 
 
 def create_server_socket(addr: Tuple[str, int]) -> socket.socket:
@@ -613,11 +641,11 @@ async def run_server(args, **uvicorn_kwargs) -> None:
 
     signal.signal(signal.SIGTERM, signal_handler)
 
-    async with build_async_engine_client(args) as engine_client:
+    async with build_async_engine_client(args) as engine_clients:
         app = build_app(args)
 
-        model_config = await engine_client.get_model_config()
-        init_app_state(engine_client, model_config, app.state, args)
+        model_configs = [await engine_client.get_model_config() for engine_client in engine_clients]
+        init_app_state(engine_clients, model_configs, app.state, args)
 
         shutdown_task = await serve_http(
             app,
