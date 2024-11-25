@@ -2312,6 +2312,7 @@ class CompilationConfig(BaseModel):
         self.compilation_time = 0.0
 
     def init_backend(self) -> Union[str, Callable]:
+        print(f"init backend, level:{self.level}")
         if self.level == CompilationLevel.NO_COMPILATION:
             raise ValueError("No compilation level is set.")
 
