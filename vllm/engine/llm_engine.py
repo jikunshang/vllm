@@ -229,6 +229,7 @@ class LLMEngine:
         input_registry: InputRegistry = INPUT_REGISTRY,
         mm_registry: MultiModalRegistry = MULTIMODAL_REGISTRY,
         use_cached_outputs: bool = False,
+        model: str=None,
     ) -> None:
 
         self.model_config = vllm_config.model_config
@@ -1442,7 +1443,6 @@ class LLMEngine:
 
             outputs = self.model_executor.execute_model(
                 execute_model_req=execute_model_req)
-
             # We need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.
             if self.scheduler_config.is_multi_step:

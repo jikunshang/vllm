@@ -25,9 +25,9 @@ from typing_extensions import assert_never
 
 import vllm.envs as envs
 from vllm.config import ModelConfig
-from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.multiprocessing.client import MQLLMEngineClient
-from vllm.engine.multiprocessing.engine import run_mp_engine
+from vllm.engine.mm_arg_utils import AsyncEngineArgs
+from vllm.engine.multiprocessing.mm_client import MMLLMEngineClient
+from vllm.engine.multiprocessing.mm_engine import run_mm_engine
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.chat_utils import load_chat_template
 from vllm.entrypoints.launcher import serve_http
@@ -128,10 +128,9 @@ async def build_async_engine_client_from_engine_args(
 
     Returns the Client or None if the creation failed.
     """
-
     # Fall back
     # TODO: fill out feature matrix.
-    if (MQLLMEngineClient.is_unsupported_config(engine_args)
+    if (MMLLMEngineClient.is_unsupported_config(engine_args)
             or envs.VLLM_USE_V1 or disable_frontend_multiprocessing):
 
         engine_config = engine_args.create_engine_config()
@@ -185,7 +184,7 @@ async def build_async_engine_client_from_engine_args(
         # not actually result in an exitcode being reported. As a result
         # we use a shared variable to communicate the information.
         engine_alive = multiprocessing.Value('b', True, lock=False)
-        engine_process = context.Process(target=run_mp_engine,
+        engine_process = context.Process(target=run_mm_engine,
                                          args=(engine_args,
                                                UsageContext.OPENAI_API_SERVER,
                                                ipc_path, engine_alive))
@@ -196,7 +195,7 @@ async def build_async_engine_client_from_engine_args(
 
         # Build RPCClient, which conforms to EngineClient Protocol.
         engine_config = engine_args.create_engine_config()
-        build_client = partial(MQLLMEngineClient, ipc_path, engine_config,
+        build_client = partial(MMLLMEngineClient, ipc_path, engine_config,
                                engine_pid)
         mq_engine_client = await asyncio.get_running_loop().run_in_executor(
             None, build_client)
@@ -515,7 +514,7 @@ def init_app_state(
     if args.served_model_name is not None:
         served_model_names = args.served_model_name
     else:
-        served_model_names = [args.model]
+        served_model_names = [model for model in args.model]
 
     if args.disable_log_requests:
         request_logger = None
@@ -523,8 +522,8 @@ def init_app_state(
         request_logger = RequestLogger(max_log_len=args.max_log_len)
 
     base_model_paths = [
-        BaseModelPath(name=name, model_path=args.model)
-        for name in served_model_names
+        BaseModelPath(name=name, model_path=path)
+        for name, path in zip(served_model_names, args.model)
     ]
 
     state.engine_client = engine_client

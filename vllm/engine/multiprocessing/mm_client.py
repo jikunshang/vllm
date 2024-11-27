@@ -55,14 +55,14 @@ class MQClientClosedError(Exception):
     """
 
 
-class MQLLMEngineClient(EngineClient):
+class MMLLMEngineClient(EngineClient):
     """A client wrapper for MQLLMEngine that conforms to the
     EngineClient protocol.
 
-    MQLLMEngine and MQLLMEngineClient are intended to run in separate
+    MQLLMEngine and MMLLMEngineClient are intended to run in separate
     processes communicating via zeromq ipc sockets.
 
-    The entrypoint to MQLLMEngineClient is through the generate()
+    The entrypoint to MMLLMEngineClient is through the generate()
     method. On generate() MQLLMEngine does three things:
         - Creates an asyncio output queue
         - Sends a RPCGenerateRequest to the MQLLMEngine via zmq
@@ -85,18 +85,23 @@ class MQLLMEngineClient(EngineClient):
         self._errored_with: Optional[BaseException] = None
 
         # Get the configs.
-        self.model_config = engine_config.model_config
+        # FIXME: use model_configs.
+        self.model_configs = engine_config.model_configs
         self.decoding_config = engine_config.decoding_config
 
         # Create the tokenizer group.
-        self.tokenizer = init_tokenizer_from_configs(
-            model_config=self.model_config,
-            scheduler_config=engine_config.scheduler_config,
-            parallel_config=engine_config.parallel_config,
-            enable_lora=bool(engine_config.lora_config),
-        )
-        self.input_preprocessor = InputPreprocessor(self.model_config,
-                                                    self.tokenizer)
+        self.tokenizers = []
+        self.input_preprocessors = []
+        for model_config in self.model_configs:
+            self.tokenizers.append(
+                init_tokenizer_from_configs(
+                    model_config=model_config,
+                    scheduler_config=engine_config.scheduler_config,
+                    parallel_config=engine_config.parallel_config,
+                    enable_lora=bool(engine_config.lora_config),
+                ))
+            self.input_preprocessors.append(
+                InputPreprocessor(model_config, self.tokenizers[-1]))
 
         # Send RPCGenerateRequest to the MQLLMEngine.
         self.input_socket: Socket = self.context.socket(zmq.constants.PUSH)
@@ -348,17 +353,26 @@ class MQLLMEngineClient(EngineClient):
               or response != VLLM_RPC_SUCCESS_STR):
             raise ValueError(error_message)
 
+    #TODO:check usage
     async def get_input_preprocessor(self) -> InputPreprocessor:
         return self.input_preprocessor
 
+    #TODO:check usage
     async def get_tokenizer(self, lora_request: Optional[LoRARequest] = None):
         return await self.tokenizer.get_lora_tokenizer_async(lora_request)
+
+    async def get_tokenizer_mm(self, model, lora_request: Optional[LoRARequest] = None):
+        for tokenizer in self.tokenizers:
+            if tokenizer.tokenizer_id == model:
+                return await tokenizer.get_lora_tokenizer_async(lora_request)
+        raise ValueError(f"Tokenizer for model {model} not found.")
 
     async def get_decoding_config(self) -> DecodingConfig:
         return self.decoding_config
 
+    #TODO:check usage
     async def get_model_config(self) -> ModelConfig:
-        return self.model_config
+        return self.model_configs[0]
 
     async def is_tracing_enabled(self) -> bool:
         return self.tracing_flag
@@ -450,6 +464,7 @@ class MQLLMEngineClient(EngineClient):
         prompt: Optional[PromptType] = None,
         sampling_params: Optional[SamplingParams] = None,
         request_id: Optional[str] = None,
+        model: Optional[str] = None,
         lora_request: Optional[LoRARequest] = None,
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
@@ -481,7 +496,7 @@ class MQLLMEngineClient(EngineClient):
         assert (prompt is not None and sampling_params is not None
                 and request_id is not None)
 
-        return self._process_request(prompt, sampling_params, request_id,
+        return self._process_request(prompt, sampling_params, request_id, model,
                                      lora_request, trace_headers,
                                      prompt_adapter_request, priority)
 
@@ -562,6 +577,7 @@ class MQLLMEngineClient(EngineClient):
         prompt: PromptType,
         params: Union[SamplingParams, PoolingParams],
         request_id: str,
+        model: str,
         lora_request: Optional[LoRARequest] = None,
         trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
@@ -610,6 +626,7 @@ class MQLLMEngineClient(EngineClient):
                     prompt=prompt,
                     params=params,
                     request_id=request_id,
+                    model=model,
                     lora_request=lora_request,
                     trace_headers=trace_headers,
                     prompt_adapter_request=prompt_adapter_request,
