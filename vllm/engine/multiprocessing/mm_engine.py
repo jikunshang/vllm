@@ -5,9 +5,10 @@ from typing import Iterator, List, Optional, Union
 
 import cloudpickle
 import zmq
+import copy
 
 from vllm import SamplingParams
-from vllm.engine.mm_arg_utils import AsyncEngineArgs
+from vllm.engine.mm_arg_utils import MMAsyncEngineArgs
 from vllm.engine.llm_engine import LLMEngine
 # yapf conflicts with isort for this block
 # yapf: disable
@@ -70,12 +71,16 @@ class MMLLMEngine:
         kwargs['use_cached_outputs'] = True
         
         # get configs from args and kwargs, determine how many models to load
-        vllm_config = kwargs.get('vllm_config')
-        models_load = [model_config.model for model_config in vllm_config.model_configs ]
+
+        original_vllm_config = kwargs.get('vllm_config')
+        models_load = [model_config.model for model_config in original_vllm_config.model_configs ]
         self.engines  = []
         
         for i, model in enumerate(models_load):
-            vllm_config.model_config = vllm_config.model_configs[i]
+            vllm_config = copy.deepcopy(original_vllm_config)
+            vllm_config.model_config = original_vllm_config.model_configs[i]
+            kwargs['vllm_config'] = vllm_config
+
             self.engines.append(LLMEngine(model=model, *args, **kwargs))
         self.log_requests = log_requests
 
@@ -113,7 +118,7 @@ class MMLLMEngine:
             return ENGINE_DEAD_ERROR()
 
     @classmethod
-    def from_engine_args(cls, engine_args: AsyncEngineArgs,
+    def from_engine_args(cls, engine_args: MMAsyncEngineArgs,
                          usage_context: UsageContext, ipc_path: str):
         """Creates an MQLLMEngine from the engine arguments."""
         # Setup plugins for each process
@@ -370,7 +375,7 @@ def signal_handler(*_) -> None:
     raise KeyboardInterrupt("MQLLMEngine terminated")
 
 
-def run_mm_engine(engine_args: AsyncEngineArgs, usage_context: UsageContext,
+def run_mm_engine(engine_args: MMAsyncEngineArgs, usage_context: UsageContext,
                   ipc_path: str, engine_alive):
     try:
         engine = MMLLMEngine.from_engine_args(engine_args=engine_args,

@@ -501,8 +501,7 @@ class LlamaForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
         self.config = config
         self.lora_config = lora_config
 
-        self.model = LlamaModel(vllm_config=vllm_config,
-                                prefix=maybe_prefix(prefix, "model"))
+        self.model = self._init_model(vllm_config=vllm_config, prefix=prefix)
         if get_pp_group().is_last_rank:
             self.unpadded_vocab_size = config.vocab_size
             if lora_config:
@@ -538,6 +537,9 @@ class LlamaForCausalLM(nn.Module, SupportsLoRA, SupportsPP):
             pooling_type=PoolingType.STEP,
             normalize=False,
             softmax=False)
+
+    def _init_model(self, vllm_config: VllmConfig, prefix: str = ""):
+        return LlamaModel(vllm_config=vllm_config, prefix=prefix)
 
     def get_input_embeddings(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings(input_ids)
@@ -687,6 +689,8 @@ class LlamaEmbeddingModel(nn.Module, SupportsLoRA, SupportsPP):
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
         hf_to_vllm_mapper = WeightsMapper(orig_to_new_prefix={"model.": ""})
         weights = hf_to_vllm_mapper.apply(weights)
+        weights = ((name, data) for name, data in weights
+                   if not name.startswith("lm_head."))
         self.model.load_weights(weights)
 
     def load_kv_cache_scales(self, quantization_param_path: str) -> None:

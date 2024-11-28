@@ -25,14 +25,14 @@ from typing_extensions import assert_never
 
 import vllm.envs as envs
 from vllm.config import ModelConfig
-from vllm.engine.mm_arg_utils import AsyncEngineArgs
+from vllm.engine.mm_arg_utils import MMAsyncEngineArgs
 from vllm.engine.multiprocessing.mm_client import MMLLMEngineClient
 from vllm.engine.multiprocessing.mm_engine import run_mm_engine
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.chat_utils import load_chat_template
 from vllm.entrypoints.launcher import serve_http
 from vllm.entrypoints.logger import RequestLogger
-from vllm.entrypoints.openai.cli_args import (make_arg_parser,
+from vllm.entrypoints.openai.cli_args import (make_mm_arg_parser,
                                               validate_parsed_serve_args)
 # yapf conflicts with isort for this block
 # yapf: disable
@@ -109,7 +109,7 @@ async def build_async_engine_client(
 
     # Context manager to handle engine_client lifecycle
     # Ensures everything is shutdown and cleaned up on error/exit
-    engine_args = AsyncEngineArgs.from_cli_args(args)
+    engine_args = MMAsyncEngineArgs.from_cli_args(args)
 
     async with build_async_engine_client_from_engine_args(
             engine_args, args.disable_frontend_multiprocessing) as engine:
@@ -118,7 +118,7 @@ async def build_async_engine_client(
 
 @asynccontextmanager
 async def build_async_engine_client_from_engine_args(
-    engine_args: AsyncEngineArgs,
+    engine_args: MMAsyncEngineArgs,
     disable_frontend_multiprocessing: bool = False,
 ) -> AsyncIterator[EngineClient]:
     """
@@ -642,7 +642,7 @@ if __name__ == "__main__":
     # This section should be in sync with vllm/scripts.py for CLI entrypoints.
     parser = FlexibleArgumentParser(
         description="vLLM OpenAI-Compatible RESTful API server.")
-    parser = make_arg_parser(parser)
+    parser = make_mm_arg_parser(parser)
     args = parser.parse_args()
     validate_parsed_serve_args(args)
 
