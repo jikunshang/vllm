@@ -8,7 +8,7 @@ import zmq
 import copy
 
 from vllm import SamplingParams
-from vllm.engine.mm_arg_utils import AsyncEngineArgs
+from vllm.engine.mm_arg_utils import MMAsyncEngineArgs
 from vllm.engine.llm_engine import LLMEngine
 # yapf conflicts with isort for this block
 # yapf: disable
@@ -118,7 +118,7 @@ class MMLLMEngine:
             return ENGINE_DEAD_ERROR()
 
     @classmethod
-    def from_engine_args(cls, engine_args: AsyncEngineArgs,
+    def from_engine_args(cls, engine_args: MMAsyncEngineArgs,
                          usage_context: UsageContext, ipc_path: str):
         """Creates an MQLLMEngine from the engine arguments."""
         # Setup plugins for each process
@@ -375,7 +375,7 @@ def signal_handler(*_) -> None:
     raise KeyboardInterrupt("MQLLMEngine terminated")
 
 
-def run_mm_engine(engine_args: AsyncEngineArgs, usage_context: UsageContext,
+def run_mm_engine(engine_args: MMAsyncEngineArgs, usage_context: UsageContext,
                   ipc_path: str, engine_alive):
     try:
         engine = MMLLMEngine.from_engine_args(engine_args=engine_args,

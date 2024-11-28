@@ -21,7 +21,7 @@ python benchmarks/benchmark_serving.py \
 		--sonnet-input-len ${in_len} \
 		--sonnet-output-len ${out_len} \
 		--sonnet-prefix-len 100 \
-		--save-result 2>&1 > mistral-sonnet.log &
+		--save-result 2>&1 > mistral-sonnet-1.log &
 
 python benchmarks/benchmark_serving.py \
 		--backend vllm \
@@ -34,4 +34,4 @@ python benchmarks/benchmark_serving.py \
 		--sonnet-input-len ${in_len} \
 		--sonnet-output-len ${out_len} \
 		--sonnet-prefix-len 100 \
-		--save-result 2>&1 > llama-sonnet.log &
+		--save-result 2>&1 > llama-sonnet-1.log &
