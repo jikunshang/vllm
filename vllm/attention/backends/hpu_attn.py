@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 import torch
 import vllm_hpu_extension.ops as ops
 from vllm_hpu_extension.utils import Matmul, Softmax, VLLMKVCache
+from vllm_hpu_extension.cache_ops import insert_or_update_cache
+from vllm.forward_context import get_forward_context
 
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
@@ -162,79 +164,113 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                                       "encoder/decoder cross-attention "
                                       "are not implemented for "
                                       "HPUAttentionImpl")
-        batch_size, seq_len, hidden_size = query.shape
-        _, seq_len_kv, _ = key.shape
+        output = torch.empty_like(query)
+        torch.vllm.ops.hpu_attn_fwd(output, query, key, value,
+                                    self.num_heads, self.head_size,
+                                    self.num_kv_heads, kv_cache, self.kv_cache_dtype,
+                                    k_scale, v_scale, self.scale, self.sliding_window,
+                                    self.alibi_slopes, None, self.prefill_usefusedsdpa)
+        return output
 
-        query = query.view(-1, self.num_heads, self.head_size)
-        key = key.view(-1, self.num_kv_heads, self.head_size)
-        value = value.view(-1, self.num_kv_heads, self.head_size)
-        block_indices = attn_metadata.block_indices
-        block_offsets = attn_metadata.block_offsets
-        if attn_metadata.is_prompt:
-            key = key.unflatten(0, (block_indices.size(0), -1))
-            value = value.unflatten(0, (block_indices.size(0), -1))
-        if kv_cache is not None:
-            key_cache, value_cache = HPUPagedAttention.split_kv_cache(
-                kv_cache, self.num_kv_heads, self.head_size)
+@torch.library.custom_op("vllm::hpu_attn_fwd",
+                         mutates_args=["output", "kv_cache"])
+def hpu_attn_fwd(
+    output: torch.Tensor,
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    num_heads: int,
+    head_size: int,
+    num_kv_heads: int,
+    kv_cache: torch.Tensor,
+    kv_cache_dtype: str,
+    k_scale: float,
+    v_scale: float,
+    scale: float,
+    sliding_window: Optional[List[int]],
+    alibi_slopes: Optional[torch.Tensor],
+    logits_soft_cap: Optional[float],
+    prefill_usefusedsdpa: bool,
+    ) -> None:
+    context = get_forward_context()
+    current_metadata = context.dynamic_forward_context
+    assert current_metadata is not None
+    assert isinstance(current_metadata, HPUAttentionMetadata)
+    attn_metadata: HPUAttentionMetadata = current_metadata
+    
+    batch_size, seq_len, hidden_size = query.shape
+    _, seq_len_kv, _ = key.shape
 
-            # Reshape the input keys and values and store them in the cache.
-            # If kv_cache is not provided, the new key and value tensors are
-            # not cached. This happens during the initial memory profiling run.
-            key_cache = self.k_cache(key, key_cache, block_indices,
-                                     block_offsets)
-            value_cache = self.v_cache(value, value_cache, block_indices,
-                                       block_offsets)
+    query = query.view(-1, num_heads, head_size)
+    key = key.view(-1, num_kv_heads, head_size)
+    value = value.view(-1, num_kv_heads, head_size)
+    block_indices = attn_metadata.block_indices
+    block_offsets = attn_metadata.block_offsets
+    if attn_metadata.is_prompt:
+        key = key.unflatten(0, (block_indices.size(0), -1))
+        value = value.unflatten(0, (block_indices.size(0), -1))
+    def insert_or_update_cache_func(input, cache, block_indices, block_offset):
+        insert_or_update_cache(input, cache, block_indices, block_offset)
+    if kv_cache is not None:
+        key_cache, value_cache = HPUPagedAttention.split_kv_cache(
+            kv_cache, num_kv_heads, head_size)
 
-        if attn_metadata.is_prompt:
-            # Prompt run.
-            if not self.prefill_usefusedsdpa:
-                # TODO: move this outside of model
-                assert attn_metadata.attn_bias is not None, \
-                        'attn_bias must be set before calling model.forward!'
-                attn_bias = attn_metadata.attn_bias
-                if self.alibi_slopes is not None:
-                    position_bias = _make_alibi_bias(self.alibi_slopes,
-                                                     self.num_kv_heads,
-                                                     attn_bias.dtype,
-                                                     attn_bias.shape[-1])
-                    attn_bias = attn_bias.tile((1, self.num_kv_heads, 1, 1))
-                    attn_bias.add_(position_bias)
-            else:
-                attn_bias = None
+        # Reshape the input keys and values and store them in the cache.
+        # If kv_cache is not provided, the new key and value tensors are
+        # not cached. This happens during the initial memory profiling run.
+        key_cache = insert_or_update_cache_func(key, key_cache, block_indices,
+                                 block_offsets)
+        value_cache = insert_or_update_cache_func(value, value_cache, block_indices,
+                                   block_offsets)
 
-            query_shape = (batch_size, seq_len, self.num_heads, self.head_size)
-            kv_shape = (batch_size, seq_len_kv, self.num_kv_heads,
-                        self.head_size)
-            out = ops.prompt_attention(
-                query.view(query_shape),
-                key.view(kv_shape),
-                value.view(kv_shape),
-                attn_bias=attn_bias,
-                p=0.0,
-                scale=self.scale,
-                matmul_qk_op=self.matmul_qk,
-                softmax_op=self.softmax,
-                matmul_av_op=self.matmul_av,
-            )
-            output = out.reshape(batch_size, seq_len, hidden_size)
+    if attn_metadata.is_prompt:
+        # Prompt run.
+        if not prefill_usefusedsdpa:
+            # TODO: move this outside of model
+            assert attn_metadata.attn_bias is not None, \
+                    'attn_bias must be set before calling model.forward!'
+            attn_bias = attn_metadata.attn_bias
+            if alibi_slopes is not None:
+                position_bias = _make_alibi_bias(alibi_slopes,
+                                                 num_kv_heads,
+                                                 attn_bias.dtype,
+                                                 attn_bias.shape[-1])
+                attn_bias = attn_bias.tile((1, num_kv_heads, 1, 1))
+                attn_bias.add_(position_bias)
         else:
-            # Decoding run.
-            output = HPUPagedAttention.forward_decode(
-                query=query,
-                key_cache=key_cache,
-                value_cache=value_cache,
-                block_list=attn_metadata.block_list,
-                block_mapping=attn_metadata.block_mapping,
-                block_bias=attn_metadata.attn_bias,
-                block_scales=attn_metadata.block_scales,
-                scale=self.scale,
-                matmul_qk_op=self.matmul_qk,
-                matmul_av_op=self.matmul_av,
-                keys_fetch_func=self.k_cache.fetch_from_cache,
-                values_fetch_func=self.v_cache.fetch_from_cache)
-        # Reshape the output tensor.
-        return output.view(batch_size, seq_len, hidden_size)
+            attn_bias = None
 
+        query_shape = (batch_size, seq_len, num_heads, head_size)
+        kv_shape = (batch_size, seq_len_kv, num_kv_heads,
+                    head_size)
+        out = ops.prompt_attention(
+            query.view(query_shape),
+            key.view(kv_shape),
+            value.view(kv_shape),
+            attn_bias=attn_bias,
+            p=0.0,
+            scale=scale,
+        )
+        output = out.reshape(batch_size, seq_len, hidden_size)
+    else:
+        # Decoding run.
+        def cache_func(cache, block_list):
+            return cache.index_select(0, block_list)
+        output = HPUPagedAttention.forward_decode(
+            query=query,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            block_list=attn_metadata.block_list,
+            block_mapping=attn_metadata.block_mapping,
+            block_bias=attn_metadata.attn_bias,
+            block_scales=attn_metadata.block_scales,
+            scale=scale,
+            matmul_qk_op=torch.matmul,
+            matmul_av_op=torch.matmul,
+            keys_fetch_func=cache_func,
+            values_fetch_func=cache_func)
+    # Reshape the output tensor.
+    return output.view(batch_size, seq_len, hidden_size)
 
 def _make_alibi_bias(
     alibi_slopes: torch.Tensor,

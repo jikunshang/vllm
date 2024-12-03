@@ -136,6 +136,7 @@ class PiecewiseCompileInterpreter(torch.fx.Interpreter):
             self.fake_mode.from_tensor(t) if isinstance(t, torch.Tensor) else t
             for t in args
         ]
+        print(f"fake args:  {fake_args}")
         with self.fake_mode:
             return super().run(*fake_args)
 
@@ -200,8 +201,8 @@ class VllmBackend:
         compilation_configs: CompilationConfig,
     ):
         global global_graph_pool
-        if global_graph_pool is None:
-            global_graph_pool = torch.cuda.graph_pool_handle()
+        # if global_graph_pool is None:
+        #     global_graph_pool = torch.cuda.graph_pool_handle()
 
         # TODO: in the future, if we want to use multiple
         # streams, it might not be safe to share a global pool.
