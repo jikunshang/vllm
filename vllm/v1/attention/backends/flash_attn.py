@@ -6,7 +6,7 @@ import torch
 
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
-from vllm.vllm_flash_attn import flash_attn_varlen_func
+
 
 
 class FlashAttentionBackend(AttentionBackend):
@@ -72,6 +72,7 @@ class FlashAttentionImpl(AttentionImpl):
         blocksparse_params: Optional[Dict[str, Any]] = None,
         logits_soft_cap: Optional[float] = None,
     ) -> None:
+
         if blocksparse_params is not None:
             raise ValueError(
                 "FlashAttention does not support block-sparse attention.")
@@ -153,7 +154,8 @@ class FlashAttentionImpl(AttentionImpl):
             k_scale,
             v_scale,
         )
-
+        # FIXME
+        from vllm.vllm_flash_attn import flash_attn_varlen_func
         # Compute attention and update output up to `num_actual_tokens`.
         flash_attn_varlen_func(
             q=query[:num_actual_tokens],

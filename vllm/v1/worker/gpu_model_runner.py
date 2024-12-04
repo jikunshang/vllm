@@ -24,9 +24,8 @@ from vllm.v1.sample.metadata import SamplingMetadata
 if TYPE_CHECKING:
     from vllm.multimodal.inputs import PlaceholderRange
     from vllm.v1.core.scheduler import SchedulerOutput
-if current_platform.is_cuda():
-    from vllm.v1.attention.backends.flash_attn import (FlashAttentionBackend,
-                                                       FlashAttentionMetadata)
+from vllm.v1.attention.backends.flash_attn import (FlashAttentionBackend,
+                                                    FlashAttentionMetadata)
 
 logger = init_logger(__name__)
 
