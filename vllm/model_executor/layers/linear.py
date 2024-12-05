@@ -9,6 +9,7 @@ from torch.nn.parameter import Parameter, UninitializedParameter
 from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               split_tensor_along_last_dim,
+                              split_tensor_along_x_dim,
                               tensor_model_parallel_all_gather,
                               tensor_model_parallel_all_reduce)
 from vllm.logger import init_logger
@@ -1099,13 +1100,29 @@ class RowParallelLinear(LinearBase):
         # Only fuse bias add into GEMM for rank 0 (this ensures that
         # bias will not get added more than once in TP>1 case)
         bias_ = None if (self.tp_rank > 0 or self.skip_bias_add) else self.bias
-        output_parallel = self.quant_method.apply(self,
-                                                  input_parallel,
-                                                  bias=bias_)
-        if self.reduce_results and self.tp_size > 1:
-            output = tensor_model_parallel_all_reduce(output_parallel)
-        else:
-            output = output_parallel
+        
+        # print(input_parallel.shape) # [batch_size, seq_lens, hidden_size//tp_size]
+        # why split on 0th dim:
+        # 1st dim(seq_lens): due to decode phase seq_lens is always 1, so we can not split on this dim
+        # 2nd dim(hidden_size): tp already split on this dim, will change much more if split on this
+        # Other limitations & FIXME: need to set VLLM_DECODE_BS_BUCKET_MIN=2, VLLM_PROMPT_BS_BUCKET_MIN=2, otherwise it cannot divide and split.
+        # Overheads:
+        # 1. split overhead.
+        # 2. append may have some overhead, I am not sure whether the output tensor need ready.
+        # 3. cat tensor overhead. we can do some optimization here. but I am afraid there will always be some copy.
+        split = 2
+        input_parallels = split_tensor_along_x_dim(input_parallel, 0, split)
+        output_parallels = []
+        for input_parallel in input_parallels:
+            output_parallel = self.quant_method.apply(self,
+                                                      input_parallel,
+                                                      bias=bias_)
+            if self.reduce_results and self.tp_size > 1:
+                output = tensor_model_parallel_all_reduce(output_parallel)
+            else:
+                output = output_parallel
+            output_parallels.append(output)
+        output = torch.cat(output_parallels, dim=0)
 
         output_bias = self.bias if self.skip_bias_add else None
 

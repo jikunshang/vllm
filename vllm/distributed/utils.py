@@ -57,6 +57,18 @@ def split_tensor_along_last_dim(
 
     return tensor_list
 
+def split_tensor_along_x_dim(
+    tensor: torch.Tensor,
+    dim: int,
+    num_partitions: int,
+    contiguous_split_chunks: bool = False,
+) -> Sequence[torch.Tensor]:
+    dim_size = divide(tensor.size()[dim], num_partitions)
+    tensor_list = torch.split(tensor, dim_size, dim=dim)
+    if contiguous_split_chunks:
+        return tuple(chunk.contiguous() for chunk in tensor_list)
+    return tensor_list
+
 
 def get_pp_indices(num_hidden_layers: int, pp_rank: int,
                    pp_size: int) -> Tuple[int, int]:
