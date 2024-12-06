@@ -297,6 +297,7 @@ class LlamaDecoderLayer(nn.Module):
                                                        kv_cache=kv_cache,
                                                        attn_metadata=attn_metadata,
                                                        split_index=i)
+            for i in range(split):
                 res_hidden_states_list[i], res_residual_list[i] = self.post_attention_layernorm(
                     res_hidden_states_list[i],
                     res_residual_list[i])
