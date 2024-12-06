@@ -216,6 +216,7 @@ class LlamaDecoderLayer(nn.Module):
         prefix: str = "",
     ) -> None:
         super().__init__()
+        self.layer_idx = extract_layer_index(prefix)
         self.hidden_size = config.hidden_size
         rope_theta = getattr(config, "rope_theta", 10000)
         rope_scaling = getattr(config, "rope_scaling", None)
@@ -274,10 +275,14 @@ class LlamaDecoderLayer(nn.Module):
         if attn_metadata.is_prompt:
             split = 2
             positions_list = spilt_tensor(positions, split, dim=0)
-            hidden_states_list = spilt_tensor(hidden_states, split, dim=0)
-            res_hidden_states_list = [None] * split
-            residual_list = [None] * split if residual is None else spilt_tensor(
+            if self.layer_idx == 0:
+                hidden_states_list = spilt_tensor(hidden_states, split, dim=0)
+                residual_list = [None] * split if residual is None else spilt_tensor(
                 residual, split, dim=0)
+            else:
+                hidden_states_list = hidden_states
+                residual_list = residual
+            res_hidden_states_list = [None] * split
             res_residual_list = [None] * split
             for i in range(split):
                 if residual is None:
@@ -296,8 +301,13 @@ class LlamaDecoderLayer(nn.Module):
                     res_hidden_states_list[i],
                     res_residual_list[i])
                 res_hidden_states_list[i] = self.mlp(res_hidden_states_list[i])
-            hidden_states = torch.cat(res_hidden_states_list, dim=0)
-            residual = torch.cat(res_residual_list, dim=0)                
+
+            if self.layer_idx == 31: #llama 8B model
+                hidden_states = torch.cat(res_hidden_states_list, dim=0)
+                residual = torch.cat(res_residual_list, dim=0)
+            else: 
+                hidden_states = res_hidden_states_list
+                residual = res_residual_list                
         else: 
             # Self Attention
             if residual is None:
