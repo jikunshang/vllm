@@ -196,11 +196,12 @@ class LlamaAttention(nn.Module):
         hidden_states: torch.Tensor,
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
+        split_index:int =0
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
         q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+        attn_output = self.attn(q, k, v, kv_cache, attn_metadata, split_index)
         output, _ = self.o_proj(attn_output)
         return output
 
@@ -263,22 +264,57 @@ class LlamaDecoderLayer(nn.Module):
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Self Attention
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(
-                hidden_states, residual)
-        hidden_states = self.self_attn(positions=positions,
-                                       hidden_states=hidden_states,
-                                       kv_cache=kv_cache,
-                                       attn_metadata=attn_metadata)
+        def spilt_tensor(tensor: torch.Tensor,
+                         num_partitions: int,
+                         dim:int = 0):
+            dim_size = tensor.size()[dim] // num_partitions
+            tensor_list = torch.split(tensor, dim_size, dim=dim)
+            return tensor_list
+            
+        if attn_metadata.is_prompt:
+            split = 2
+            positions_list = spilt_tensor(positions, split, dim=0)
+            hidden_states_list = spilt_tensor(hidden_states, split, dim=0)
+            res_hidden_states_list = [None] * split
+            residual_list = [None] * split if residual is None else spilt_tensor(
+                residual, split, dim=0)
+            res_residual_list = [None] * split
+            for i in range(split):
+                if residual is None:
+                    res_residual_list[i] = hidden_states_list[i]
+                    res_hidden_states_list[i] = self.input_layernorm(
+                        hidden_states_list[i])
+                else:
+                    res_hidden_states_list[i], res_residual_list[i] = self.input_layernorm(
+                        hidden_states_list[i], residual_list[i])
+                res_hidden_states_list[i] = self.self_attn(positions=positions_list[i],
+                                                       hidden_states=res_hidden_states_list[i],
+                                                       kv_cache=kv_cache,
+                                                       attn_metadata=attn_metadata,
+                                                       split_index=i)
+                res_hidden_states_list[i], res_residual_list[i] = self.post_attention_layernorm(
+                    res_hidden_states_list[i],
+                    res_residual_list[i])
+                res_hidden_states_list[i] = self.mlp(res_hidden_states_list[i])
+            hidden_states = torch.cat(res_hidden_states_list, dim=0)
+            residual = torch.cat(res_residual_list, dim=0)                
+        else: 
+            # Self Attention
+            if residual is None:
+                residual = hidden_states
+                hidden_states = self.input_layernorm(hidden_states)
+            else:
+                hidden_states, residual = self.input_layernorm(
+                    hidden_states, residual)
+            hidden_states = self.self_attn(positions=positions,
+                                           hidden_states=hidden_states,
+                                           kv_cache=kv_cache,
+                                           attn_metadata=attn_metadata)
 
-        # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(
-            hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+            # Fully Connected
+            hidden_states, residual = self.post_attention_layernorm(
+                hidden_states, residual)
+            hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
 

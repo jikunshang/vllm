@@ -146,6 +146,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
         v_scale: float = 1.0,
         attn_type: str = AttentionType.DECODER,
         output: Optional[torch.Tensor] = None,
+        split_index:int =0,
     ) -> torch.Tensor:
         """Forward pass with xFormers and PagedAttention.
 
@@ -172,6 +173,9 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
         if attn_metadata.is_prompt:
+            split_size = 2
+            block_indices = block_indices.reshape(split_size, -1)[split_index]
+            block_offsets = block_offsets.reshape(split_size, -1)[split_index]
             key = key.unflatten(0, (block_indices.size(0), -1))
             value = value.unflatten(0, (block_indices.size(0), -1))
         if kv_cache is not None:

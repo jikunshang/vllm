@@ -128,6 +128,7 @@ class Attention(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
         attn_type: str = AttentionType.DECODER,
+        split_index:int = 0
     ) -> torch.Tensor:
 
         if self.use_direct_call:
@@ -138,7 +139,8 @@ class Attention(nn.Module):
                                      attn_metadata,
                                      self._k_scale,
                                      self._v_scale,
-                                     attn_type=attn_type)
+                                     attn_type=attn_type,
+                                     split_index=split_index)
         elif self.use_output:
             output = torch.empty_like(query)
             hidden_size = query.size(-1)
