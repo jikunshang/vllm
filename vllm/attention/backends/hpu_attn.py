@@ -174,8 +174,10 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
         block_offsets = attn_metadata.block_offsets
         if attn_metadata.is_prompt:
             split_size = 2
-            block_indices = block_indices.reshape(split_size, -1)[split_index]
-            block_offsets = block_offsets.reshape(split_size, -1)[split_index]
+            if block_indices is not None:
+                block_indices = block_indices.reshape(split_size, -1)[split_index]
+            if block_offsets is not None:
+                block_offsets = block_offsets.reshape(split_size, -1)[split_index]
             key = key.unflatten(0, (block_indices.size(0), -1))
             value = value.unflatten(0, (block_indices.size(0), -1))
         if kv_cache is not None:
