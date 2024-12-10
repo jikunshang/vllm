@@ -110,7 +110,7 @@ class LLMEngine:
             vllm_config.parallel_config.distributed_executor_backend)
         if current_platform.is_cuda():
             if distributed_executor_backend == "mp":
-                from vllm.v1.executor.multiproc_executor import     MultiprocExecutor
+                from vllm.v1.executor.multiproc_executor import MultiprocExecutor
                 executor_class = MultiprocExecutor
             else:
                 assert (distributed_executor_backend is None)
@@ -125,7 +125,8 @@ class LLMEngine:
                 from vllm.v1.executor.xpu_uniproc_executor import XPUUniprocExecutor
                 executor_class = XPUUniprocExecutor
         else:
-            raise ValueError(f"Unsupported platform: {current_platform.device_name}")
+            raise ValueError(
+                f"Unsupported platform: {current_platform.device_name}")
 
         return executor_class
 
