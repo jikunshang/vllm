@@ -8,7 +8,6 @@ from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
 
 
-
 class FlashAttentionBackend(AttentionBackend):
 
     @staticmethod
