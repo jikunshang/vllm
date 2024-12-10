@@ -134,7 +134,8 @@ class LLMEngine:
                 from vllm.v1.executor.xpu_uniproc_executor import XPUUniprocExecutor
                 executor_class = XPUUniprocExecutor
         else:
-            raise ValueError(f"Unsupported platform: {current_platform.device_name}")
+            raise ValueError(
+                f"Unsupported platform: {current_platform.device_name}")
 
         return executor_class
 
