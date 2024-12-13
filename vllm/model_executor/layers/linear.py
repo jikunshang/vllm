@@ -997,13 +997,19 @@ class RowParallelLinear(LinearBase):
                  params_dtype: Optional[torch.dtype] = None,
                  reduce_results: bool = True,
                  quant_config: Optional[QuantizationConfig] = None,
-                 prefix: str = ""):
+                 prefix: str = "",
+                 do_split: bool=False, # should enable for donw_proj, disable for o_proj
+                 split_threshold:int = 128,
+                 split_size:int = 2):
         super().__init__(input_size, output_size, skip_bias_add, params_dtype,
                          quant_config, prefix)
 
         self.input_is_parallel = input_is_parallel
         self.reduce_results = reduce_results
         self.collective_func = tensor_model_parallel_all_reduce
+        self.do_split = do_split
+        self.split_threshold = split_threshold
+        self.split_size = split_size
 
         # Divide the weight matrix along the last dimension.
         self.tp_rank = get_tensor_model_parallel_rank()
@@ -1109,11 +1115,10 @@ class RowParallelLinear(LinearBase):
         # why split on 1st dim:
         # the 0th dim is batch size, when batch size = 1, we can not split anyway.
         # 2nd dim(hidden_size): tp already split on this dim, will change much more if split on this
-        split_size = 2
-        split_seq_len_th = 128
-        dim_0, dim_1, dim_2 = input_parallel.shape
-        if dim_1 >= 128: # split
-            input_parallels = split_tensor_along_x_dim(input_parallel, 1, split_size)
+        
+        _, seq_len, _ = input_parallel.shape 
+        if self.do_split and seq_len >= self.split_threshold: # split
+            input_parallels = split_tensor_along_x_dim(input_parallel, 1, self.split_size)
             output_parallels = []
             for input_parallel in input_parallels:
                 output_parallel = self.quant_method.apply(self,
