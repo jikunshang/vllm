@@ -1100,8 +1100,43 @@ class RowParallelLinear(LinearBase):
         # Only fuse bias add into GEMM for rank 0 (this ensures that
         # bias will not get added more than once in TP>1 case)
         bias_ = None if (self.tp_rank > 0 or self.skip_bias_add) else self.bias
-        
+
         # print(input_parallel.shape) # [batch_size, seq_lens, hidden_size//tp_size]
+
+        # split v2:
+        # stretage: we split the input tensor on 1 dim(seq length dim), but only when seq_length greater
+        # than a threshold, otherwise we dont split. which means, decode phase will never split 
+        # why split on 1st dim:
+        # the 0th dim is batch size, when batch size = 1, we can not split anyway.
+        # 2nd dim(hidden_size): tp already split on this dim, will change much more if split on this
+        split_size = 2
+        split_seq_len_th = 128
+        dim_0, dim_1, dim_2 = input_parallel.shape
+        if dim_1 >= 128: # split
+            input_parallels = split_tensor_along_x_dim(input_parallel, 1, split_size)
+            output_parallels = []
+            for input_parallel in input_parallels:
+                output_parallel = self.quant_method.apply(self,
+                                                      input_parallel,
+                                                      bias=bias_)
+                if self.reduce_results and self.tp_size > 1:
+                    output = tensor_model_parallel_all_reduce(output_parallel)
+                else:
+                    output = output_parallel
+                output_parallels.append(output)
+            output = torch.cat(output_parallels, dim=1)
+        
+        else:
+            output_parallel = self.quant_method.apply(self,
+                                                  input_parallel,
+                                                  bias=bias_)
+            if self.reduce_results and self.tp_size > 1:
+                output = tensor_model_parallel_all_reduce(output_parallel)
+            else:
+                output = output_parallel
+        
+
+        # split v1:        
         # why split on 0th dim:
         # 1st dim(seq_lens): due to decode phase seq_lens is always 1, so we can not split on this dim
         # 2nd dim(hidden_size): tp already split on this dim, will change much more if split on this
@@ -1110,19 +1145,19 @@ class RowParallelLinear(LinearBase):
         # 1. split overhead.
         # 2. append may have some overhead, I am not sure whether the output tensor need ready.
         # 3. cat tensor overhead. we can do some optimization here. but I am afraid there will always be some copy.
-        split = 2
-        input_parallels = split_tensor_along_x_dim(input_parallel, 0, split)
-        output_parallels = []
-        for input_parallel in input_parallels:
-            output_parallel = self.quant_method.apply(self,
-                                                      input_parallel,
-                                                      bias=bias_)
-            if self.reduce_results and self.tp_size > 1:
-                output = tensor_model_parallel_all_reduce(output_parallel)
-            else:
-                output = output_parallel
-            output_parallels.append(output)
-        output = torch.cat(output_parallels, dim=0)
+        # split = 2
+        # input_parallels = split_tensor_along_x_dim(input_parallel, 0, split)
+        # output_parallels = []
+        # for input_parallel in input_parallels:
+        #     output_parallel = self.quant_method.apply(self,
+        #                                               input_parallel,
+        #                                               bias=bias_)
+        #     if self.reduce_results and self.tp_size > 1:
+        #         output = tensor_model_parallel_all_reduce(output_parallel)
+        #     else:
+        #         output = output_parallel
+        #     output_parallels.append(output)
+        # output = torch.cat(output_parallels, dim=0)
 
         output_bias = self.bias if self.skip_bias_add else None
 
