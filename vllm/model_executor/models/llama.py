@@ -79,13 +79,18 @@ class LlamaMLP(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.gate_up_proj",
         )
+        split_enable = bool(os.environ.get('VLLM_TP_SPLIT_ENABLE', '1'))
+        split_size = int(os.environ.get('VLLM_TP_SPLIT_SIZE', '2'))
+        split_threshold = int(os.environ.get('VLLM_TP_SPLIT_THRESHOLD', '128'))
         self.down_proj = RowParallelLinear(
             input_size=intermediate_size,
             output_size=hidden_size,
             bias=bias,
             quant_config=quant_config,
             prefix=f"{prefix}.down_proj",
-            do_split=True,
+            do_split=split_enable,
+            split_size=split_size,
+            split_threshold=split_threshold,
         )
         if hidden_act != "silu":
             raise ValueError(f"Unsupported activation: {hidden_act}. "
