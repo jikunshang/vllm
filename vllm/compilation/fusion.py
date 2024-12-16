@@ -26,9 +26,10 @@ def empty_bf16(*args, **kwargs):
 def empty_fp32(*args, **kwargs):
     return torch.empty(*args, **kwargs, dtype=torch.float32, device="cuda")
 
+from vllm._ipex_ops import ipex_ops
 
-RMS_OP = torch.ops._C.rms_norm.default
-RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
+RMS_OP = ipex_ops.rms_norm
+RMS_ADD_OP = ipex_ops.fused_add_rms_norm
 
 
 class QuantKey(NamedTuple):

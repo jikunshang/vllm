@@ -564,6 +564,7 @@ class ConcreteSizeEntry:
     runnable: Callable = None  # type: ignore
     num_finished_warmup: int = 0
     cudagraph: Optional[torch.cuda.CUDAGraph] = None
+    xpugraph: Optional[torch.xpu.XPUGraph] = None
     output: Optional[Any] = None
 
     # for cudagraph debugging, track the input addresses
@@ -691,8 +692,8 @@ class PiecewiseBackend:
                 x.data_ptr() for x in args if isinstance(x, torch.Tensor)
             ]
             entry.input_addresses = input_addresses
-            cudagraph = torch.cuda.CUDAGraph()
-
+            # cudagraph = torch.cuda.CUDAGraph()
+            xpugraph = torch.xpu.XPUGraph()
             with ExitStack() as stack:
                 if not self.is_first_graph:
                     # during every model forward, we will capture
@@ -706,7 +707,8 @@ class PiecewiseBackend:
                         patch("torch.cuda.empty_cache", lambda: None))
 
                 # mind-exploding: carefully manage the reference and memory.
-                with torch.cuda.graph(cudagraph, pool=self.graph_pool):
+                # with torch.cuda.graph(cudagraph, pool=self.graph_pool):
+                with torch.xpu.graph(xpugraph, pool=self.graph_pool):
                     # `output` is managed by pytorch's cudagraph pool
                     output = entry.runnable(*args)
                     if self.is_last_graph:
@@ -720,7 +722,8 @@ class PiecewiseBackend:
             # here we always use weak ref for the output
             # to save memory
             entry.output = weak_ref_tensors(output)
-            entry.cudagraph = cudagraph
+            # entry.cudagraph = cudagraph
+            entry.xpugraph = xpugraph
 
             compilation_counter.num_cudagraph_caputured += 1
 
@@ -739,5 +742,5 @@ class PiecewiseBackend:
                 f" Expected {entry.input_addresses}, got {new_input_addresses}"
             )
 
-        entry.cudagraph.replay()
+        entry.xpugraph.replay()
         return entry.output

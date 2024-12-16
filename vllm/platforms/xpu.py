@@ -62,11 +62,11 @@ class XPUPlatform(Platform):
             logger.warning(
                 "bfloat16 is not fully supported on XPU, casting to float16.")
             model_config.dtype = torch.float16
-        if not model_config.enforce_eager:
-            logger.warning(
-                "CUDA graph is not supported on XPU, fallback to the eager "
-                "mode.")
-            model_config.enforce_eager = True
+        # if not model_config.enforce_eager:
+        #     logger.warning(
+        #         "CUDA graph is not supported on XPU, fallback to the eager "
+        #         "mode.")
+        #     model_config.enforce_eager = True
 
         if vllm_config.speculative_config is not None:
             raise NotImplementedError(
