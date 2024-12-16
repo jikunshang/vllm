@@ -24,7 +24,9 @@ class XPUModelRunner(GPUModelRunner):
         input_registry: InputRegistry = INPUT_REGISTRY,
     ):
         super().__init__(vllm_config, device, input_registry)
-        self.use_cuda_graph = False
+        self.use_cuda_graph = (self.vllm_config.compilation_config.level
+                               == CompilationLevel.PIECEWISE
+                               and not self.model_config.enforce_eager)
 
     @torch.inference_mode()
     def profile_run(self) -> None:
@@ -49,7 +51,7 @@ class XPUModelRunner(GPUModelRunner):
             return
 
         start_time = time.perf_counter()
-        start_free_gpu_memory = torch.xpu.mem_get_info()[0]
+        start_used_memory = torch.xpu.memory_allocated()
 
         # Trigger CUDA graph capture for specific shapes.
         # Capture the large shapes first so that the smaller shapes
@@ -62,9 +64,10 @@ class XPUModelRunner(GPUModelRunner):
                 self._dummy_run(self.model, num_tokens, self.kv_caches)
 
         end_time = time.perf_counter()
-        end_free_gpu_memory = torch.xpu.mem_get_info()[0]
+        end_used_memory = torch.xpu.memory_allocated()
+        
         elapsed_time = end_time - start_time
-        cuda_graph_size = start_free_gpu_memory - end_free_gpu_memory
+        cuda_graph_size = end_used_memory - start_used_memory
         # This usually takes 5~20 seconds.
         logger.info("Graph capturing finished in %.0f secs, took %.2f GiB",
                     elapsed_time, cuda_graph_size / (1 << 30))
