@@ -333,7 +333,7 @@ class GroupCoordinator:
 
         # ensure all initialization operations complete before attempting to
         # capture the graph on another stream
-        curr_stream = torch.cuda.current_stream()
+        curr_stream = torch.xpu.current_stream()
         if curr_stream != stream:
             stream.wait_stream(curr_stream)
 
