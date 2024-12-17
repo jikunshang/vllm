@@ -26,9 +26,9 @@ def load_general_plugins():
     os.environ['TORCHINDUCTOR_COMPILE_THREADS'] = '1'
     # see https://github.com/vllm-project/vllm/issues/10619
     torch._inductor.config.compile_threads = 1
-    if current_platform.is_xpu():
-        # see https://github.com/pytorch/pytorch/blob/8cada5cbe5450e17c26fb8b358116785324537b2/torch/_dynamo/config.py#L158  # noqa
-        os.environ['TORCH_COMPILE_DISABLE'] = 'True'
+    # if current_platform.is_xpu():
+    #     # see https://github.com/pytorch/pytorch/blob/8cada5cbe5450e17c26fb8b358116785324537b2/torch/_dynamo/config.py#L158  # noqa
+    #     os.environ['TORCH_COMPILE_DISABLE'] = 'True'
     if current_platform.is_hpu():
         # NOTE(kzawora): PT HPU lazy backend (PT_HPU_LAZY_MODE = 1)
         # does not support torch.compile
