@@ -6,6 +6,10 @@ import torch
 
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
+from vllm.platforms import current_platform
+
+if current_platform.is_cuda():
+    from vllm.vllm_flash_attn import flash_attn_varlen_func
 
 
 class FlashAttentionBackend(AttentionBackend):
@@ -167,8 +171,7 @@ class FlashAttentionImpl(AttentionImpl):
             k_scale,
             v_scale,
         )
-        # FIXME
-        from vllm.vllm_flash_attn import flash_attn_varlen_func
+
         # Compute attention and update output up to `num_actual_tokens`.
         flash_attn_varlen_func(
             q=query[:num_actual_tokens],
