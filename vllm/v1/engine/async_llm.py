@@ -10,6 +10,7 @@ from vllm.inputs.preprocess import InputPreprocessor
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.outputs import PoolingRequestOutput, RequestOutput
+from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sampling_params import SamplingParams
@@ -21,7 +22,6 @@ from vllm.v1.engine.core_client import EngineCoreClient
 from vllm.v1.engine.detokenizer import Detokenizer
 from vllm.v1.engine.processor import Processor
 from vllm.v1.executor.abstract import Executor
-from vllm.platforms import current_platform
 
 logger = init_logger(__name__)
 
@@ -131,25 +131,21 @@ class AsyncLLM(EngineClient):
         executor_class: Type[Executor]
         distributed_executor_backend = (
             vllm_config.parallel_config.distributed_executor_backend)
-        if current_platform.is_cuda():
-            if distributed_executor_backend == "mp":
-                from vllm.v1.executor.multiproc_executor import MultiprocExecutor
-                executor_class = MultiprocExecutor
-            else:
-                assert (distributed_executor_backend is None)
+        if distributed_executor_backend == "mp":
+            from vllm.v1.executor.multiproc_executor import MultiprocExecutor
+            executor_class = MultiprocExecutor
+        else:
+            assert (distributed_executor_backend is None)
+            if current_platform.is_cuda():
                 from vllm.v1.executor.uniproc_executor import UniprocExecutor
                 executor_class = UniprocExecutor
-        elif current_platform.is_xpu():
-            if distributed_executor_backend == "mp":
-                from vllm.v1.executor.xpu_multiproc_executor import XPUMultiprocExecutor
-                executor_class = XPUMultiprocExecutor
-            else:
-                assert (distributed_executor_backend is None)
-                from vllm.v1.executor.xpu_uniproc_executor import XPUUniprocExecutor
+            elif current_platform.is_xpu():
+                from vllm.v1.executor.xpu_uniproc_executor import (  # noqa: E501
+                    XPUUniprocExecutor)
                 executor_class = XPUUniprocExecutor
-        else:
-            raise ValueError(
-                f"Unsupported platform: {current_platform.device_name}")
+            else:
+                raise ValueError(
+                    f"Unsupported platform: {current_platform.device_name}")
 
         return executor_class
 
