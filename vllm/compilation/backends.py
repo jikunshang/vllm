@@ -711,17 +711,19 @@ class PiecewiseBackend:
                 with torch.xpu.graph(xpugraph, pool=self.graph_pool):
                     # `output` is managed by pytorch's cudagraph pool
                     output = entry.runnable(*args)
-                    if self.is_last_graph:
-                        # by converting it to weak ref,
-                        # the original `output` will immediately be released
-                        # to save memory. It is only safe to do this for
-                        # the last graph, because the output of the last graph
-                        # will not be used by any other cuda graph.
-                        output = weak_ref_tensors(output)
+                    # FIXME: we don't weak_ref_tensor on XPU
+                    # if self.is_last_graph:
+                    #     # by converting it to weak ref,
+                    #     # the original `output` will immediately be released
+                    #     # to save memory. It is only safe to do this for
+                    #     # the last graph, because the output of the last graph
+                    #     # will not be used by any other cuda graph.
+                    #     output = weak_ref_tensors(output)
 
             # here we always use weak ref for the output
             # to save memory
-            entry.output = weak_ref_tensors(output)
+            # entry.output = weak_ref_tensors(output)
+            entry.output = output
             # entry.cudagraph = cudagraph
             entry.xpugraph = xpugraph
 
