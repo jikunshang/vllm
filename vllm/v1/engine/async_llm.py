@@ -144,7 +144,7 @@ class AsyncLLM(EngineClient):
                 from vllm.v1.executor.uniproc_executor import UniprocExecutor
                 executor_class = UniprocExecutor
             elif current_platform.is_xpu():
-                from vllm.v1.executor.xpu_uniproc_executor import (  # noqa: E501
+                from vllm.v1.executor.xpu_uniproc_executor import (
                     XPUUniprocExecutor)
                 executor_class = XPUUniprocExecutor
             else:
