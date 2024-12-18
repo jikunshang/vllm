@@ -13,7 +13,7 @@ logger = init_logger(__name__)
 
 try:
     from .fusion import FusionPass
-except ImportError:
+except AttributeError:
     logger.warning("import FusionPass error.")    
 
 class PostGradPassManager:

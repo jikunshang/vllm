@@ -341,7 +341,7 @@ global_graph_pool = None
 compilation_start_time = 0.0
 
 def get_global_graph_pool():
-    if current_platform.is_cuda:
+    if current_platform.is_cuda():
         return torch.cuda.graph_pool_handle()
     elif current_platform.is_xpu():
         return torch.xpu.graph_pool_handle()
@@ -349,7 +349,7 @@ def get_global_graph_pool():
         raise RuntimeError("Unsupported platform")
     
 def get_graph():
-    if current_platform.is_cuda:
+    if current_platform.is_cuda():
         return torch.cuda.CUDAGraph()
     elif current_platform.is_xpu():
         return torch.xpu.XPUGraph()
@@ -371,7 +371,7 @@ def execute_cuda_graph(cudagraph, entry, graph_pool, is_last_graph, *args):
     return output
 
 def execute_xpu_graph(xpugraph, entry, graph_pool, is_last_graph, *args):
-    with torch.cuda.graph(xpugraph, pool=graph_pool):
+    with torch.xpu.graph(xpugraph, pool=graph_pool):
         # `output` is managed by pytorch's graph pool
         output = entry.runnable(*args)
         # this is feature for CUDA, but it should also help on XPU, but we lack
@@ -387,7 +387,7 @@ def execute_xpu_graph(xpugraph, entry, graph_pool, is_last_graph, *args):
 
 
 def execute_graph(graph, entry, graph_pool, is_last_graph, *args):
-    if current_platform.is_cuda:
+    if current_platform.is_cuda():
         return execute_cuda_graph(graph, entry, graph_pool, is_last_graph, *args)
     elif current_platform.is_xpu():
         return execute_xpu_graph(graph, entry, graph_pool, is_last_graph, *args)
