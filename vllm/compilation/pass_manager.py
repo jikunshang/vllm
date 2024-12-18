@@ -6,12 +6,15 @@ from vllm.config import CompilationConfig
 from vllm.logger import init_logger
 
 from .fix_functionalization import FixFunctionalizationPass
-from .fusion import FusionPass
 from .inductor_pass import InductorPass
 from .reshapes import RedundantReshapesPass
 
 logger = init_logger(__name__)
 
+try:
+    from .fusion import FusionPass
+except ImportError:
+    logger.warning("import FusionPass error.")    
 
 class PostGradPassManager:
     """
