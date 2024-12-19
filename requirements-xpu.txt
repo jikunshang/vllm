@@ -8,6 +8,7 @@ packaging
 setuptools-scm>=8
 wheel
 jinja2
+datasets
 
 torch @ https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu/new/validation/IPEX/weekly/PVC/2024/ww50/py310/torch-2.5.0a0+git277419a-cp310-cp310-linux_x86_64.whl
 intel-extension-for-pytorch @ https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu/new/validation/IPEX/weekly/PVC/2024/ww50/py310/intel_extension_for_pytorch-2.5.10+git498f751-cp310-cp310-linux_x86_64.whl
