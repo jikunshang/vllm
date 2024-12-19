@@ -7,7 +7,7 @@ logger = init_logger(__name__)
 
 
 def get_punica_wrapper(*args, **kwargs) -> PunicaWrapperBase:
-    if current_platform.is_cuda_alike():
+    if current_platform.is_cuda_alike() or current_platform.is_xpu():
         # Lazy import to avoid ImportError
         from vllm.lora.punica_wrapper.punica_gpu import PunicaWrapperGPU
         logger.info_once("Using PunicaWrapperGPU.")
