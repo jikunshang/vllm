@@ -26,9 +26,9 @@ if TYPE_CHECKING:
     from vllm.worker.model_runner import (ModelInputForGPUBuilder,
                                           ModelInputForGPUWithSamplingMetadata)
 
-from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-                                  flash_attn_with_kvcache,
-                                  is_fa_version_supported)
+#from vllm.vllm_flash_attn import (flash_attn_varlen_func,
+#                                 flash_attn_with_kvcache,
+#                                   is_fa_version_supported)
 
 
 class FlashAttentionBackend(AttentionBackend):
