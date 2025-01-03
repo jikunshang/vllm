@@ -112,11 +112,11 @@ class LLMEngine:
         distributed_executor_backend = (
             vllm_config.parallel_config.distributed_executor_backend)
         if distributed_executor_backend == "ray":
-                from vllm.v1.executor.ray_executor import RayExecutor
-                executor_class = RayExecutor
+            from vllm.v1.executor.ray_executor import RayExecutor
+            executor_class = RayExecutor
         elif distributed_executor_backend == "mp":
-                from vllm.v1.executor.multiproc_executor import MultiprocExecutor
-                executor_class = MultiprocExecutor
+            from vllm.v1.executor.multiproc_executor import MultiprocExecutor
+            executor_class = MultiprocExecutor
         else:
             assert (distributed_executor_backend is None)
             if current_platform.is_cuda():
