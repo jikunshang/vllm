@@ -21,6 +21,8 @@ from vllm.model_executor.parameter import (BasevLLMParameter,
                                            PerTensorScaleParameter,
                                            RowvLLMParameter)
 from vllm.model_executor.utils import set_weight_attrs
+# from neural_compressor.torch.algorithms.fp8_quant._core.scale import get_config 
+from neural_compressor.torch.algorithms.fp8_quant._quant_common.helper_modules import init_linear, set_attrs_from_orig_model, matmul_fp8
 
 logger = init_logger(__name__)
 
@@ -1183,3 +1185,86 @@ class RowParallelLinear(LinearBase):
         s += f", tp_size={self.tp_size}"
         s += f", reduce_results={self.reduce_results}"
         return s
+
+class FP8RowParallelLinear(RowParallelLinear):
+    def extra_repr(self) -> str:
+        s = f"FP8 version: input_features={self.input_size_per_partition}"
+        s += f", output_features={self.output_size}"
+        s += f", bias={self.bias is not None}"
+        s += f", tp_size={self.tp_size}"
+        s += f", reduce_results={self.reduce_results}"
+        return s
+    
+from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import QuantMode
+from neural_compressor.torch.algorithms.fp8_quant._core.scale_handler import get_scale_dtype
+
+def extra_representation(org_repr, org_name, curr_repr):
+    repr = f"original={org_name}," + (" " + org_repr + "," if org_repr != "" else "")
+    return f"{repr} {curr_repr}"
+
+def get_current_repr(cls_instance, *member_names):
+    curr_repr = ""
+    if cls_instance.quantization_mode in [QuantMode.QUANTIZE, QuantMode.LOAD]:
+        first_name = True
+        for name in member_names:
+            if not first_name:
+                curr_repr += ", "
+            cur_attr = getattr(cls_instance, name)
+            # currently, only scale is called here.
+            dtype = get_scale_dtype(cur_attr)
+            curr_repr += f"{name} dtype={dtype}"
+            first_name = False
+    return curr_repr
+
+class PatchedFP8RowParallelLinear(torch.nn.Module): 
+    def __init__(self, mod, mod_extra_config, *args, **kwargs):        
+        super().__init__(*args, **kwargs)
+        from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import get_hqt_config, set_hqt_config
+        set_hqt_config(self, get_hqt_config(mod))
+        set_attrs_from_orig_model(self, mod, mod_extra_config, "resolve_input")
+        init_linear(self, mod_extra_config)
+        
+    def forward_quant(self, input):
+        resolved_input = self.resolve_input(input)
+        qinput = self.quant_input(resolved_input)
+        output = matmul_fp8(
+            qinput,
+            self.weight,
+            out_dtype=self._mod_extra_config.config_params["hp_dtype"],
+            scale_input_inv=self.scale_input,
+            scale_other_inv=self.scale_weight,
+        )
+        dqoutput = self.dequant_output(output)
+        if self.reduce_results:
+            dqoutput = self.collective_func(dqoutput)
+        return self.post_all_reduce(dqoutput)
+
+    def forward_measure(self, input):
+        resolved_input = self.resolve_input(input)
+        measure_input((resolved_input,), observer=self._mod_extra_config.inputs)
+        output = torch.matmul(resolved_input, self.weight.transpose(-1, -2))
+        measure_output((output,), self._mod_extra_config.outputs)
+        if self.reduce_results:
+            output = self.collective_func(output)
+        return self.post_all_reduce(output)
+
+    def post_all_reduce(self, output):
+        assert (
+            self.reduce_results or (not self.bias) or self.skip_bias_add
+        ), "When not reduce the results, adding bias to the results can lead to incorrect results"
+        if not self.skip_bias_add:
+            output = output + self.bias if self.bias is not None else output
+            output_bias = None
+        else:
+            output_bias = self.bias
+        return output, output_bias
+
+    def extra_repr(self) -> str:
+        return extra_representation(
+            self.extra_repr_org(),
+            self.class_name_org,
+            get_current_repr(self, "scale_input", "scale_weight"),
+        )
+    
+def vllm_patch():
+    pass

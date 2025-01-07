@@ -154,7 +154,7 @@ def modify_decoder_layer(module: torch.nn.Module,
                          counter=None):
 
     def forward_hook(module, args, output):
-        htorch.core.mark_step()
+        # htorch.core.mark_step()
         return output
 
     if counter is None:
@@ -665,6 +665,51 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.skip_warmup = os.environ.get('VLLM_SKIP_WARMUP',
                                           'false').lower() == 'true'
 
+    def my_convert(self, model, quant_config):
+        from neural_compressor.torch.algorithms.fp8_quant._core.scale import load_layer_scales, scale_method_mapping, scaling_methods
+        from neural_compressor.torch.algorithms.fp8_quant._core.common import convert_scales_to_tensors_dict, load_scales, parent_child_mod_dict
+        from neural_compressor.torch.algorithms.fp8_quant._core.measure import load_measurements
+        from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import get_hqt_config, set_hqt_config
+        import numpy as np
+        from vllm.model_executor.layers.linear import PatchedFP8RowParallelLinear
+        # from prepare_model()
+        config = get_hqt_config(model)
+        print(f"get hqt config: {config}")
+        hp_dtype = config.cfg["hp_dtype"]
+        lp_dtype = config.cfg["fp8_config"]
+        recalc_scales = config.cfg["recalc_scales"]
+        scales_file_format = np.ndarray
+        scale_file = config.cfg["scale_file"]
+        scale_config = config.cfg["scale_params"]
+        scale_config["hp_dtype"] = hp_dtype
+        scale_config["lp_dtype"] = lp_dtype
+        scales_obj = (
+            load_scales(scale_file + ".npz", scales_file_format)
+            if (scale_file is not None) and not recalc_scales
+            else {}
+        )
+        scales = convert_scales_to_tensors_dict(scales_obj, scales_file_format, scale_config["hp_dtype"])
+        measurement= load_measurements(model, config.cfg["measure_file"])
+        scaling_method_name = scale_method_mapping[(config.cfg["scale_method"], config.cfg["observer"])]
+        scaling_method = scaling_methods[scaling_method_name]
+        mod_type_str = "RowParallelLinear"
+        def patch_module(mod, new_mod):
+            parent = parent_child_mod_dict[mod].parent
+            name = parent_child_mod_dict[mod].name
+            setattr(parent, name, new_mod)
+        for name, mod in model.named_modules():
+            if name.endswith("o_proj"):
+                print(f"o_proj name is: {name}, mod: {mod.__class__.__name__}")
+                set_hqt_config(mod, config)
+                mod_extra_config, _ = load_layer_scales(mod, name, config, mod_type_str, measurement,
+                                                        scales, scale_file, scales_file_format,
+                                                        scales_obj, scaling_method,
+                                                        scale_config, False)
+                
+                new_mod = PatchedFP8RowParallelLinear(mod, mod_extra_config)
+                patch_module(mod, new_mod)
+        return model
+
     def load_model(self) -> None:
         import habana_frameworks.torch.core as htcore
         if self.model_config.quantization == 'inc' or \
@@ -727,6 +772,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.model = prepare(self.model, config)
                     elif config.quantize:
                         self.model = convert(self.model, config)
+                        self.model = self.my_convert(self.model, config)
+                        print(f"final model: {self.model}")
                     htcore.hpu_initialize(self.model,
                                           mark_only_scales_as_const=True)
                 self.inc_initialized_successfully = True

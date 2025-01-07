@@ -38,7 +38,8 @@ from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
                                                QKVParallelLinear,
                                                ColumnParallelLinear,
-                                               RowParallelLinear)
+                                               RowParallelLinear,
+                                               FP8RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.quantization.compressed_tensors.utils import (
@@ -214,7 +215,7 @@ class LlamaAttention(nn.Module):
                 prefix=f"{prefix}.qkv_proj"
             )
 
-        self.o_proj = RowParallelLinear(
+        self.o_proj = FP8RowParallelLinear(
             input_size=self.total_num_heads * self.head_dim,
             output_size=hidden_size,
             bias=bias,
