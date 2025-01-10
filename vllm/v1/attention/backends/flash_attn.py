@@ -12,8 +12,10 @@ from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
 from vllm.envs import VLLM_FLASH_ATTN_VERSION
 from vllm.platforms import current_platform
 from vllm.utils import cdiv
-from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-                                  is_fa_version_supported)
+
+if current_platform.is_cuda():
+    from vllm.vllm_flash_attn import (flash_attn_varlen_func,
+                                      is_fa_version_supported)
 
 
 class FlashAttentionBackend(AttentionBackend):
