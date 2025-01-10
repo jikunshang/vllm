@@ -1,3 +1,4 @@
+import gc
 import time
 from typing import TYPE_CHECKING, Dict, List
 
@@ -298,10 +299,20 @@ class XPUModelRunner(GPUModelRunner):
         logits_indices = query_start_loc[1:] - 1
         return attn_metadata, logits_indices
 
-    @torch.inference_mode()
     def profile_run(self) -> None:
-        # self._dummy_run(self.model, self.max_num_tokens)
+        dummy_kv_caches = [
+            torch.tensor([], dtype=torch.float32, device=self.device)
+            for _ in range(self.num_attn_layers)
+        ]
+        # Trigger compilation for general shape.
+        hidden_states = self._dummy_run(self.model, self.max_num_tokens,
+                                        dummy_kv_caches)
+        logits = self.model.compute_logits(hidden_states, None)
+        logits = logits[:self.max_num_tokens]
+        self._dummy_run(self.model, self.max_num_tokens,
+                        dummy_kv_caches)
         torch.xpu.synchronize()
+        gc.collect()
 
     def initialize_kv_cache(self, num_blocks: int) -> None:
         assert len(self.kv_caches) == 0

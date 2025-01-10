@@ -197,7 +197,7 @@ def wrap_inductor(graph: fx.GraphModule,
             from torch._inductor.output_code import CompiledFxGraphConstants
             constants = CompiledFxGraphConstants()
             inductor_compiled_graph = FxGraphCache._lookup_graph(
-                hash_str, example_inputs, True, False, constants)
+                hash_str, example_inputs, True, False, constants)[0]
             assert inductor_compiled_graph is not None, (
                 "Inductor cache lookup failed. Please remove"
                 f"the cache file {cache_data.cache_file_path} and try again."  # noqa
