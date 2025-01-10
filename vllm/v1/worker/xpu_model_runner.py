@@ -1,19 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 import gc
-from typing import TYPE_CHECKING
+import weakref
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
 
 from vllm.attention import get_attn_backend
 from vllm.config import CompilationLevel, VllmConfig
-from vllm.inputs import INPUT_REGISTRY
+from vllm.distributed.parallel_state import get_pp_group
 from vllm.logger import init_logger
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.sequence import IntermediateTensors
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
-                        is_pin_memory_available)
-from vllm.v1.attention.backends.ipex_attn import IPEXAttentionMetadata
+                        check_use_alibi, is_pin_memory_available)
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
+from vllm.v1.sample.rejection_sampler import RejectionSampler
+from vllm.v1.spec_decode.eagle import EagleProposer
+from vllm.v1.spec_decode.ngram_proposer import NgramProposer
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
@@ -55,8 +59,13 @@ class XPUModelRunner(GPUModelRunner):
             self.kv_cache_dtype = STR_DTYPE_TO_TORCH_DTYPE[
                 cache_config.cache_dtype]
 
-        self.is_multimodal_model = model_config.is_multimodal_model
         self.sliding_window = model_config.get_sliding_window()
+        self.interleaved_sliding_window = getattr(
+            model_config.hf_text_config, "interleaved_sliding_window", None)
+        self.window_size = (self.sliding_window
+                            or self.interleaved_sliding_window)
+
+        self.is_multimodal_model = model_config.is_multimodal_model
         self.block_size = cache_config.block_size
         self.max_model_len = model_config.max_model_len
         self.max_num_blocks_per_req = cdiv(self.max_model_len, self.block_size)
@@ -71,6 +80,8 @@ class XPUModelRunner(GPUModelRunner):
         self.num_kv_heads = model_config.get_num_kv_heads(parallel_config)
         self.head_size = model_config.get_head_size()
         self.hidden_size = model_config.get_hidden_size()
+        self.attention_chunk_size = model_config.attention_chunk_size
+
         self.attn_backend = get_attn_backend(
             self.head_size,
             self.dtype,
@@ -79,8 +90,20 @@ class XPUModelRunner(GPUModelRunner):
             self.model_config.is_attention_free,
             use_mla=self.model_config.use_mla,
         )
+        if self.attn_backend is None:
+            error_msg = (
+                f"Error with get_att_backend: {self.head_size=}, "
+                f"{self.dtype=}, {self.kv_cache_dtype=}, {self.block_size=}, "
+                f"{self.model_config.is_attention_free=}, "
+                f"{self.model_config.use_mla=}")
+            logger.error(error_msg)
+            raise NotImplementedError(
+                "Non-Attention backend is not supported by V1 GPUModelRunner.")
+        self.attn_metadata_builder = self.attn_backend.get_builder_cls()(
+            weakref.proxy(self))
+        self.cascade_attn_enabled = False
+
         # Multi-modal data support
-        self.input_registry = INPUT_REGISTRY
         self.mm_registry = MULTIMODAL_REGISTRY
         # FIXME: support mrope
         self.uses_mrope = False
@@ -98,7 +121,22 @@ class XPUModelRunner(GPUModelRunner):
         self.kv_caches: list[torch.Tensor] = []
         # req_id -> (input_id -> encoder_output)
         self.encoder_cache: dict[str, dict[int, torch.Tensor]] = {}
+
+        # Set up speculative decoding.
         self.use_spec_decode = False
+        if self.speculative_config:
+            self.use_spec_decode = True
+            if get_pp_group().is_last_rank:
+                if self.speculative_config.method == "ngram":
+                    self.drafter = NgramProposer(self.vllm_config)
+                elif self.speculative_config.method == "eagle":
+                    self.drafter = EagleProposer(self.vllm_config,
+                                                 self.device)  # type: ignore
+                else:
+                    raise ValueError("Unknown speculative decoding method: "
+                                     f"{self.speculative_config.method}")
+                self.rejection_sampler = RejectionSampler()
+
         # Request states.
         self.requests: dict[str, CachedRequestState] = {}
         # Persistent batch.
@@ -129,6 +167,33 @@ class XPUModelRunner(GPUModelRunner):
         self.positions = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int64,
                                      device=self.device)
+        # None in the first PP rank. The rest are set after load_model.
+        self.intermediate_tensors: Optional[IntermediateTensors] = None
+
+        # Only relevant for models using M-RoPE (e.g, Qwen2-VL)
+        if self.uses_mrope:
+            # NOTE: `mrope_positions` is implemented with one additional dummy
+            # position on purpose to make it non-contiguous so that it can work
+            # with torch compile.
+            # See detailed explanation in https://github.com/vllm-project/vllm/pull/12128#discussion_r1926431923
+
+            # NOTE: When M-RoPE is enabled, position ids are 3D regardless of
+            # the modality of inputs. For text-only inputs, each dimension has
+            # identical position IDs, making M-RoPE functionally equivalent to
+            # 1D-RoPE.
+            # See page 5 of https://arxiv.org/abs/2409.12191
+            self.mrope_positions = torch.zeros((3, self.max_num_tokens + 1),
+                                               dtype=torch.int64,
+                                               device=self.device)
+            self.mrope_positions_cpu = torch.zeros(
+                (3, self.max_num_tokens + 1),
+                dtype=torch.int64,
+                device="cpu",
+                pin_memory=self.pin_memory)
+
+        # Only relevant for models using ALiBi (e.g, MPT)
+        self.use_alibi = check_use_alibi(model_config)
+
         self.inputs_embeds = torch.zeros(
             (self.max_num_tokens, self.hidden_size),
             dtype=self.dtype,
@@ -136,7 +201,8 @@ class XPUModelRunner(GPUModelRunner):
 
         # OPTIMIZATION: Cache the tensors rather than creating them every step.
         self.arange_np = np.arange(max(self.max_num_reqs + 1,
-                                       self.max_model_len),
+                                       self.max_model_len,
+                                       self.max_num_tokens),
                                    dtype=np.int32)
         # NOTE(woosuk): These tensors are "stateless", i.e., they are literally
         # a faster version of creating a new tensor every time. Thus, we should
@@ -161,6 +227,7 @@ class XPUModelRunner(GPUModelRunner):
                                                device="cpu",
                                                pin_memory=self.pin_memory)
         self.query_start_loc_np = self.query_start_loc_cpu.numpy()
+        # this is XPU specific
         self.seq_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
                                              dtype=torch.int32,
                                              device="cpu",
@@ -172,153 +239,38 @@ class XPUModelRunner(GPUModelRunner):
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
 
+    # we can enable this if GPUModelRunner or parent class don't have
+    # torch.cuda in the future
+    # def __init__(self,
+    #     vllm_config: VllmConfig,
+    #     device: torch.device,):
+    #     super().__init__(vllm_config, device)
+    #     self.cascade_attn_enabled = False
+    #     # FIXME: support mrope
+    #     self.uses_mrope = False
+    #     # this is XPU specific
+    #     self.seq_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
+    #                                          dtype=torch.int32,
+    #                                          device="cpu",
+    #                                          pin_memory=self.pin_memory)
+    #     self.seq_start_loc_np = self.seq_start_loc_cpu.numpy()
+
     def _prepare_inputs(self, scheduler_output: "SchedulerOutput"):
         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         assert total_num_scheduled_tokens > 0
         num_reqs = self.input_batch.num_reqs
         assert num_reqs > 0
-
-        # OPTIMIZATION: Start copying the block table first.
-        # This way, we can overlap the copy with the following CPU operations.
-        self.input_batch.block_table.commit(num_reqs)
-
         # Get the number of scheduled tokens for each request.
-        # TODO: The Python loop can be slow. Optimize.
-        num_scheduled_tokens = []
-        max_num_scheduled_tokens = 0
-        for req_id in self.input_batch.req_ids[:num_reqs]:
-            assert req_id is not None
-            num_tokens = scheduler_output.num_scheduled_tokens[req_id]
-            num_scheduled_tokens.append(num_tokens)
-            max_num_scheduled_tokens = max(max_num_scheduled_tokens,
-                                           num_tokens)
-        num_scheduled_tokens = np.array(num_scheduled_tokens, dtype=np.int32)
-        assert max_num_scheduled_tokens > 0
-
-        # Get request indices.
-        # E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
-        req_indices = np.repeat(self.arange_np[:num_reqs],
-                                num_scheduled_tokens)
-
-        # Get batched arange.
-        # E.g., [2, 5, 3] -> [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
-        arange = np.concatenate(
-            [self.arange_np[:n] for n in num_scheduled_tokens])
-
-        # Get positions.
-        positions_np = self.positions_np[:total_num_scheduled_tokens]
-        np.add(self.input_batch.num_computed_tokens_cpu[req_indices],
-               arange,
-               out=positions_np)
-
-        # Get token indices.
-        # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
-        # -> [0, 1, M, M + 1, M + 2, M + 3, M + 4, 2 * M, 2 * M + 1, 2 * M + 2]
-        # where M is the max_model_len.
-        token_indices = (positions_np +
-                         req_indices * self.input_batch.token_ids_cpu.shape[1])
-        # NOTE(woosuk): We use torch.index_select instead of np.take here
-        # because torch.index_select is much faster than np.take for large
-        # tensors.
-        torch.index_select(self.input_batch.token_ids_cpu_tensor.flatten(),
-                           0,
-                           torch.from_numpy(token_indices),
-                           out=self.input_ids_cpu[:total_num_scheduled_tokens])
-
-        # Calculate the slot mapping.
-        # E.g., [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
-        # -> [0, 0, K, K, K + 1, K + 1, K + 2, 2 * K, 2 * K, 2 * K + 1]
-        # where K is the max_num_blocks_per_req and the block size is 2.
-        # NOTE(woosuk): We can't simply use `token_indices // block_size` here
-        # because M (max_model_len) is not necessarily divisible by block_size.
-        block_table_indices = (req_indices * self.max_num_blocks_per_req +
-                               positions_np // self.block_size)
-        # NOTE(woosuk): We use torch.index_select instead of np.take here
-        # because torch.index_select is much faster than np.take for large
-        # tensors.
-        block_table_cpu = self.input_batch.block_table.get_cpu_tensor()
-        block_numbers = block_table_cpu.flatten()[block_table_indices].numpy()
-        block_offsets = positions_np % self.block_size
-        np.add(block_numbers * self.block_size,
-               block_offsets,
-               out=self.slot_mapping_np[:total_num_scheduled_tokens])
-
-        # Prepare the attention metadata.
-        self.query_start_loc_np[0] = 0
-        np.cumsum(num_scheduled_tokens,
-                  out=self.query_start_loc_np[1:num_reqs + 1])
-
+        req_ids = self.input_batch.req_ids
+        tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
+        num_scheduled_tokens = np.array(tokens, dtype=np.int32)
+        # ======== XPU  start =========
         seq_lens = (self.input_batch.num_computed_tokens_cpu[:num_reqs] +
                     num_scheduled_tokens)
-        max_seq_len = seq_lens.max()
         self.seq_start_loc_np[0] = 0
         np.cumsum(seq_lens, out=self.seq_start_loc_np[1:num_reqs + 1])
-
-        self.seq_lens_np[:num_reqs] = (
-            self.input_batch.num_computed_tokens_cpu[:num_reqs] +
-            num_scheduled_tokens)
-        # max_seq_len = self.seq_lens_np[:num_reqs].max()
-
-        # Copy the tensors to the GPU.
-        self.input_ids[:total_num_scheduled_tokens].copy_(
-            self.input_ids_cpu[:total_num_scheduled_tokens], non_blocking=True)
-        self.positions[:total_num_scheduled_tokens].copy_(
-            self.positions_cpu[:total_num_scheduled_tokens], non_blocking=True)
-        query_start_loc = self.query_start_loc_cpu[:num_reqs + 1].to(
-            self.device, non_blocking=True)
-        seq_start_loc = self.seq_start_loc_cpu[:num_reqs + 1].to(
-            self.device, non_blocking=True)
-        seq_lens = self.seq_lens_cpu[:num_reqs].to(self.device,
-                                                   non_blocking=True)
-        slot_mapping = self.slot_mapping_cpu[:total_num_scheduled_tokens].to(
-            self.device, non_blocking=True).long()
-
-        # TODO: enable cascade attention in the future.
-        common_prefix_len = 0
-        use_cascade = False
-
-        if use_cascade:
-            # TODO: Optimize.
-            cu_prefix_query_lens = torch.tensor(
-                [0, total_num_scheduled_tokens],
-                dtype=torch.int32,
-                device=self.device)
-            prefix_kv_lens = torch.tensor([common_prefix_len],
-                                          dtype=torch.int32,
-                                          device=self.device)
-            suffix_kv_lens = (self.seq_lens_np[:num_reqs] - common_prefix_len)
-            suffix_kv_lens = torch.from_numpy(suffix_kv_lens).to(self.device)
-        else:
-            cu_prefix_query_lens = None
-            prefix_kv_lens = None
-            suffix_kv_lens = None
-
-        attn_metadata = IPEXAttentionMetadata(
-            num_actual_tokens=total_num_scheduled_tokens,
-            max_query_len=max_num_scheduled_tokens,
-            query_start_loc=query_start_loc,
-            max_seq_len=max_seq_len,
-            seq_start_loc=seq_start_loc,
-            seq_lens=torch.empty(0, dtype=torch.int32, device=self.device),
-            block_table=(
-                self.input_batch.block_table.get_device_tensor()[:num_reqs]),
-            slot_mapping=slot_mapping,
-            use_cascade=use_cascade,
-            common_prefix_len=common_prefix_len,
-            cu_prefix_query_lens=cu_prefix_query_lens,
-            prefix_kv_lens=prefix_kv_lens,
-            suffix_kv_lens=suffix_kv_lens,
-        )
-        # NOTE(woosuk): Due to chunked prefills, there can be at most 1 partial
-        # request in the batch. While we should not sample any token from this
-        # partial request, we do so for simplicity. We will ignore the sampled
-        # token from the partial request.
-        # TODO: Support prompt logprobs.
-        logits_indices = query_start_loc[1:] - 1
-
-        # FIXME:xpu spec decode not support now.
-        spec_decode_metadata = None
-        return attn_metadata, logits_indices, spec_decode_metadata
+        # ======== XPU end =========
+        return super()._prepare_inputs(scheduler_output)
 
     def profile_run(self) -> None:
         # Trigger compilation for general shape.

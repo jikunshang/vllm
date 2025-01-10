@@ -166,9 +166,5 @@ class XPUPlatform(Platform):
         return "vllm.distributed.device_communicators.xpu_communicator.XpuCommunicator"  # noqa
 
     @classmethod
-    def supports_structured_output(cls) -> bool:
-        return True
-
-    @classmethod
     def supports_v1(cls, model_config: ModelConfig) -> bool:
         return True

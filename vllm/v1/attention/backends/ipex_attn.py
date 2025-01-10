@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 
@@ -8,12 +8,137 @@ from vllm._ipex_ops import ipex_ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionLayer,
                                               AttentionMetadata, AttentionType)
-from vllm.v1.attention.backends.flash_attn import FlashAttentionMetadata
+from vllm.v1.attention.backends.flash_attn import (
+    FlashAttentionMetadata, FlashAttentionMetadataBuilder,
+    make_local_attention_virtual_batches)
+from vllm.vllm_flash_attn.fa_utils import get_flash_attn_version_xpu
+
+if TYPE_CHECKING:
+    from vllm.v1.core.sched.output import SchedulerOutput
+    from vllm.v1.worker.gpu_input_batch import InputBatch
+    from vllm.v1.worker.xpu_model_runner import XPUModelRunner
 
 
 @dataclass
 class IPEXAttentionMetadata(FlashAttentionMetadata):
     seq_start_loc: torch.Tensor = torch.tensor([0], dtype=torch.int64)
+
+
+class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
+
+    def __init__(self, runner: "XPUModelRunner"):
+        model_config = runner.model_config
+
+        self.runner: XPUModelRunner = runner
+        self.aot_schedule = (get_flash_attn_version_xpu() == 3)
+        self.num_heads = model_config.get_num_attention_heads(
+            runner.parallel_config)
+        self.headdim = model_config.get_head_size()
+        self.page_size = self.runner.block_size
+
+    def reorder_batch(self, input_batch: "InputBatch",
+                      scheduler_output: "SchedulerOutput") -> bool:
+        return False
+
+    def build(self, num_reqs: int, num_actual_tokens: int, max_query_len: int,
+              common_prefix_len: int):
+        max_seq_len = self.runner.seq_lens_np[:num_reqs].max()
+        # XPU flush_attn V2 require this.
+        seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
+        seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
+                                             non_blocking=True)
+        query_start_loc_cpu = self.runner.query_start_loc_cpu[:num_reqs + 1]
+        query_start_loc = query_start_loc_cpu.to(self.runner.device,
+                                                 non_blocking=True)
+        seq_lens_cpu = self.runner.seq_lens_cpu[:num_reqs]
+        seq_lens = seq_lens_cpu.to(self.runner.device, non_blocking=True)
+        block_table = (
+            self.runner.input_batch.block_table.get_device_tensor()[:num_reqs])
+        slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
+            self.runner.device, non_blocking=True).long()
+
+        # for local attention
+        local_attn_metadata = None
+        if self.runner.attention_chunk_size is not None:
+            seqlens_q_local_np, virt_q_cu_seqlens_np, virt_k_seqlens_np, \
+                virt_block_table = make_local_attention_virtual_batches(
+                    self.runner.attention_chunk_size,
+                    self.runner.query_start_loc_np[:num_reqs + 1],
+                    self.runner.seq_lens_np[:num_reqs],
+                    block_table,
+                    self.runner.block_size,
+                )
+            local_attn_metadata = FlashAttentionMetadata.LocalAttentionMetadata(
+                local_query_start_loc=torch.from_numpy(
+                    virt_q_cu_seqlens_np).to(self.runner.device,
+                                             non_blocking=True),
+                local_seqused_k=torch.from_numpy(virt_k_seqlens_np).to(
+                    self.runner.device, non_blocking=True),
+                local_block_table=virt_block_table,
+                local_max_query_len=seqlens_q_local_np.max(),
+                local_max_seq_len=virt_k_seqlens_np.max(),
+            )
+
+        # use_cascade = common_prefix_len > 0
+        use_cascade = False
+
+        def schedule(cu_query_lens, max_query_len, seqlens, max_seq_len,
+                     causal):
+            return None
+
+        if use_cascade:
+            cu_prefix_query_lens = torch.tensor([0, num_actual_tokens],
+                                                dtype=torch.int32,
+                                                device=self.runner.device)
+            prefix_kv_lens = torch.tensor([common_prefix_len],
+                                          dtype=torch.int32,
+                                          device=self.runner.device)
+            suffix_kv_lens = (self.runner.seq_lens_np[:num_reqs] -
+                              common_prefix_len)
+            suffix_kv_lens = torch.from_numpy(suffix_kv_lens).to(
+                self.runner.device)
+            prefix_scheduler_metadata = schedule(
+                cu_query_lens=cu_prefix_query_lens,
+                max_query_len=num_actual_tokens,
+                seqlens=prefix_kv_lens,
+                max_seq_len=common_prefix_len,
+                causal=False)
+            scheduler_metadata = schedule(cu_query_lens=query_start_loc,
+                                          max_query_len=max_query_len,
+                                          seqlens=suffix_kv_lens,
+                                          max_seq_len=max_seq_len -
+                                          common_prefix_len,
+                                          causal=True)
+        else:
+            cu_prefix_query_lens = None
+            prefix_kv_lens = None
+            suffix_kv_lens = None
+            prefix_scheduler_metadata = None
+            scheduler_metadata = schedule(cu_query_lens=query_start_loc,
+                                          max_query_len=max_query_len,
+                                          seqlens=seq_lens,
+                                          max_seq_len=max_seq_len,
+                                          causal=True)
+
+        attn_metadata = IPEXAttentionMetadata(
+            num_actual_tokens=num_actual_tokens,
+            max_query_len=max_query_len,
+            query_start_loc=query_start_loc,
+            max_seq_len=max_seq_len,
+            seq_lens=seq_lens,
+            block_table=block_table,
+            slot_mapping=slot_mapping,
+            use_cascade=use_cascade,
+            common_prefix_len=common_prefix_len,
+            scheduler_metadata=scheduler_metadata,
+            cu_prefix_query_lens=cu_prefix_query_lens,
+            prefix_kv_lens=prefix_kv_lens,
+            suffix_kv_lens=suffix_kv_lens,
+            local_attn_metadata=local_attn_metadata,
+            prefix_scheduler_metadata=prefix_scheduler_metadata,
+            seq_start_loc=seq_start_loc,
+        )
+        return attn_metadata
 
 
 class IPEXAttentionBackend(AttentionBackend):
@@ -46,6 +171,10 @@ class IPEXAttentionBackend(AttentionBackend):
         if block_size % 16 != 0:
             raise ValueError("Block size must be a multiple of 16.")
         return (2, num_blocks, block_size, num_kv_heads, head_size)
+
+    @staticmethod
+    def get_builder_cls() -> type["IPEXAttentionMetadataBuilder"]:
+        return IPEXAttentionMetadataBuilder
 
 
 class IPEXAttentionImpl(AttentionImpl):
