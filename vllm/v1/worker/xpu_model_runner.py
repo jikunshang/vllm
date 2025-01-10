@@ -309,8 +309,6 @@ class XPUModelRunner(GPUModelRunner):
                                         dummy_kv_caches)
         logits = self.model.compute_logits(hidden_states, None)
         logits = logits[:self.max_num_tokens]
-        self._dummy_run(self.model, self.max_num_tokens,
-                        dummy_kv_caches)
         torch.xpu.synchronize()
         gc.collect()
 

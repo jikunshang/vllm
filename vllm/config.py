@@ -2709,7 +2709,7 @@ class CompilationConfig(BaseModel):
         certain small batchsizes, where inductor is good at optimizing.
     """ # noqa
     level: int = 0
-    debug_dump_path: str = ""
+    debug_dump_path: str = "/tmp/vllm_debug_dump"
     cache_dir: str = ""
     backend: str = ""
     custom_ops: List[str] = Field(default_factory=list)
