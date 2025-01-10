@@ -1517,8 +1517,14 @@ class EngineArgs:
 
         # No FlashInfer or XFormers so far.
         V1_BACKENDS = [
-            "FLASH_ATTN_VLLM_V1", "FLASH_ATTN", "PALLAS", "PALLAS_VLLM_V1",
-            "TRITON_ATTN_VLLM_V1", "TRITON_MLA", "FLASHMLA"
+            "FLASH_ATTN_VLLM_V1",
+            "FLASH_ATTN",
+            "PALLAS",
+            "PALLAS_VLLM_V1",
+            "TRITON_ATTN_VLLM_V1",
+            "TRITON_MLA",
+            "FLASHMLA",
+            "IPEX_V1",
         ]
         if (envs.is_set("VLLM_ATTENTION_BACKEND")
                 and envs.VLLM_ATTENTION_BACKEND not in V1_BACKENDS):
