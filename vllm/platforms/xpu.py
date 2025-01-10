@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 
+import vllm.envs as envs
 from vllm.logger import init_logger
 
 from .interface import DeviceCapability, Platform, PlatformEnum, _Backend
@@ -26,8 +27,13 @@ class XPUPlatform(Platform):
                              block_size: int, use_v1: bool) -> str:
         if selected_backend != _Backend.IPEX:
             logger.info("Cannot use %s backend on XPU.", selected_backend)
-        logger.info("Using IPEX attention backend.")
-        return "vllm.attention.backends.ipex_attn.IpexAttnBackend"
+        use_v1 = envs.VLLM_USE_V1
+        if use_v1:
+            logger.info("Using IPEX_V1 attention backend.")
+            return "vllm.v1.attention.backends.ipex_attn.IPEXAttentionBackend"
+        else:
+            logger.info("Using IPEX attention backend.")
+            return "vllm.attention.backends.ipex_attn.IpexAttnBackend"
 
     @staticmethod
     def get_device_capability(device_id: int = 0) -> DeviceCapability:
@@ -76,15 +82,19 @@ class XPUPlatform(Platform):
 
         # check and update parallel config
         parallel_config = vllm_config.parallel_config
-        if (parallel_config.distributed_executor_backend is not None
-                and parallel_config.distributed_executor_backend != "ray"):
-            logger.warning(
-                "%s is not supported on XPU, fallback to ray distributed"
-                " executor backend.",
-                parallel_config.distributed_executor_backend)
-            parallel_config.distributed_executor_backend = "ray"
+        # if (parallel_config.distributed_executor_backend is not None
+        #         and parallel_config.distributed_executor_backend != "ray"):
+        #     logger.warning(
+        #         "%s is not supported on XPU, fallback to ray distributed"
+        #         " executor backend.",
+        #         parallel_config.distributed_executor_backend)
+        #     parallel_config.distributed_executor_backend = "ray"
         if parallel_config.worker_cls == "auto":
-            parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
+            if envs.VLLM_USE_V1:
+                parallel_config.worker_cls = \
+                            "vllm.v1.worker.xpu_worker.XPUWorker"
+            else:
+                parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
 
     @classmethod
     def is_pin_memory_available(cls):
