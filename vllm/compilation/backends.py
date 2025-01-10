@@ -543,7 +543,7 @@ class VllmBackend:
             # Config should automatically wrap all inductor passes
             assert isinstance(inductor_config[PASS_KEY], InductorPass)
             self.post_grad_pass_manager.add(inductor_config[PASS_KEY])
-        inductor_config[PASS_KEY] = self.post_grad_pass_manager
+        # inductor_config[PASS_KEY] = self.post_grad_pass_manager
 
     def __call__(self, graph: fx.GraphModule, example_inputs) -> Callable:
 
