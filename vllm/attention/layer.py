@@ -108,7 +108,8 @@ class Attention(nn.Module):
         # opaque custom op. For other platforms, we directly call them
         # and let torch.compile handle them.
         self.use_direct_call = not current_platform.is_cuda_alike(
-        ) and not current_platform.is_cpu()
+        ) and not current_platform.is_cpu() and not current_platform.is_xpu()
+
 
         # For some attention backends, we allocate an output tensor before
         # calling the custom op. When piecewise cudagraph is enabled, this

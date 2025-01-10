@@ -356,7 +356,14 @@ def get_graph():
         return torch.xpu.XPUGraph()
     else:
         raise RuntimeError("Unsupported platform")
-    
+
+def get_empty_cache():
+    if current_platform.is_cuda():
+        return "torch.cuda.empty_cache"
+    elif current_platform.is_xpu():
+        return "torch.xpu.empty_cache"
+    else:
+        raise RuntimeError("Unsupported platform")
 
 def execute_cuda_graph(cudagraph, entry, graph_pool, is_last_graph, *args):
     with torch.cuda.graph(cudagraph, pool=graph_pool):
@@ -670,6 +677,7 @@ class ConcreteSizeEntry:
     runnable: Callable = None  # type: ignore
     num_finished_warmup: int = 0
     graph: Optional[Union[torch.cuda.CUDAGraph, torch.xpu.XPUGraph]] = None
+    empty_cache_method:str = None
     output: Optional[Any] = None
 
     # for cudagraph debugging, track the input addresses
@@ -805,6 +813,7 @@ class PiecewiseBackend:
             ]
             entry.input_addresses = input_addresses
             graph = get_graph()
+            
 
             with ExitStack() as stack:
                 if not self.is_first_graph:
@@ -816,7 +825,7 @@ class PiecewiseBackend:
                     # and disable gc for the rest of the graphs.
                     stack.enter_context(patch("gc.collect", lambda: None))
                     stack.enter_context(
-                        patch("torch.cuda.empty_cache", lambda: None))
+                        patch(get_empty_cache(), lambda: None))
 
                 # mind-exploding: carefully manage the reference and memory.
                 output = execute_graph(graph,
