@@ -13,9 +13,12 @@ try:
 except ImportError as e:
     logger.warning("Import error msg: %s", e.msg)
 
+
 @register_fake("torch_ipex::silu_and_mul")
 def silu_and_mul_fake(out: torch.Tensor, x: torch.Tensor) -> None:
     return None
+
+
 #@torch.library.custom_op("vllm::silu_and_mul",
 #                         mutates_args=[])
 #def silu_and_mul(out: torch.Tensor, x: torch.Tensor) -> None:
@@ -32,6 +35,7 @@ def silu_and_mul_fake(out: torch.Tensor, x: torch.Tensor) -> None:
 #                 epsilon: float) -> Tuple[torch.Tensor, torch.Tensor]:
 #    return torch.empty_like(input), torch.empty_like(input)
 
+
 @register_fake("torch_ipex::rotary_embedding")
 def rotary_embedding_fake(
     positions: torch.Tensor,  # [batch_size, seq_len]
@@ -44,6 +48,7 @@ def rotary_embedding_fake(
 ) -> None:
     return None
 
+
 #@torch.library.custom_op("vllm::rms_norm",
 #                         mutates_args=[])
 #def rms_norm(input: torch.Tensor, weight: torch.Tensor,
@@ -55,19 +60,29 @@ def rotary_embedding_fake(
 #                 epsilon: float) -> torch.Tensor:
 #    return torch.empty_like(input)
 
+
 @register_fake("torch_ipex::add_rms_norm")
-def add_rms_norm_fake(residual:torch.Tensor, input: torch.Tensor,  shape: List[int], 
-                  weight: torch.Tensor, bias:torch.Tensor, epsilon: float, add_back: bool) -> torch.Tensor:
+def add_rms_norm_fake(residual: torch.Tensor, input: torch.Tensor,
+                      shape: List[int], weight: torch.Tensor,
+                      bias: torch.Tensor, epsilon: float,
+                      add_back: bool) -> torch.Tensor:
     return torch.empty_like(input)
+
 
 def rms_norm_(input: torch.Tensor, weight: torch.Tensor,
-             epsilon: float) -> torch.Tensor:
+              epsilon: float) -> torch.Tensor:
     return ipex.llm.functional.rms_norm(input, weight, epsilon)
+
+
 def rms_norm_fake_(input: torch.Tensor, weight: torch.Tensor,
-                 epsilon: float) -> torch.Tensor:
+                   epsilon: float) -> torch.Tensor:
     return torch.empty_like(input)
 
-direct_register_custom_op("rms_norm", rms_norm_,[],rms_norm_fake_,dispatch_key="XPU")
+
+direct_register_custom_op("rms_norm",
+                          rms_norm_, [],
+                          rms_norm_fake_,
+                          dispatch_key="XPU")
 
 #@register_fake("torch_ipex::batched_rotary_embedding")
 #def batched_rotary_embedding_fake(positions: torch.Tensor, query: torch.Tensor,

@@ -110,7 +110,6 @@ class Attention(nn.Module):
         self.use_direct_call = not current_platform.is_cuda_alike(
         ) and not current_platform.is_cpu() and not current_platform.is_xpu()
 
-
         # For some attention backends, we allocate an output tensor before
         # calling the custom op. When piecewise cudagraph is enabled, this
         # makes sure the output tensor is allocated inside the cudagraph.

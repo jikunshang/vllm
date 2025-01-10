@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
+
 class XPUModelRunner(GPUModelRunner):
     """A model runner for XPU devices."""
 
@@ -311,6 +312,7 @@ class XPUModelRunner(GPUModelRunner):
                 torch.zeros(kv_cache_shape,
                             dtype=self.kv_cache_dtype,
                             device=self.device))
+
     def capture_model(self):
         if not self.use_cuda_graph:
             logger.warning(

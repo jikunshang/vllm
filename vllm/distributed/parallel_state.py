@@ -49,9 +49,11 @@ if TYPE_CHECKING:
 class GraphCaptureContext:
     stream: torch.cuda.Stream
 
+
 @dataclass
 class XPUGraphCaptureContext:
     stream: torch.xpu.Stream
+
 
 TensorMetadata = namedtuple("TensorMetadata", ["device", "dtype", "size"])
 
@@ -312,7 +314,8 @@ class GroupCoordinator:
 
     @contextmanager
     def xpu_graph_capture(
-            self, graph_capture_context: Optional[XPUGraphCaptureContext] = None):
+            self,
+            graph_capture_context: Optional[XPUGraphCaptureContext] = None):
         if graph_capture_context is None:
             stream = torch.xpu.Stream()
             graph_capture_context = XPUGraphCaptureContext(stream)
@@ -952,11 +955,13 @@ def graph_capture(device: torch.device):
             context):
         yield context
 
+
 @contextmanager
 def xpu_graph_capture():
     with get_tp_group().xpu_graph_capture() as context, get_pp_group(
     ).xpu_graph_capture(context):
         yield context
+
 
 logger = init_logger(__name__)
 

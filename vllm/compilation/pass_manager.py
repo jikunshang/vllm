@@ -14,7 +14,8 @@ logger = init_logger(__name__)
 try:
     from .fusion import FusionPass
 except AttributeError:
-    logger.warning("import FusionPass error.")    
+    logger.warning("import FusionPass error.")
+
 
 class PostGradPassManager:
     """

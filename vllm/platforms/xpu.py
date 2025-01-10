@@ -71,8 +71,7 @@ class XPUPlatform(Platform):
                 "bfloat16 is not fully supported on XPU, casting to float16.")
             model_config.dtype = torch.float16
         if not model_config.enforce_eager:
-            logger.warning(
-                "XPU graph support is experimental currently!")
+            logger.warning("XPU graph support is experimental currently!")
 
         if vllm_config.speculative_config is not None:
             raise NotImplementedError(

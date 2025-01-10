@@ -194,8 +194,10 @@ def wrap_inductor(graph: fx.GraphModule,
         from torch._inductor.codecache import FxGraphCache
         with patch("torch._inductor.codecache.FxGraphCache._get_shape_env",
                    lambda *args, **kwargs: AlwaysHitShapeEnv()):
+            from torch._inductor.output_code import CompiledFxGraphConstants
+            constants = CompiledFxGraphConstants()
             inductor_compiled_graph = FxGraphCache._lookup_graph(
-                hash_str, example_inputs, True, False)
+                hash_str, example_inputs, True, False, constants)
             assert inductor_compiled_graph is not None, (
                 "Inductor cache lookup failed. Please remove"
                 f"the cache file {cache_data.cache_file_path} and try again."  # noqa
@@ -341,6 +343,7 @@ global_graph_pool = None
 
 compilation_start_time = 0.0
 
+
 def get_global_graph_pool():
     if current_platform.is_cuda():
         return torch.cuda.graph_pool_handle()
@@ -348,7 +351,8 @@ def get_global_graph_pool():
         return torch.xpu.graph_pool_handle()
     else:
         raise RuntimeError("Unsupported platform")
-    
+
+
 def get_graph():
     if current_platform.is_cuda():
         return torch.cuda.CUDAGraph()
@@ -357,6 +361,7 @@ def get_graph():
     else:
         raise RuntimeError("Unsupported platform")
 
+
 def get_empty_cache():
     if current_platform.is_cuda():
         return "torch.cuda.empty_cache"
@@ -364,6 +369,7 @@ def get_empty_cache():
         return "torch.xpu.empty_cache"
     else:
         raise RuntimeError("Unsupported platform")
+
 
 def execute_cuda_graph(cudagraph, entry, graph_pool, is_last_graph, *args):
     with torch.cuda.graph(cudagraph, pool=graph_pool):
@@ -377,6 +383,7 @@ def execute_cuda_graph(cudagraph, entry, graph_pool, is_last_graph, *args):
             # will not be used by any other cuda graph.
             output = weak_ref_tensors(output)
     return output
+
 
 def execute_xpu_graph(xpugraph, entry, graph_pool, is_last_graph, *args):
     with torch.xpu.graph(xpugraph, pool=graph_pool):
@@ -396,11 +403,14 @@ def execute_xpu_graph(xpugraph, entry, graph_pool, is_last_graph, *args):
 
 def execute_graph(graph, entry, graph_pool, is_last_graph, *args):
     if current_platform.is_cuda():
-        return execute_cuda_graph(graph, entry, graph_pool, is_last_graph, *args)
+        return execute_cuda_graph(graph, entry, graph_pool, is_last_graph,
+                                  *args)
     elif current_platform.is_xpu():
-        return execute_xpu_graph(graph, entry, graph_pool, is_last_graph, *args)
+        return execute_xpu_graph(graph, entry, graph_pool, is_last_graph,
+                                 *args)
     else:
         raise RuntimeError("Unsupported platform")
+
 
 class PiecewiseCompileInterpreter(torch.fx.Interpreter):
     """Code adapted from `torch.fx.passes.shape_prop.ShapeProp`.
@@ -677,7 +687,7 @@ class ConcreteSizeEntry:
     runnable: Callable = None  # type: ignore
     num_finished_warmup: int = 0
     graph: Optional[Union[torch.cuda.CUDAGraph, torch.xpu.XPUGraph]] = None
-    empty_cache_method:str = None
+    empty_cache_method: str = None
     output: Optional[Any] = None
 
     # for cudagraph debugging, track the input addresses
@@ -805,15 +815,13 @@ class PiecewiseBackend:
                 # Since we capture cudagraph for many different shapes and
                 # capturing is fast, we don't need to log it for every shape.
                 # We only log it in the debug mode.
-                logger.debug("Capturing a graph for shape %s",
-                             runtime_shape)
+                logger.debug("Capturing a graph for shape %s", runtime_shape)
 
             input_addresses = [
                 x.data_ptr() for x in args if isinstance(x, torch.Tensor)
             ]
             entry.input_addresses = input_addresses
             graph = get_graph()
-            
 
             with ExitStack() as stack:
                 if not self.is_first_graph:
@@ -824,15 +832,11 @@ class PiecewiseBackend:
                     # therefore, we only run gc for the first graph,
                     # and disable gc for the rest of the graphs.
                     stack.enter_context(patch("gc.collect", lambda: None))
-                    stack.enter_context(
-                        patch(get_empty_cache(), lambda: None))
+                    stack.enter_context(patch(get_empty_cache(), lambda: None))
 
                 # mind-exploding: carefully manage the reference and memory.
-                output = execute_graph(graph,
-                                       entry,
-                                       self.graph_pool,
-                                       self.is_last_graph,
-                                       *args)
+                output = execute_graph(graph, entry, self.graph_pool,
+                                       self.is_last_graph, *args)
 
             # here we always use weak ref for the output
             # to save memory

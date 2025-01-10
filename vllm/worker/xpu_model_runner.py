@@ -673,7 +673,8 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
                 kv_caches=kv_caches,
                 attn_metadata=model_input.attn_metadata,
                 intermediate_tensors=intermediate_tensors,
-                **MultiModalKwargs.as_kwargs(model_input.multi_modal_kwargs or {},
+                **MultiModalKwargs.as_kwargs(model_input.multi_modal_kwargs
+                                             or {},
                                              device=self.device))
 
         # Compute the logits in the last pipeline stage.
