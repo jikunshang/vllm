@@ -210,7 +210,6 @@ class ipex_ops:
         ipex.llm.modules.PagedAttention.reshape_and_cache_flash(
             key, value, key_cache, value_cache, slot_mapping)
 
-
     @staticmethod
     def chunked_prefill(
         query: torch.Tensor,
