@@ -330,9 +330,7 @@ class GroupCoordinator:
         if curr_stream != stream:
             stream.wait_stream(curr_stream)
         with torch.xpu.stream(stream), maybe_ca_context:
-            maybe_pynccl_context = nullcontext()
-            with maybe_pynccl_context:
-                yield graph_capture_context
+            yield graph_capture_context
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
         """
@@ -957,8 +955,9 @@ def graph_capture(device: torch.device):
 
 
 @contextmanager
-def xpu_graph_capture():
-    with get_tp_group().xpu_graph_capture() as context, get_pp_group(
+def xpu_graph_capture(device: torch.device):
+    context = GraphCaptureContext(torch.xpu.Stream(device=device))
+    with get_tp_group().xpu_graph_capture(context) as context, get_pp_group(
     ).xpu_graph_capture(context):
         yield context
 
