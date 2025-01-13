@@ -5,7 +5,6 @@ import torch
 from vllm._ipex_ops import ipex_ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
-from vllm.forward_context import get_forward_context
 from vllm.v1.attention.backends.flash_attn import FlashAttentionMetadata
 
 
@@ -120,113 +119,45 @@ class IPEXAttentionImpl(AttentionImpl):
             "key/v_scale is not supported in IPEXAttention.")
 
         num_actual_tokens = attn_metadata.num_actual_tokens
-        torch.ops.vllm.ipex_attn_chunked_prefill(
-            output[:num_actual_tokens],
-            query[:num_actual_tokens],
-            key,
-            value,
-            self.num_heads,
-            self.head_size,
-            self.num_kv_heads,
-            kv_cache,
+        num_heads = self.num_heads
+        head_size = self.head_size
+        num_kv_heads = self.num_kv_heads
+        query = query.view(-1, num_heads, head_size)
+        key = key.view(-1, num_kv_heads, head_size)
+        value = value.view(-1, num_kv_heads, head_size)
+
+        # Reshape the input keys and values and store them in the cache.
+        key_cache = kv_cache[0]
+        value_cache = kv_cache[1]
+
+        ipex_ops.reshape_and_cache_flash(
+            key[:num_actual_tokens],
+            value[:num_actual_tokens],
+            key_cache,
+            value_cache,
+            attn_metadata.slot_mapping,
             self.kv_cache_dtype,
             k_scale,
             v_scale,
-            self.scale,
-            self.sliding_window,
+        )
+
+        ipex_ops.chunked_prefill(
+            query[:num_actual_tokens],
+            key_cache,
+            value_cache,
+            output[:num_actual_tokens],
+            attn_metadata.query_start_loc,
+            attn_metadata.seq_start_loc,
+            None,
+            attn_metadata.block_table,
             self.alibi_slopes,
-            self.logits_soft_cap,
+            attn_metadata.max_query_len,
+            attn_metadata.max_seq_len,
+            0.0,
+            self.scale,
+            False,
+            True,
+            False,
+            None,
         )
         return output
-
-
-@torch.library.custom_op("vllm::ipex_attn_fake",
-                         mutates_args=["output", "kv_cache"])
-def ipex_attn_fake(
-    output: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    num_heads: int,
-    head_size: int,
-    num_kv_heads: int,
-    kv_cache: torch.Tensor,
-    kv_cache_dtype: str,
-    k_scale: float,
-    v_scale: float,
-    scale: float,
-    sliding_window: Optional[List[int]] = None,
-    alibi_slopes: Optional[torch.Tensor] = None,
-    logits_soft_cap: Optional[float] = None,
-) -> None:
-    pass
-
-
-@torch.library.custom_op("vllm::ipex_attn_chunked_prefill",
-                         mutates_args=["output", "kv_cache"])
-def ipex_attn_chunked_prefill(
-    output: torch.Tensor,
-    query: torch.Tensor,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    num_heads: int,
-    head_size: int,
-    num_kv_heads: int,
-    kv_cache: torch.Tensor,
-    kv_cache_dtype: str,
-    k_scale: float,
-    v_scale: float,
-    scale: float,
-    sliding_window: Optional[List[int]] = None,
-    alibi_slopes: Optional[torch.Tensor] = None,
-    logits_soft_cap: Optional[float] = None,
-) -> None:
-    context = get_forward_context()
-    current_metadata = context.dynamic_forward_context
-    if current_metadata is None:
-        # Profiling run.
-        return
-
-    assert current_metadata is not None
-    assert isinstance(current_metadata, FlashAttentionMetadata)
-    attn_metadata: FlashAttentionMetadata = current_metadata
-    num_actual_tokens = attn_metadata.num_actual_tokens
-
-    query = query.view(-1, num_heads, head_size)
-    key = key.view(-1, num_kv_heads, head_size)
-    value = value.view(-1, num_kv_heads, head_size)
-
-    # Reshape the input keys and values and store them in the cache.
-    key_cache = kv_cache[0]
-    value_cache = kv_cache[1]
-
-    ipex_ops.reshape_and_cache_flash(
-        key[:num_actual_tokens],
-        value[:num_actual_tokens],
-        key_cache,
-        value_cache,
-        attn_metadata.slot_mapping,
-        kv_cache_dtype,
-        k_scale,
-        v_scale,
-    )
-
-    ipex_ops.chunked_prefill(
-        query,
-        key_cache,
-        value_cache,
-        output,
-        attn_metadata.query_start_loc,
-        attn_metadata.seq_start_loc,
-        None,
-        attn_metadata.block_table,
-        alibi_slopes,
-        attn_metadata.max_query_len,
-        attn_metadata.max_seq_len,
-        0.0,
-        scale,
-        False,
-        True,
-        False,
-        None,
-    )
