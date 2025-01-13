@@ -9,13 +9,16 @@ import torch
 
 from vllm._ipex_ops import ipex_ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
-                                              AttentionMetadataBuilder, AttentionType)
+                                              AttentionMetadataBuilder,
+                                              AttentionType)
 from vllm.multimodal import MultiModalPlaceholderMap
 from vllm.attention.ops.paged_attn import PagedAttention
 from vllm.attention.backends.utils import (
-    CommonAttentionState, compute_slot_mapping,
-    compute_slot_mapping_start_idx, is_block_tables_empty, get_num_prefill_decode_query_kv_tokens)
+    CommonAttentionState, compute_slot_mapping, compute_slot_mapping_start_idx,
+    is_block_tables_empty, get_num_prefill_decode_query_kv_tokens)
 from vllm.utils import async_tensor_h2d, make_tensor_with_pad
+from vllm.worker.model_runner import (ModelInputForGPUBuilder,
+                                      ModelInputForGPUWithSamplingMetadata)
 from vllm.attention.backends.flash_attn import FlashAttentionMetadata
 
 _PARTITION_SIZE = 512
@@ -76,6 +79,7 @@ class IpexAttnBackend(AttentionBackend):
 
 @dataclass
 class IpexAttnMetadata(FlashAttentionMetadata):
+
     def advance_step(self,
                      model_input: "ModelInputForGPUWithSamplingMetadata",
                      sampled_token_ids: Optional[torch.Tensor],
@@ -85,8 +89,8 @@ class IpexAttnMetadata(FlashAttentionMetadata):
                      turn_prefills_into_decodes: bool = False):
         raise NotImplementedError
 
-class IpexAttnMetadataBuilder(
-    AttentionMetadataBuilder[IpexAttnMetadata]):
+
+class IpexAttnMetadataBuilder(AttentionMetadataBuilder[IpexAttnMetadata]):
 
     def __init__(self, input_builder: "ModelInputForGPUBuilder"):
         self.slot_mapping: List[int] = []
@@ -120,10 +124,10 @@ class IpexAttnMetadataBuilder(
 
         for (seq_id, token_len, seq_len, curr_seq_len, query_len, context_len,
              curr_sliding_window_block) in zip(
-            inter_data.seq_ids, [len(t) for t in inter_data.input_tokens],
-            inter_data.orig_seq_lens, inter_data.seq_lens,
-            inter_data.query_lens, inter_data.context_lens,
-            inter_data.curr_sliding_window_blocks):
+                 inter_data.seq_ids, [len(t) for t in inter_data.input_tokens],
+                 inter_data.orig_seq_lens, inter_data.seq_lens,
+                 inter_data.query_lens, inter_data.context_lens,
+                 inter_data.curr_sliding_window_blocks):
             self.context_lens.append(context_len)
 
             if is_prompt:
@@ -155,7 +159,7 @@ class IpexAttnMetadataBuilder(
                     block_table = block_tables[seq_id]
                 else:
                     block_table = block_tables[seq_id][
-                                  -curr_sliding_window_block:]
+                        -curr_sliding_window_block:]
             self.block_tables.append(block_table)
 
             # Compute slot mapping.
@@ -200,7 +204,6 @@ class IpexAttnMetadataBuilder(
         query_start_loc = list(accumulate(query_lens, initial=0))
         seq_start_loc = list(accumulate(seq_lens, initial=0))
 
-        num_seqs = len(seq_lens)
         block_tables = make_tensor_with_pad(
             self.block_tables,
             pad=0,
@@ -245,6 +248,7 @@ class IpexAttnMetadataBuilder(
             block_tables=block_tables,
             use_cuda_graph=False,
         )
+
 
 class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
 
@@ -297,6 +301,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                                       "are not implemented for "
                                       "IpexAttnBackendImpl")
         self.attn_type = attn_type
+
     def split_kv_cache(
         self,
         kv_cache: torch.Tensor,
@@ -354,9 +359,9 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
 
         kv_cache_dtype: str = self.kv_cache_dtype
         softmax_scale: float = self.scale
-        window_size = self.sliding_window
+        #window_size = self.sliding_window
         alibi_slopes: Optional[torch.Tensor] = self.alibi_slopes
-        logits_soft_cap: Optional[float] = self.logits_soft_cap
+        #logits_soft_cap: Optional[float] = self.logits_soft_cap
         query = query.view(-1, self.num_heads, self.head_size)
         key = key.view(-1, self.num_kv_heads, self.head_size)
         value = value.view(-1, self.num_kv_heads, self.head_size)
@@ -379,7 +384,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                 key_cache = kv_cache[0]
                 value_cache = kv_cache[1]
                 #key_cache, value_cache = self.split_kv_cache(
-                 #       kv_cache, self.num_kv_heads, self.head_size)
+                #       kv_cache, self.num_kv_heads, self.head_size)
                 # Reshape the input keys and values and store them in the cache.
                 # If kv_cache is not provided, the new key and value tensors are
                 # not cached. This happens during the initial memory
@@ -394,7 +399,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                     k_scale,
                     v_scale,
                 )
-        else :
+        else:
             return output
         (num_prefill_query_tokens, num_prefill_kv_tokens,
          num_decode_query_tokens) = \
@@ -419,6 +424,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                 key = key[:num_prefill_kv_tokens]
                 value = value[:num_prefill_kv_tokens]
                 tmp = [0]
+                assert attn_metadata.seq_lens is not None
                 tmp.extend(attn_metadata.seq_lens)
                 seqlen = torch.tensor(tmp)
                 seqlen_q = torch.cumsum(seqlen, dim=0).to(device="xpu")
@@ -502,8 +508,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
             # use only for actual varlen decoding
             # if decode_meta.max_decode_query_len > 1:
             assert attn_type == AttentionType.DECODER, (
-                "Only decoder-only models support max_decode_query_len > 1"
-            )
+                "Only decoder-only models support max_decode_query_len > 1")
             ipex_ops.chunked_prefill(
                 query=decode_query,
                 key_cache=key_cache,
@@ -551,9 +556,9 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
 
 
 def _get_query_key_seq_metadata(
-        attn_metadata,
-        is_prompt: bool,
-        attn_type: str,
+    attn_metadata,
+    is_prompt: bool,
+    attn_type: str,
 ) -> tuple:
     """
     Returns sequence metadata for key and query based on the specified
