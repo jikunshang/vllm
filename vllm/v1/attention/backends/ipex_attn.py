@@ -110,6 +110,10 @@ class IPEXAttentionImpl(AttentionImpl):
         Returns:
             shape = [num_tokens, num_heads * head_size]
         """
+        assert output is not None, "Output tensor must be provided."
+        if attn_metadata is None:
+            # Profiling run.
+            return output
 
         # NOTE(woosuk): IPEXAttention does not support FP8 KV cache.
         assert k_scale == 1.0 and v_scale == 1.0, (
