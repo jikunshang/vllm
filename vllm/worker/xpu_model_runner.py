@@ -25,13 +25,19 @@ from vllm.multimodal import (MULTIMODAL_REGISTRY, MultiModalKwargs,
 from vllm.sampling_params import SamplingParams
 
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
-from vllm.utils import DeviceMemoryProfiler, PyObjectCache, is_pin_memory_available
-from vllm.worker.model_runner import (SamplingMetadata, ModelInputForGPUBuilder, ModelInputForGPUWithSamplingMetadata, GPUModelRunnerBase)
+from vllm.utils import (DeviceMemoryProfiler, PyObjectCache,
+                        is_pin_memory_available)
+from vllm.worker.model_runner import (SamplingMetadata,
+                                      ModelInputForGPUBuilder,
+                                      ModelInputForGPUWithSamplingMetadata,
+                                      GPUModelRunnerBase)
 from vllm.worker.model_runner_base import ModelRunnerBase
 
 logger = init_logger(__name__)
 
 LORA_WARMUP_RANK = 8
+
+
 class XPUModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
     _model_input_cls: Type[ModelInputForGPUWithSamplingMetadata] = (
         ModelInputForGPUWithSamplingMetadata)
@@ -267,7 +273,7 @@ class XPUModelRunner(GPUModelRunnerBase[ModelInputForGPUWithSamplingMetadata]):
         else:
             sampling_metadata = None
         is_prompt = (seq_group_metadata_list[0].is_prompt
-             if seq_group_metadata_list else None)
+                     if seq_group_metadata_list else None)
         return dataclasses.replace(model_input,
                                    sampling_metadata=sampling_metadata,
                                    is_prompt=is_prompt,
