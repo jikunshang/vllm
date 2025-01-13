@@ -127,8 +127,7 @@ class IPEXAttentionImpl(AttentionImpl):
         value = value.view(-1, num_kv_heads, head_size)
 
         # Reshape the input keys and values and store them in the cache.
-        key_cache = kv_cache[0]
-        value_cache = kv_cache[1]
+        key_cache, value_cache = kv_cache.unbind(0)
 
         ipex_ops.reshape_and_cache_flash(
             key[:num_actual_tokens],
