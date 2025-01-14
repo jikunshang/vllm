@@ -97,7 +97,7 @@ class IPEXAttentionImpl(AttentionImpl):
         attn_metadata: IPEXAttentionBackend,
         k_scale: float = 1.0,
         v_scale: float = 1.0,
-        attn_type: AttentionType = AttentionType.DECODER,
+        output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass with IPEXAttention.
 
@@ -110,20 +110,17 @@ class IPEXAttentionImpl(AttentionImpl):
         Returns:
             shape = [num_tokens, num_heads * head_size]
         """
-        if attn_type != AttentionType.DECODER:
-            raise NotImplementedError("Encoder self-attention and "
-                                      "encoder/decoder cross-attention "
-                                      "are not implemented for "
-                                      "IPEXAttentionImpl")
-
+        assert output is not None, "Output tensor must be provided."
+        if attn_metadata is None:
+            # Profiling run.
+            return output
         # NOTE(woosuk): IPEXAttention does not support FP8 KV cache.
         assert k_scale == 1.0 and v_scale == 1.0, (
             "key/v_scale is not supported in IPEXAttention.")
-
-        output = torch.empty_like(query)
+        num_actual_tokens = attn_metadata.num_actual_tokens
         torch.ops.vllm.ipex_attn_chunked_prefill(
-            output,
-            query,
+            output[:num_actual_tokens],
+            query[:num_actual_tokens],
             key,
             value,
             self.num_heads,
@@ -138,7 +135,7 @@ class IPEXAttentionImpl(AttentionImpl):
             self.alibi_slopes,
             self.logits_soft_cap,
         )
-        return output.view(-1, self.num_heads * self.head_size)
+        return output
 
 
 @torch.library.custom_op("vllm::ipex_attn_fake",
@@ -213,10 +210,10 @@ def ipex_attn_chunked_prefill(
     )
 
     ipex_ops.chunked_prefill(
-        query[:num_actual_tokens],
+        query,
         key_cache,
         value_cache,
-        output[:num_actual_tokens],
+        output,
         attn_metadata.query_start_loc,
         attn_metadata.seq_start_loc,
         None,
