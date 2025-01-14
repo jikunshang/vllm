@@ -6,7 +6,7 @@ import torch
 from vllm.config import CompilationLevel, VllmConfig
 from vllm.inputs import INPUT_REGISTRY
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, 
+from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType,
                         bind_kv_cache, cdiv, is_pin_memory_available)
 from vllm.v1.attention.backends.flash_attn import FlashAttentionMetadata
 from vllm.v1.attention.backends.ipex_attn import IPEXAttentionBackend
