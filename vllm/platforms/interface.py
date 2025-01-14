@@ -34,6 +34,7 @@ class _Backend(enum.Enum):
     PALLAS = enum.auto()
     IPEX = enum.auto()
     IPEX_V1 = enum.auto()
+    BLOCK_SPARSE_FLASH_ATTN = enum.auto()
     NO_ATTENTION = enum.auto()
 
 
