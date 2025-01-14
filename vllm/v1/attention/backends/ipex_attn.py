@@ -9,7 +9,7 @@ from vllm.v1.attention.backends.flash_attn import FlashAttentionMetadata
 
 
 class IPEXAttentionBackend(AttentionBackend):
-
+    accept_output_buffer: bool = True
     @staticmethod
     def get_supported_head_sizes() -> List[int]:
         return [32, 64, 96, 128, 160, 192, 224, 256]

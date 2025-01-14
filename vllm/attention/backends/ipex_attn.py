@@ -251,7 +251,7 @@ class IpexAttnMetadataBuilder(AttentionMetadataBuilder[IpexAttnMetadata]):
 
 
 class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
-
+    accept_output_buffer: bool = True
     def __init__(
         self,
         num_heads: int,
