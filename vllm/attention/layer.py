@@ -108,13 +108,14 @@ class Attention(nn.Module):
         # opaque custom op. For other platforms, we directly call them
         # and let torch.compile handle them.
         self.use_direct_call = not current_platform.is_cuda_alike(
-        ) and not current_platform.is_cpu()
+        ) and not current_platform.is_cpu() and not current_platform.is_xpu()
 
         # For some attention backends, we allocate an output tensor before
         # calling the custom op. When piecewise cudagraph is enabled, this
         # makes sure the output tensor is allocated inside the cudagraph.
         self.use_output = self.backend == _Backend.FLASH_ATTN or \
-            self.backend == _Backend.FLASH_ATTN_VLLM_V1
+            self.backend == _Backend.FLASH_ATTN_VLLM_V1 or \
+            self.backend == _Backend.IPEX_V1
         compilation_config = get_current_vllm_config().compilation_config
         if prefix in compilation_config.static_forward_context:
             raise ValueError(f"Duplicate layer name: {prefix}")
