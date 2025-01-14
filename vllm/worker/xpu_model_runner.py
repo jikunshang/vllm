@@ -1,6 +1,9 @@
+import gc
 import dataclasses
 import time
+import inspect
 import weakref
+import numpy as np
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set,
@@ -8,10 +11,15 @@ from typing import (TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set,
 
 import torch
 import torch.nn as nn
+from tqdm import tqdm
 
-from vllm.attention import get_attn_backend
+from vllm.attention import get_attn_backend, AttentionMetadata
+from vllm.attention.backends.abstract import AttentionState
 from vllm.config import VllmConfig
 from vllm.distributed import get_pp_group
+from vllm.distributed.parallel_state import (get_tensor_model_parallel_rank,
+                                             xpu_graph_capture)
+from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
@@ -27,7 +35,7 @@ from vllm.multimodal import (MULTIMODAL_REGISTRY, BatchedTensorInputs,
                              MultiModalRegistry)
 from vllm.sampling_params import SamplingParams
 from vllm.sequence import IntermediateTensors, SequenceGroupMetadata
-from vllm.utils import DeviceMemoryProfiler, make_tensor_with_pad
+from vllm.utils import DeviceMemoryProfiler, GiB_bytes, make_tensor_with_pad, weak_ref_tensor
 from vllm.worker.model_runner import AttentionMetadata, SamplingMetadata
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase, ModelRunnerInputBuilderBase,
@@ -38,6 +46,8 @@ from vllm.worker.model_runner_base import (
 
 if TYPE_CHECKING:
     from vllm.attention.backends.abstract import AttentionBackend
+
+_NUM_WARMUP_ITERS = 2
 
 logger = init_logger(__name__)
 
@@ -137,7 +147,73 @@ class ModelInputForXPUBuilder(ModelRunnerInputBuilderBase[ModelInputForXPU]):
         self.device = self.runner.device
 
     def add_seq_group(self, seq_group_metadata: SequenceGroupMetadata):
+        seq_ids = seq_group_metadata.seq_data.keys()
+        n_seqs = len(seq_ids)
+        is_prompt = seq_group_metadata.is_prompt
+        
+        if is_prompt:
+            assert n_seqs == 1
+            self.decode_only = False
         self.seq_group_metadata_list.append(seq_group_metadata)
+
+    def _use_captured_graph(self,
+                            batch_size: int,
+                            decode_only: bool,
+                            max_decode_seq_len: int,
+                            max_encoder_seq_len: int = 0) -> bool:
+        return (decode_only and not self.runner.model_config.enforce_eager
+                and max_decode_seq_len <= self.runner.max_seq_len_to_capture
+                and max_encoder_seq_len <= self.runner.max_seq_len_to_capture
+                and batch_size <= self.runner.max_batchsize_to_capture)
+
+    def _get_cuda_graph_pad_size(self,
+                                 num_seqs: int,
+                                 max_decode_seq_len: int,
+                                 max_encoder_seq_len: int = 0) -> int:
+        """
+        Determine the number of padding sequences required for running in
+        CUDA graph mode. Returns -1 if CUDA graphs cannot be used.
+
+        In the multi-step + chunked-prefill case, only the first step
+        has Prefills (if any). The rest of the steps are guaranteed to be all
+        decodes. In this case, we set up the padding as if all the sequences
+        are decodes so we may run all steps except the first step in CUDA graph
+        mode. The padding is accounted for in the multi-step `advance_step`
+        family of functions.
+
+        Args:
+            num_seqs (int): Number of sequences scheduled to run.
+            max_decode_seq_len (int): Greatest of all the decode sequence
+                lengths. Used only in checking the viablility of using
+                CUDA graphs.
+            max_encoder_seq_len (int, optional): Greatest of all the encode
+                sequence lengths. Defaults to 0. Used only in checking the
+                viability of using CUDA graphs.
+        Returns:
+            int: Returns the determined number of padding sequences. If
+                CUDA graphs is not viable, returns -1.
+        """
+        is_mscp: bool = self.runner.scheduler_config.is_multi_step and \
+                    self.runner.scheduler_config.chunked_prefill_enabled
+        decode_only = self.decode_only or is_mscp
+        if not decode_only:
+            # Early exit so we can treat num_seqs as the batch_size below.
+            return -1
+
+        # batch_size out of this function refers to the number of input
+        # tokens being scheduled. This conflation of num_seqs as batch_size
+        # is valid as this is a decode-only case.
+        batch_size = num_seqs
+        if not self._use_captured_graph(batch_size, decode_only,
+                                        max_decode_seq_len,
+                                        max_encoder_seq_len):
+            return -1
+
+        graph_batch_size = self.runner.vllm_config.pad_for_cudagraph(
+            batch_size)
+        assert graph_batch_size >= batch_size
+        return graph_batch_size - batch_size
+
 
     def build(self) -> ModelInputForXPU:
         is_prompt = self.seq_group_metadata_list[0].is_prompt
@@ -153,6 +229,11 @@ class ModelInputForXPUBuilder(ModelRunnerInputBuilderBase[ModelInputForXPU]):
                  self.seq_group_metadata_list)
             seq_lens = []
             multi_modal_kwargs = None
+
+        cuda_graph_pad_size = self._get_cuda_graph_pad_size(
+            num_seqs=len(seq_lens),
+            max_decode_seq_len=max_decode_seq_len,
+            max_encoder_seq_len=max_encoder_seq_len)
 
         if self.runner.lora_config:
             lora_mapping = LoRAMapping(lora_index_mapping, lora_prompt_mapping,
@@ -435,6 +516,27 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
         self.sliding_window = model_config.get_sliding_window()
         self.block_size = cache_config.block_size
 
+        self.max_seq_len_to_capture = self.model_config.max_seq_len_to_capture
+        self.max_batchsize_to_capture = \
+            self.vllm_config.compilation_config.max_capture_size
+
+        self.graph_runners: List[Dict[int, XPUGraphRunner]] = [
+            {} for _ in range(self.parallel_config.pipeline_parallel_size)
+        ]
+        
+        # When using CUDA graph, the input block tables must be padded to
+        # max_seq_len_to_capture. However, creating the block table in
+        # Python can be expensive. To optimize this, we cache the block table
+        # in numpy and only copy the actual input content at every iteration.
+        # The shape of the cached block table will be
+        # (max batch size to capture, max seq len to capture / block size).
+        self.graph_block_tables = np.zeros(
+            (self.max_batchsize_to_capture, self.get_max_block_per_batch()),
+            dtype=np.int32)
+        
+        self.graph_memory_pool: Optional[Tuple[
+            int, int]] = None  # Set during graph capture.
+
         self.attn_backend = get_attn_backend(
             self.model_config.get_head_size(),
             self.model_config.dtype,
@@ -659,20 +761,33 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
             assert model_input.lora_mapping is not None
             self.set_active_loras(model_input.lora_requests,
                                   model_input.lora_mapping)
-
-        model_executable = self.model
+        prefill_meta = model_input.attn_metadata.prefill_metadata
+        decode_meta = model_input.attn_metadata.decode_metadata
+        # TODO(andoorve): We can remove this once all
+        # virtual engines share the same kv cache.
+        virtual_engine = model_input.virtual_engine
+        if prefill_meta is None and decode_meta.use_cuda_graph:
+            assert model_input.input_tokens is not None
+            graph_batch_size = model_input.input_tokens.shape[0]
+            model_executable = self.graph_runners[virtual_engine][
+                graph_batch_size]
+        else:
+            model_executable = self.model
         if (self.observability_config is not None
                 and self.observability_config.collect_model_forward_time):
             model_forward_start_time = time.time()
 
-        hidden_or_intermediate_states = model_executable(
-            input_ids=model_input.input_tokens,
-            positions=model_input.input_positions,
-            kv_caches=kv_caches,
-            attn_metadata=model_input.attn_metadata,
-            intermediate_tensors=intermediate_tensors,
-            **MultiModalKwargs.as_kwargs(model_input.multi_modal_kwargs or {},
-                                         device=self.device))
+        with set_forward_context(model_input.attn_metadata, self.vllm_config):
+            hidden_or_intermediate_states = model_executable(
+                input_ids=model_input.input_tokens,
+                positions=model_input.input_positions,
+                kv_caches=kv_caches,
+                attn_metadata=model_input.attn_metadata,
+                intermediate_tensors=intermediate_tensors,
+                **MultiModalKwargs.as_kwargs(model_input.multi_modal_kwargs
+                                             or {},
+                                             device=self.device))
+
         # Compute the logits in the last pipeline stage.
         if not get_pp_group().is_last_rank:
             return hidden_or_intermediate_states
@@ -710,8 +825,304 @@ class XPUModelRunner(ModelRunnerBase[ModelInputForXPUWithSamplingMetadata]):
 
         return [output]
 
+    @torch.inference_mode()
+    def capture_model(self, kv_caches: List[List[torch.Tensor]]) -> None:
+        """Cuda graph capture a model.
+
+        Note that CUDA graph's performance gain is negligible if number
+        of batched tokens are larger than 200. And since CUDA graph
+        requires fixed sized tensors, supporting large/variable batch
+        size requires high GPU memory overhead. Thus, vLLM only captures
+        decoding requests. Mixed batch (chunked prefill + decoding) or
+        prefill requests are not captured.
+
+        Since it is used for decoding-only, it assumes there's only 1 token
+        per sequence in the batch.
+        """
+        assert not self.model_config.enforce_eager
+        logger.info("Capturing cudagraphs for decoding. This may lead to "
+                    "unexpected consequences if the model is not static. To "
+                    "run the model in eager mode, set 'enforce_eager=True' or "
+                    "use '--enforce-eager' in the CLI. "
+                    "If out-of-memory error occurs during cudagraph capture,"
+                    " consider decreasing `gpu_memory_utilization` or "
+                    "switching to eager mode. You can also reduce the "
+                    "`max_num_seqs` as needed to decrease memory usage.")
+        start_time = time.perf_counter()
+        start_used_memory = torch.xpu.memory_allocated()
+
+        # Prepare dummy inputs. These will be reused for all batch sizes.
+        max_batch_size = self.max_batchsize_to_capture
+        input_tokens = torch.zeros(max_batch_size,
+                                   dtype=torch.long,
+                                   device=self.device)
+        input_positions = torch.zeros(max_batch_size,
+                                      dtype=torch.long,
+                                      device=self.device)
+        if self.model_config.uses_mrope:
+            input_positions = torch.tile(input_positions,
+                                         (3, 1)).xpu(device=self.device)
+        # Prepare dummy previous_hidden_states only if needed by the model.
+        # This is used by draft models such as EAGLE.
+        previous_hidden_states = None
+        if "previous_hidden_states" in inspect.signature(
+                self.model.forward).parameters:
+            previous_hidden_states = torch.empty(
+                [max_batch_size,
+                 self.model_config.get_hidden_size()],
+                dtype=self.model_config.dtype,
+                device=self.device)
+
+        intermediate_inputs = None
+        if not get_pp_group().is_first_rank:
+            intermediate_inputs = self.model.make_empty_intermediate_tensors(
+                batch_size=max_batch_size,
+                dtype=self.model_config.dtype,
+                device=self.device)
+
+        with self.attn_state.graph_capture(max_batch_size), xpu_graph_capture(
+                self.device) as graph_capture_context:
+            # NOTE: Capturing the largest batch size first may help reduce the
+            # memory usage of CUDA graph.
+            for virtual_engine in range(
+                    self.parallel_config.pipeline_parallel_size):
+                # Only rank 0 should print progress bar during capture
+                capture_sizes = (
+                    tqdm(
+                        self.vllm_config.compilation_config.capture_sizes,
+                        desc="Capturing CUDA graph shapes",
+                    ) if get_tensor_model_parallel_rank() == 0 else
+                    self.vllm_config.compilation_config.capture_sizes)
+                for batch_size in capture_sizes:
+                    attn_metadata = (
+                        self.attn_state.graph_capture_get_metadata_for_batch(
+                            batch_size,
+                            is_encoder_decoder_model=self.model_config.
+                            is_encoder_decoder))
+
+                    if self.lora_config:
+                        lora_mapping = LoRAMapping(
+                            **dict(index_mapping=[0] * batch_size,
+                                   prompt_mapping=[0] * batch_size,
+                                   is_prefill=False))
+                        self.set_active_loras(set(), lora_mapping)
+
+                    # if self.prompt_adapter_config:
+                    #     prompt_adapter_mapping = PromptAdapterMapping(
+                    #         [-1] * batch_size,
+                    #         [-1] * batch_size,
+                    #     )
+                    #     self.set_active_prompt_adapters(
+                    #         set(), prompt_adapter_mapping)
+                    graph_runner = XPUGraphRunner(
+                        self.model, self.attn_backend.get_name(),
+                        self.attn_state.graph_clone(batch_size),
+                        self.model_config.is_encoder_decoder)
+
+                    capture_inputs = {
+                        "input_ids":
+                        input_tokens[:batch_size],
+                        "positions":
+                        input_positions[..., :batch_size],
+                        "intermediate_inputs":
+                        intermediate_inputs[:batch_size]
+                        if intermediate_inputs is not None else None,
+                        "kv_caches":
+                        kv_caches[virtual_engine],
+                        "attn_metadata":
+                        attn_metadata,
+                        "memory_pool":
+                        self.graph_memory_pool,
+                        "stream":
+                        graph_capture_context.stream
+                    }
+                    if previous_hidden_states is not None:
+                        capture_inputs[
+                            "previous_hidden_states"] = previous_hidden_states[:
+                                                                               batch_size]
+
+                    if self.has_inner_state:
+                        # Only used by Mamba-based models CUDA graph atm (Jamba)
+                        capture_inputs.update({
+                            "seqlen_agnostic_capture_inputs":
+                            self.model.get_seqlen_agnostic_capture_inputs(
+                                batch_size)
+                        })
+                    if self.model_config.is_encoder_decoder:
+                        # add the additional inputs to capture for
+                        # encoder-decoder models.
+                        self._update_inputs_to_capture_for_enc_dec_model(
+                            capture_inputs)
+
+                    with set_forward_context(attn_metadata, self.vllm_config):
+                        graph_runner.capture(**capture_inputs)
+                    self.graph_memory_pool = graph_runner.graph.pool()
+                    self.graph_runners[virtual_engine][batch_size] = (
+                        graph_runner)
+
+        end_time = time.perf_counter()
+        end_used_memory = torch.xpu.memory_allocated()
+        elapsed_time = end_time - start_time
+        cuda_graph_size = end_used_memory - start_used_memory
+        # This usually takes < 10 seconds.
+        logger.info("Graph capturing finished in %.0f secs, took %.2f GiB",
+                    elapsed_time, cuda_graph_size / GiB_bytes)
+
+
     def set_active_loras(self, lora_requests: Set[LoRARequest],
                          lora_mapping: LoRAMapping) -> None:
         if not self.lora_manager:
             raise RuntimeError("LoRA is not enabled.")
         self.lora_manager.set_active_adapters(lora_requests, lora_mapping)
+
+
+# NOTE: this is nn.Module so the profiler can properly capture/group
+#  kernels calls made within the graph
+class XPUGraphRunner(nn.Module):
+
+    def __init__(self, model: nn.Module, backend_name: str,
+                 attn_state: AttentionState, is_encoder_decoder_model: bool):
+        super().__init__()
+        self.model = model
+        self.backend_name = backend_name
+        self.attn_state = attn_state
+
+        self.input_buffers: Dict[str, torch.Tensor] = {}
+        self.output_buffers: Dict[str, torch.Tensor] = {}
+
+        self._graph: Optional[torch.xpu.XPUGraph] = None
+        self._is_encoder_decoder_model = is_encoder_decoder_model
+
+    @property
+    def graph(self):
+        assert self._graph is not None
+        return self._graph
+
+    def capture(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        intermediate_inputs: Optional[IntermediateTensors],
+        kv_caches: List[torch.Tensor],
+        attn_metadata: AttentionMetadata,
+        memory_pool: Optional[Tuple[int, int]],
+        stream: torch.xpu.Stream,
+        **kwargs,
+    ):
+        assert self._graph is None
+        # Run the model a few times without capturing the graph.
+        # This is to make sure that the captured graph does not include the
+        # kernel launches for initial benchmarking (e.g., Triton autotune).
+        # Note one iteration is not enough for torch.compile
+        for _ in range(_NUM_WARMUP_ITERS):
+            self.model(
+                input_ids=input_ids,
+                positions=positions,
+                kv_caches=kv_caches,
+                attn_metadata=attn_metadata,
+                intermediate_tensors=intermediate_inputs,
+                **kwargs,
+            )
+        # Wait for the warm up operations to finish before proceeding with
+        # Graph Capture.
+        torch.xpu.synchronize()
+        # Capture the graph.
+        self._graph = torch.xpu.XPUGraph()
+        with torch.xpu.graph(self._graph, pool=memory_pool, stream=stream):
+            output_hidden_or_intermediate_states = self.model(
+                input_ids=input_ids,
+                positions=positions,
+                kv_caches=kv_caches,
+                attn_metadata=attn_metadata,
+                intermediate_tensors=intermediate_inputs,
+                **kwargs,
+            )
+
+            if isinstance(output_hidden_or_intermediate_states, torch.Tensor):
+                hidden_or_intermediate_states = weak_ref_tensor(
+                    output_hidden_or_intermediate_states)
+            elif isinstance(output_hidden_or_intermediate_states,
+                            IntermediateTensors):
+                hidden_or_intermediate_states = IntermediateTensors(
+                    tensors={
+                        key: weak_ref_tensor(value)
+                        for key, value in
+                        output_hidden_or_intermediate_states.tensors.items()
+                    })
+
+            del output_hidden_or_intermediate_states
+            # make sure `output_hidden_or_intermediate_states` is deleted
+            # in the graph's memory pool
+            gc.collect()
+        torch.xpu.synchronize()
+
+        # Save the input and output buffers.
+        self.input_buffers = {
+            "input_ids":
+            input_ids,
+            "positions":
+            positions,
+            "kv_caches":
+            kv_caches,
+            **self.attn_state.get_graph_input_buffers(
+                attn_metadata, self._is_encoder_decoder_model),
+            **kwargs,
+        }
+        if intermediate_inputs is not None:
+            self.input_buffers.update(intermediate_inputs.tensors)
+        if get_pp_group().is_last_rank:
+            self.output_buffers = {
+                "hidden_states": hidden_or_intermediate_states
+            }
+        else:
+            self.output_buffers = hidden_or_intermediate_states
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        kv_caches: List[torch.Tensor],
+        attn_metadata: AttentionMetadata,
+        intermediate_tensors: Optional[IntermediateTensors],
+        **kwargs,
+    ) -> torch.Tensor:
+        # KV caches are fixed tensors, so we don't need to copy them.
+        del kv_caches
+
+        # Copy the input tensors to the input buffers.
+        self.input_buffers["input_ids"].copy_(input_ids, non_blocking=True)
+        self.input_buffers["positions"].copy_(positions, non_blocking=True)
+
+        if self.backend_name != "NO_ATTENTION":
+            self.input_buffers["slot_mapping"].copy_(
+                attn_metadata.slot_mapping, non_blocking=True)
+
+        self.attn_state.prepare_graph_input_buffers(
+            self.input_buffers, attn_metadata, self._is_encoder_decoder_model)
+
+        if "seqlen_agnostic_capture_inputs" in self.input_buffers:
+            self.model.copy_inputs_before_cuda_graphs(self.input_buffers,
+                                                      **kwargs)
+
+        if "previous_hidden_states" in self.input_buffers:
+            self.input_buffers["previous_hidden_states"].copy_(
+                kwargs["previous_hidden_states"], non_blocking=True)
+
+        if intermediate_tensors is not None:
+            for key in intermediate_tensors.tensors:
+                if key != "model_execute_time" and key != "model_forward_time":
+                    self.input_buffers[key].copy_(intermediate_tensors[key],
+                                                  non_blocking=True)
+        if self._is_encoder_decoder_model:
+            self.input_buffers["encoder_input_ids"].copy_(
+                kwargs['encoder_input_ids'], non_blocking=True)
+            self.input_buffers["encoder_positions"].copy_(
+                kwargs['encoder_positions'], non_blocking=True)
+
+        # Run the graph.
+        self.graph.replay()
+        # Return the output tensor.
+        if get_pp_group().is_last_rank:
+            return self.output_buffers["hidden_states"]
+
+        return self.output_buffers

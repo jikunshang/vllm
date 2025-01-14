@@ -74,6 +74,7 @@ class IpexAttnMetadata(AttentionMetadata, PagedAttentionMetadata):
     seq_lens: Optional[List[int]]
     seqlen_q: Optional[torch.Tensor]
     max_seqlen: Optional[int]
+    use_cuda_graph: bool
 
     def __post_init__(self):
         # Set during the execution of the first attention op.
@@ -88,6 +89,7 @@ class IpexAttnMetadata(AttentionMetadata, PagedAttentionMetadata):
         # Currently chunked prefill is not supported
         if self.num_decode_tokens == 0:
             assert self.num_prefills > 0
+            self.use_cuda_graph=False
             return self
 
         return None
@@ -193,6 +195,11 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
         Returns:
             shape = [num_tokens, num_heads * head_size]
         """
+        assert output is not None, "Output tensor must be provided."
+        if attn_metadata is None:
+            # Profiling run.
+            return output
+        
         assert k_scale == 1.0 and v_scale == 1.0
         num_tokens, hidden_size = query.shape
         # Reshape the query, key, and value tensors.
@@ -237,10 +244,6 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                             attn_metadata.seq_lens, None, dtype=query.dtype)
                     attn_metadata.attn_bias = att_masks
 
-                output = torch.empty(
-                    (num_tokens, self.num_heads, self.head_size),
-                    dtype=query.dtype,
-                    device=query.device)
                 ipex_ops.varlen_attention(
                     query,
                     key,
