@@ -88,21 +88,31 @@ class XPUPlatform(Platform):
             raise NotImplementedError(
                 "XPU does not support speculative decoding")
 
+        if vllm_config.device_config is not None:
+            assert vllm_config.device_config.device_type == "xpu"
+
         # check and update parallel config
         parallel_config = vllm_config.parallel_config
-        # if (parallel_config.distributed_executor_backend is not None
-        #         and parallel_config.distributed_executor_backend != "ray"):
-        #     logger.warning(
-        #         "%s is not supported on XPU, fallback to ray distributed"
-        #         " executor backend.",
-        #         parallel_config.distributed_executor_backend)
-        #     parallel_config.distributed_executor_backend = "ray"
         if parallel_config.worker_cls == "auto":
-            if envs.VLLM_USE_V1:
-                parallel_config.worker_cls = \
-                            "vllm.v1.worker.xpu_worker.XPUWorker"
-            else:
-                parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
+            parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
+
+        if parallel_config.distributed_executor_backend is None:
+            parallel_config.distributed_executor_backend = "ray"
+        elif parallel_config.distributed_executor_backend == "mp":
+            # FIXME(kunshang):
+            # spawn needs calling `if __name__ == '__main__':``
+            # fork is not supported for xpu start new process.
+            logger.error(
+                "Both start methods (spawn and fork) have issue "
+                "on XPU if you use mp backend, setting it to ray instead.")
+            parallel_config.distributed_executor_backend = "ray"
+
+        elif parallel_config.distributed_executor_backend != "ray":
+            logger.warning(
+                "%s is not supported on XPU, fallback to ray distributed"
+                " executor backend.",
+                parallel_config.distributed_executor_backend)
+            parallel_config.distributed_executor_backend = "ray"
 
     @classmethod
     def is_pin_memory_available(cls):
