@@ -480,9 +480,12 @@ class LLMEngine:
                 # FIXME(kunshang):
                 # spawn needs calling `if __name__ == '__main__':``
                 # fork is not supported for xpu start new process.
-                logger.error(
+                logger.warning(
                     "Both start methods (spawn and fork) have issue "
                     "on XPU if you use mp backend, Please try ray instead.")
+                from vllm.executor.multiproc_xpu_executor import (
+                    MultiprocessingXPUExecutor)
+                executor_class = MultiprocessingXPUExecutor
             else:
                 from vllm.executor.xpu_executor import XPUExecutor
                 executor_class = XPUExecutor
