@@ -113,6 +113,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         super().process_weights_after_loading(layer)
 
+<<<<<<< HEAD
         layer.w13_weight = torch.nn.Parameter(self._maybe_pad_weight(
             layer.w13_weight.data),
                                               requires_grad=False)
@@ -132,7 +133,14 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             layer.w2_weight = torch.nn.Parameter(shuffled_w2,
                                                  requires_grad=False)
 
-        if current_platform.is_cpu():
+        if current_platform.is_xpu():
+            import intel_extension_for_pytorch as ipex
+            layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
+                layer.w13_weight,
+                layer.w2_weight,
+                use_prepack=True,
+            )
+        elif current_platform.is_cpu():
             if current_platform.get_cpu_architecture() == CpuArchEnum.X86:
                 import intel_extension_for_pytorch as ipex
                 layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
@@ -286,6 +294,30 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 "Expert score correction bias is not supported for HPU.")
         return layer.hpu_fused_moe(x, layer.w13_weight, layer.w2_weight,
                                    router_logits, top_k)
+
+    def forward_xpu(
+            self,
+            layer: torch.nn.Module,
+            x: torch.Tensor,
+            use_grouped_topk: bool,
+            top_k: int,
+            router_logits: torch.Tensor,
+            renormalize: bool,
+            topk_group: Optional[int] = None,
+            num_expert_group: Optional[int] = None,
+            custom_routing_function: Optional[Callable] = None,
+            **kwargs,
+    ):
+        assert custom_routing_function is None
+        return layer.ipex_fusion(
+            x,
+            use_grouped_topk,
+            top_k,
+            router_logits,
+            renormalize,
+            topk_group,
+            num_expert_group,
+        )
 
     def forward_tpu(
         self,
