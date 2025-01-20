@@ -188,6 +188,8 @@ class Sampler(nn.Module):
         # speculative decoding.
         self.include_gpu_probs_tensor = False
         self.should_modify_greedy_probs_inplace = False
+        self.force_greedy_sample = os.getenv('VLLM_FORCE_GREEDY_SAMPLE',
+                                   '0').lower() in ['1', 'true']
 
     def _init_sampling_tensors(
         self,
@@ -291,12 +293,16 @@ class Sampler(nn.Module):
 
         # We use float32 for probabilities and log probabilities.
         # Compute the probabilities.
-        probs = torch.softmax(logits, dim=-1, dtype=torch.float)
+        probs = None if self.force_greedy_sample else torch.softmax(logits, dim=-1, dtype=torch.float)
         # Compute the log probabilities.
         logprobs = torch.log_softmax(logits, dim=-1, dtype=torch.float)
 
         # Sample the next tokens.
-        maybe_deferred_sample_results, maybe_sampled_tokens_tensor = _sample(
+        maybe_deferred_sample_results, maybe_sampled_tokens_tensor = _sample_greedy(
+            logits=logits,
+            sampling_metadata=sampling_metadata,
+            include_gpu_probs_tensor=self.include_gpu_probs_tensor,
+        ) if self.force_greedy_sample else _sample(
             probs,
             logprobs,
             sampling_metadata,
@@ -859,6 +865,50 @@ def get_pythonized_sample_results(
         for i in range(len(sampling_metadata.seq_groups))
     ]
 
+def _greedy_get_pythonized_sample_results(
+        sample_result_args: SampleResultArgsType) -> SampleResultType:
+    '''This function consumes GPU-side sampler results and computes
+    Pythonized CPU-side sampler results (GPU -> CPU sync.)
+
+    Single-step scheduling: this function is invoked at sampling-time
+    for immediate Pythonization.
+
+    Multi-step scheduling: Pythonization is deferred until after multiple
+    GPU-side steps have been completed.
+
+    Args:
+      sample_result_args: GPU-side inputs to the Pythonization process
+
+    Returns:
+      Pythonized sampler results
+    '''
+
+    (
+        sample_metadata,
+        sampling_metadata,
+        greedy_samples,
+        multinomial_samples,
+        beam_search_logprobs,
+        sample_results_dict,
+    ) = (
+        sample_result_args.sample_metadata,
+        sample_result_args.sampling_metadata,
+        sample_result_args.greedy_samples,
+        sample_result_args.multinomial_samples,
+        sample_result_args.beam_search_logprobs,
+        sample_result_args.sample_results_dict,
+    )
+
+    sampling_type = SamplingType.GREEDY
+    (seq_group_id, seq_groups) = sample_metadata[sampling_type]
+    sample_results = _greedy_sample(seq_groups, greedy_samples)
+    sample_results_dict.update(zip(seq_group_id, sample_results))
+
+    return [
+        sample_results_dict.get(i, ([], []))
+        for i in range(len(sampling_metadata.seq_groups))
+    ]
+
 
 def _sample_with_torch(
     probs: torch.Tensor,
@@ -991,6 +1041,55 @@ def _sample_with_torch(
             sampled_token_ids_tensor,
         )
 
+def _sample_greedy(logits: torch.Tensor,
+                   sampling_metadata: SamplingMetadata,
+                   include_gpu_probs_tensor: bool):
+    sampling_type = SamplingType.GREEDY
+    sample_results_dict: SampleResultsDictType = {}
+    sample_metadata: SampleMetadataType = {}
+    seq_group_id = range(len(sampling_metadata.seq_groups))
+    sample_metadata[sampling_type] = (seq_group_id, sampling_metadata.seq_groups)
+    multinomial_samples: MultinomialSamplesType = {}
+
+    categorized_sample_indices = sampling_metadata.categorized_sample_indices
+    sample_indices = categorized_sample_indices[sampling_type]
+    long_sample_indices = sample_indices.long()
+    
+    # Create output tensor for sampled token ids.
+    if include_gpu_probs_tensor:
+        sampled_token_ids_tensor = torch.full((logits.shape[0], 1),
+                                              VLLM_INVALID_TOKEN_ID,
+                                              dtype=torch.long,
+                                              device=logits.device)
+    else:
+        sampled_token_ids_tensor = None
+    greedy_samples = torch.argmax(logits[long_sample_indices], dim=-1)
+    if sampled_token_ids_tensor is not None:
+        # Store sampled tokens in output tensor.
+        sampled_token_ids_tensor[long_sample_indices] = greedy_samples.unsqueeze(-1)
+    # Encapsulate arguments for computing Pythonized sampler
+    # results, whether deferred or otherwise.
+    maybe_deferred_args = SampleResultArgsType(
+        sampling_metadata=sampling_metadata,
+        sample_metadata=sample_metadata,
+        multinomial_samples=multinomial_samples,
+        greedy_samples=greedy_samples,
+        beam_search_logprobs=None,
+        sample_results_dict=sample_results_dict)
+    
+    if not sampling_metadata.skip_sampler_cpu_output:
+        # GPU<->CPU sync happens here.
+        # This also converts the sampler output to a Python object.
+        # Return Pythonized sampler result & sampled token ids
+        return _greedy_get_pythonized_sample_results(
+            maybe_deferred_args), sampled_token_ids_tensor
+    else:
+        # Defer sampler result Pythonization; return deferred
+        # Pythonization args & sampled token ids
+        return (
+            maybe_deferred_args,
+            sampled_token_ids_tensor,
+        )
 
 def _sample(
     probs: torch.Tensor,
