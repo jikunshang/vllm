@@ -50,10 +50,10 @@ class RayDistributedExecutor(DistributedExecutorBase):
 
     def _init_executor(self) -> None:
         self.forward_dag: Optional[ray.dag.CompiledDAG] = None
-        if envs.VLLM_USE_V1:
-            # v1 always uses the compiled DAG and SPMD worker.
-            os.environ["VLLM_USE_RAY_SPMD_WORKER"] = "1"
-            os.environ["VLLM_USE_RAY_COMPILED_DAG"] = "1"
+        # if envs.VLLM_USE_V1:
+        #     # v1 always uses the compiled DAG and SPMD worker.
+        #     os.environ["VLLM_USE_RAY_SPMD_WORKER"] = "1"
+        #     os.environ["VLLM_USE_RAY_COMPILED_DAG"] = "1"
         # If the env var is set, it uses the Ray's compiled DAG API
         # which optimizes the control plane overhead.
         # Run vLLM with VLLM_USE_RAY_COMPILED_DAG=1 to enable it.

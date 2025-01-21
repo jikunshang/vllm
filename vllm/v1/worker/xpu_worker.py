@@ -23,12 +23,14 @@ class XPUWorker(Worker):
         local_rank,
         rank,
         distributed_init_method,
+        is_driver_worker: bool = False,
     ):
         super().__init__(
             vllm_config,
             local_rank,
             rank,
             distributed_init_method,
+            is_driver_worker = False,
         )
         device_config = self.device_config
         assert device_config.device_type == "xpu"
@@ -86,7 +88,7 @@ class XPUWorker(Worker):
         torch.xpu.empty_cache()
         return num_gpu_blocks, num_cpu_blocks
 
-    def initialize(self):
+    def init_device(self):
         if self.device_config.device.type == "xpu" and current_platform.is_xpu(
         ):
             self.device = torch.device(f"xpu:{self.local_rank}")
