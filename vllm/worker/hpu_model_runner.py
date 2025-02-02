@@ -1075,6 +1075,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             slot_mapping=slot_mapping,
             multi_modal_placeholder_index_maps=placeholder_index_maps,
             enable_kv_scales_calculation=False,
+            input_positions=input_positions,
         )
         multi_modal_kwargs = MultiModalKwargs.batch(multi_modal_kwargs_list)
         for t in multi_modal_kwargs:
@@ -1349,6 +1350,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             slot_mapping=slot_mapping,
             multi_modal_placeholder_index_maps=None,
             enable_kv_scales_calculation=False,
+            input_positions=input_positions
         )
         return PrepareDecodeMetadata(input_tokens=input_tokens,
                                      input_positions=input_positions,
@@ -1555,6 +1557,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             'block_offsets',
             'block_scales',
             'block_groups',
+            'input_positions',
         ])
         return attention_metadata
 
@@ -1827,6 +1830,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         max_blocks = kv_caches[0][0].size(0)
         self.bucketing_ctx.generate_prompt_buckets()
         self.bucketing_ctx.generate_decode_buckets(max_blocks)
+        
         if not htorch.utils.internal.is_lazy() and not self.enforce_eager:
             multiplier = 3 if os.getenv('VLLM_REGIONAL_COMPILATION',
                                         'true').lower() == 'true' else 1
