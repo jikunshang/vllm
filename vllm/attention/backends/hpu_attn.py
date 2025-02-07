@@ -75,7 +75,8 @@ class HPUMLAAttentionBackend(HPUAttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> Tuple[int, ...]:
-        return (num_blocks, block_size, head_size), (num_blocks, block_size, head_size//9*8)
+        #return (num_blocks, block_size, head_size), (num_blocks, block_size, head_size//9*8)
+        return (num_blocks, block_size, head_size), None
     
     @staticmethod
     def get_impl_cls() -> Type["HPUAttentionImpl"]:
@@ -233,10 +234,12 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
                                         block_offsets)
-            # v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
-            #                             block_offsets)
-            # v_cache = k_cache[...,:self.kv_lora_rank]
-            kv_cache = (k_cache, k_cache)
+            if kv_cache[1] is None:
+                v_cache = k_cache
+            else:
+                v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
+                                            block_offsets)
+            kv_cache = (k_cache, v_cache)
 
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
