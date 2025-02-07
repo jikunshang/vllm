@@ -110,6 +110,17 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     cross_attn_bias: Optional[torch.Tensor] = None
     
 
+class VLLMKVCacheMLA(VLLMKVCache):
+    
+    def __init__(self, kv_lora_rank:int):
+        super(VLLMKVCacheMLA, self).__init__()
+        self.kv_lora_rank = kv_lora_rank
+        
+    def fetch_from_cache_mla(self, cache, blocks):
+        k_cache = self.fetch_from_cache(cache, blocks)
+        return k_cache[...,:self.kv_lora_rank]
+
+
 class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
 
     def __init__(
@@ -136,8 +147,8 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         self.matmul_av = Matmul()
         self.batch2block_matmul = Matmul()
         self.block2batch_matmul = Matmul()
-        self.latent_cache_k = VLLMKVCache()
-        self.latent_cache_v = VLLMKVCache()
+        self.latent_cache_k = VLLMKVCacheMLA(self.kv_lora_rank)
+        # self.latent_cache_v = VLLMKVCache()
         HPUFusedSDPA = kernels.fsdpa()
         self.fused_scaled_dot_product_attention = None if HPUFusedSDPA is None \
             else ModuleFusedSDPA(HPUFusedSDPA)
@@ -224,8 +235,8 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
                                         block_offsets)
             # v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
             #                             block_offsets)
-            v_cache = k_cache[...,:self.kv_lora_rank]
-            kv_cache = (k_cache, v_cache)
+            # v_cache = k_cache[...,:self.kv_lora_rank]
+            kv_cache = (k_cache, k_cache)
 
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
@@ -288,7 +299,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
         output = HPUPagedAttention.forward_decode(
             query=q,
             key_cache=kv_c_and_k_pe_cache,
-            value_cache=kv_c_cache,
+            value_cache=kv_c_and_k_pe_cache,
             block_list=attn_metadata.block_list,
             block_mapping=attn_metadata.block_mapping,
             block_bias=attn_metadata.attn_bias,
@@ -300,7 +311,7 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             batch2block_matmul_op=self.batch2block_matmul,
             block2batch_matmul_op=self.block2batch_matmul,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache,
-            values_fetch_func=self.latent_cache_v.fetch_from_cache)
+            values_fetch_func=self.latent_cache_k.fetch_from_cache_mla)
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)
