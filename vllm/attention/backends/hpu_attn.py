@@ -222,8 +222,9 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata]):
             
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
                                         block_offsets)
-            v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
-                                        block_offsets)
+            # v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
+            #                             block_offsets)
+            v_cache = k_cache[...,:self.kv_lora_rank]
             kv_cache = (k_cache, v_cache)
 
         if is_prefill:
