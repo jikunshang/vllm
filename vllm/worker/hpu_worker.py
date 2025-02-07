@@ -571,7 +571,10 @@ class HPUCacheEngine(CacheEngine):
         if len(kv_cache_shape) == 2:
             use_mla = True
             k_cache_shape = kv_cache_shape[0]
-            v_cache_shape = kv_cache_shape[1]
+            if kv_cache_shape[1] is not None:
+                v_cache_shape = kv_cache_shape[1]
+            else:
+                v_cache_shape = None
         else:
             k_cache_shape = kv_cache_shape
             v_cache_shape = kv_cache_shape
@@ -585,7 +588,7 @@ class HPUCacheEngine(CacheEngine):
             key_cache = torch.zeros(k_cache_shape, dtype=dtype, device=device)
             value_cache = torch.zeros(v_cache_shape,
                                         dtype=dtype,
-                                        device=device)
+                                        device=device) if v_cache_shape is not None else None
             kv_layer = (key_cache, value_cache)
             kv_cache.append(kv_layer)
         return kv_cache
