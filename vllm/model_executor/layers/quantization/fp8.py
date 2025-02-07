@@ -792,24 +792,30 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         orig_M_w2 = layer.orig_M_w2.data
         orig_N_w2 = layer.orig_N_w2.data
         ep_shift = ep_rank * num_experts
-        w13_weight = dequant_block_fp8_weight_naive(layer.w13_weight,
-                                                    layer.w13_weight_scale_inv,
-                                                    block_size=self.quant_config.weight_block_size,
-                                                    dtype=x.dtype,
-                                                    original_M=orig_M_w13,
-                                                    original_N=orig_N_w13)
-        w2_weight = dequant_block_fp8_weight_naive(layer.w2_weight,
-                                                    layer.w2_weight_scale_inv,
-                                                    block_size=self.quant_config.weight_block_size,
-                                                    dtype=x.dtype,
-                                                    original_M=orig_M_w2,
-                                                    original_N=orig_N_w2)
+
         for i in range(self.moe_n_slice):
             min_expert = i * n_expert_slice
             max_expert = (i + 1) * n_expert_slice
 
-            w13_list_slice = [w13_weight[j] for j in range(min_expert, max_expert)]
-            w2_list_slice = [w2_weight[j] for j in range(min_expert, max_expert)]
+            w13_weight_tmp = layer.w13_weight[min_expert:max_expert, ...]
+            w2_weight_tmp = layer.w2_weight[min_expert:max_expert, ...]
+            w13_scale_tmp = layer.w13_weight_scale_inv[min_expert:max_expert, ...]
+            w2_scale_tmp = layer.w2_weight_scale_inv[min_expert:max_expert, ...]
+            w13_weight = dequant_block_fp8_weight_naive(w13_weight_tmp,
+                                                        w13_scale_tmp,
+                                                        block_size=self.quant_config.weight_block_size,
+                                                        dtype=x.dtype,
+                                                        original_M=orig_M_w13,
+                                                        original_N=orig_N_w13)
+            w2_weight = dequant_block_fp8_weight_naive(w2_weight_tmp,   
+                                                       w2_scale_tmp,
+                                                       block_size=self.quant_config.weight_block_size,
+                                                       dtype=x.dtype,
+                                                       original_M=orig_M_w2,
+                                                       original_N=orig_N_w2)
+            
+            w13_list_slice = [w13_weight[j] for j in range(n_expert_slice)]
+            w2_list_slice = [w2_weight[j] for j in range(n_expert_slice)]
 
             final_hidden_states += torch.ops.hpu.mixture_of_experts(
                                          hidden_states=x,
@@ -819,9 +825,10 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                          w3=w2_list_slice,
                                          permuted_weights=True,
                                          activation="silu",
-                                         experts_min=min_expert + ep_shift,
-                                         experts_max=max_expert - 1 + ep_shift)
+                                         experts_min=ep_shift,
+                                         experts_max=n_expert_slice - 1 + ep_shift)
             htorch.core.mark_step()
+            del w13_weight, w2_weight
         return final_hidden_states.view(-1, x.shape[1])
 
 
