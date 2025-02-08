@@ -4,6 +4,7 @@ import argparse
 import os
 
 model_path = "/data/models/DeepSeek-R1/"
+#model_path = "/software/data/DeepSeek-R1/"
 # model_path = "deepseek-ai/DeepSeek-V2-Lite"
 
 # Parse the command-line arguments.
@@ -22,7 +23,7 @@ os.environ["PT_HPU_ENABLE_LAZY_COLLECTIVES"] = "true"
 # os.environ["VLLM_RAY_DISABLE_LOG_TO_DRIVER"] = "1"
 # os.environ["RAY_IGNORE_UNHANDLED_ERRORS"] = "1"
 os.environ["VLLM_MOE_N_SLICE"] = "1"
-os.environ["VLLM_EP_SIZE"] = "8"
+os.environ["VLLM_EP_SIZE"] = "4"
 os.environ["VLLM_MLA_DISABLE_REQUANTIZATION"] = "1"
 os.environ["PT_HPU_WEIGHT_SHARING"] = "0"
 
