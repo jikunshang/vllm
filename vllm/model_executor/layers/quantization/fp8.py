@@ -827,8 +827,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                          w3=w2_list_slice,
                                          permuted_weights=True,
                                          activation="silu",
-                                         experts_min=0,
-                                         experts_max=(n_expert_slice - 1))
+                                         experts_min=min_expert + ep_shift,
+                                         experts_max=max_expert - 1 + ep_shift)
             torch.hpu.synchronize()
         return final_hidden_states.view(-1, x.shape[1])
 
