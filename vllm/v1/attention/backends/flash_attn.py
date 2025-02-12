@@ -16,6 +16,7 @@ from vllm.utils import cdiv
 
 if current_platform.is_cuda():
     from vllm.vllm_flash_attn import flash_attn_varlen_func
+
 logger = init_logger(__name__)
 
 
