@@ -879,7 +879,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                     final_hidden_states = current_hidden_states * padded_weight
                 else:
                     final_hidden_states.add_(current_hidden_states * padded_weight)
-
+            htorch.core.mark_step()
         return final_hidden_states.view(-1, x.shape[1])
 
 
