@@ -858,7 +858,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             total_num_experts = router_logits.size(1)
             
             padded_weights = torch.zeros((bt, total_num_experts), dtype=x.dtype, device=x.device)
-            padded_weights.scatter_(-1, topk_ids, topk_weights)
+            padded_weights.scatter_(-1, topk_ids.long(), topk_weights.to(x.dtype))
+            # padded_weights.scatter_(-1, topk_ids, topk_weights)
             padded_weights = padded_weights.transpose(0, 1)
 
             for idx in range(num_experts):
