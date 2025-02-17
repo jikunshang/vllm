@@ -815,7 +815,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         orig_N_w2 = layer.orig_N_w2.data
         ep_shift = ep_rank * num_experts
 
-        if seq_len > 1:
+        # if seq_len > 1:
+        if False:
             for i in range(self.moe_n_slice):
                 min_expert = i * n_expert_slice
                 max_expert = (i + 1) * n_expert_slice
