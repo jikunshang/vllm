@@ -307,7 +307,8 @@ class HpuModelAdapter:
             mask, -math.inf))
 
         if not is_fake_hpu():
-            block_mapping = torch.nn.functional.one_hot(metadata.block_groups,
+            # block_mapping = torch.nn.functional.one_hot(metadata.block_groups,
+            block_mapping = torch.nn.functional.one_hot(metadata.block_groups.long(),
                                                         num_classes=batch_size)
         else:
             # Unfortunately one_hot on CPU
@@ -1247,7 +1248,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 tensor, block_bucket_size, pad_value)
 
         block_list = padding_fn(block_list, _PAD_BLOCK_ID)
-        block_groups = padding_fn(block_groups, -1)
+        # block_groups = padding_fn(block_groups, -1)
+        block_groups = padding_fn(block_groups, 0)
         block_usage = padding_fn(block_usage, 1)
 
         if is_enc_dec_model:

@@ -17,8 +17,8 @@ parser.add_argument("--tokenizer", type=str, default=model_path, help="The model
 parser.add_argument("--tp_size", type=int, default=8, help="The number of threads.")
 args = parser.parse_args()
 
-os.environ["PT_HPU_LAZY_MODE"] = "1"
-
+os.environ["PT_HPU_LAZY_MODE"] = "0"
+os.environ["TORCH_COMPILE_DISABLE"]="1"
 
 os.environ["VLLM_SKIP_WARMUP"] = "true"
 os.environ["HABANA_VISIBLE_DEVICES"] = "ALL"
@@ -68,7 +68,7 @@ if __name__ == "__main__":
             max_model_len=8192,
             dtype="bfloat16",
             gpu_memory_utilization=0.6,
-            # enforce_eager=True
+            enforce_eager=True
         )
 
     # Generate texts from the prompts. The output is a list of RequestOutput objects
