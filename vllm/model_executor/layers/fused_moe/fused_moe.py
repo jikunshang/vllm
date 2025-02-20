@@ -496,7 +496,7 @@ def grouped_topk(hidden_states: torch.Tensor,
     if scoring_func == "softmax":
         scores = torch.softmax(gating_output, dim=-1)
     elif scoring_func == "sigmoid":
-        scores = gating_output.sigmoid()
+        scores = gating_output.float().sigmoid()
     else:
         raise ValueError(f"Unsupported scoring function: {scoring_func}")
 
