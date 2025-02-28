@@ -60,8 +60,16 @@ class RayDistributedExecutor(RayDistributedExecutorV0, Executor):
         # the scheduler can yield to the next batch.
         return FutureWrapper(refs[0])
 
-class XPURayDistributedExecutor(RayDistributedExecutorV0, Executor):
+class XPURayDistributedExecutor(RayDistributedExecutor, Executor):
     """XPU Ray distributed executor without Compiled Graphs."""
+
+    def execute_model(
+        self,
+        scheduler_output,
+    ) -> Union[ModelRunnerOutput, Future[ModelRunnerOutput]]:
+        output = self.collective_rpc("execute_model",
+                                     args=(scheduler_output, ))
+        return output[0]
 
     @property
     def max_concurrent_batches(self) -> int:
