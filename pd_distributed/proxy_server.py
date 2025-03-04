@@ -70,7 +70,7 @@ async def handle_request():
             continue
 
         # return decode
-        generator = forward_request('http://10.112.110.51:8200/v1/completions', # Be sure to change the IP address for your machine
+        generator = forward_request('http://10.112.110.50:8200/v1/completions', # Be sure to change the IP address for your machine
                                     original_request_data)
         response = await make_response(generator)
         response.timeout = None
