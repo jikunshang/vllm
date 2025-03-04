@@ -21,6 +21,8 @@ from vllm.sequence import IntermediateTensors
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
+    from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
+from vllm_hpu_extension.utils import VLLMKVCache
 
 logger = init_logger(__name__)
 
@@ -198,6 +200,63 @@ class SimpleConnector(KVConnectorBase):
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
+    def send_kv_caches_and_hidden_states_hpu(
+        self,
+        model_executable: torch.nn.Module,
+        model_input: "ModelInputForHPUWithSamplingMetadata",
+        kv_caches: List[torch.Tensor],
+        hidden_or_intermediate_states: Union[torch.Tensor,
+                                             IntermediateTensors],
+    ) -> None:
+        input_tokens_tensor = model_input.input_tokens # shape: [batch_size, seq_len_padding_to_128]
+        seq_lens = model_input.attn_metadata.seq_lens # 2D list
+        slot_mapping_flat = model_input.attn_metadata.slot_mapping.flatten()
+        start_layer = model_executable.model.start_layer
+        end_layer = model_executable.model.end_layer
+        num_kv_heads = 1
+        k_head_size = 64
+        v_head_size = 512
+        
+        model_config = model_executable.model.config
+        # not used for MLA since key and value size are not equal 
+        num_heads = int(model_config.num_key_value_heads / self.tp_size)
+        hidden_size = model_config.hidden_size
+        num_attention_heads = model_config.num_attention_heads
+        head_size = int(hidden_size / num_attention_heads)
+
+        # For each sequence in the batch, we send
+        # 0. current_tokens [seq_len]
+        # 1. bool mask [seq_len]
+        # 2. key [num_layers, seq_len, num_kv_heads, k_head_size], [61, seq_len, 1, 64]
+        # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
+        # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
+        for idx, slen in enumerate(seq_lens):
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[idx][:slen]
+
+            keys, values = [], []
+
+            for layer_id in range(start_layer, end_layer):
+                kv_cache = kv_caches[layer_id - start_layer] 
+                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)
+                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
+
+                current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
+
+                keys.append(key_cache[current_slot_mapping].unsqueeze(0))
+                values.append(value_cache[current_slot_mapping].unsqueeze(0))
+
+            keys = torch.cat(keys, dim=0)
+            values = torch.cat(values, dim=0)
+            self.insert(current_tokens,
+                        torch.ones_like(current_tokens,
+                                        dtype=bool), keys, values,
+                        hidden_or_intermediate_states[idx].unsqueeze(0))
+
+        logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
+
+
     def recv_kv_caches_and_hidden_states(
         self, model_executable: torch.nn.Module,
         model_input: "ModelInputForGPUWithSamplingMetadata",
@@ -300,6 +359,141 @@ class SimpleConnector(KVConnectorBase):
                 hidden_or_intermediate_states_for_one_req, dim=0)
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
+
+    def recv_kv_caches_and_hidden_states_hpu(
+        self, model_executable: torch.nn.Module,
+        model_input: "ModelInputForHPUWithSamplingMetadata",
+        attn_metadata: object,
+        kv_caches: List[torch.Tensor]
+    ) -> Tuple[Union[torch.Tensor, IntermediateTensors], bool,
+               "ModelInputForHPUWithSamplingMetadata"]:
+        # When bypass_model_exec is set to False, it means that at least for one
+        # request its corresponding KV cache or hidden state is missing.
+        # In this case we need to do prefilling to recompute missing KV cache
+        # and hidden states.
+        bypass_model_exec = True
+
+        input_tokens_tensor = model_input.input_tokens
+        input_tokens_list_=input_tokens_tensor.tolist()
+        seq_lens_tensor = model_input.attn_metadata.seq_lens_tensor
+        seq_lens = seq_lens_tensor.tolist() #2D list
+        slot_mapping = attn_metadata.slot_mapping.flatten()
+
+        hidden_or_intermediate_states_for_one_req = []
+
+        input_tokens_list = []
+        num_computed_tokens_list = []
+        start_pos_list = []
+        num_kv_heads = 1
+        k_head_size = 64
+        v_head_size = 512
+        block_size = 128
+        padding_k_tensor = torch.zeros((block_size, k_head_size), dtype=torch.bfloat16, device="hpu")
+        padding_v_tenosr = torch.zeros((block_size, v_head_size), dtype=torch.bfloat16, device="hpu")
+        start_block_idx = 0
+        
+        # For each sequence in the batch, we recv
+        # 0. current_tokens [seq_len]
+        # 1. bool mask [seq_len]
+        # 2. key [num_layers, seq_len, num_kv_heads, k_head_size], [61, seq_len, 1, 64]
+        # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
+        # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
+        for idx, slen in enumerate(seq_lens):
+
+            start_pos = sum(seq_lens[:idx])
+            end_pos = start_pos + slen
+            current_tokens = input_tokens_tensor[idx][:slen]
+            num_tokens = slen
+
+            # collecting data for rebuilding the input
+            input_tokens_list.append(current_tokens)
+            start_pos_list.append(start_pos)
+
+            ret = self.select(current_tokens,
+                              torch.ones_like(current_tokens, dtype=bool))
+            if ret[0] is None:
+                # didn't find any match.
+                bypass_model_exec = False
+                num_computed_tokens_list.append(0)
+                continue
+
+            roi: torch.Tensor = ret[1]
+            keys: torch.Tensor = ret[2]
+            values: torch.Tensor = ret[3]
+            hidden: torch.Tensor = ret[4]
+
+            num_computed_tokens = roi.shape[0]
+            num_computed_tokens_list.append(num_computed_tokens)
+
+            # check if both KV cache and the hidden states are received
+            # If not, need to redo the forwarding to compute missing states
+            if not all([(num_computed_tokens == num_tokens), hidden is not None
+                        ]):
+                bypass_model_exec = False
+
+            # update the end position based on how many tokens are cached.
+            end_pos = start_pos + num_computed_tokens
+
+            num_blocks = (slen + 127)// 128
+            end_block_idx = start_block_idx + num_blocks
+            # put received KV caches into paged memory layer by layer
+            # for each layer, we need to pad the key and value to 128, so 
+            # key shape should be [num_blocks, block_size, num_kv_heads(1,ommited), k_head_size]
+            # value shape should be [num_blocks, block_size, num_kv_heads(1,ommited), v_head_size]
+            for i in range(model_executable.model.start_layer,
+                           model_executable.model.end_layer):
+                current_layer_idx = i - model_executable.model.start_layer
+                kv_cache = kv_caches[current_layer_idx]
+                layer = model_executable.model.layers[i] # for kv scale
+
+                key_cache, value_cache = kv_cache[0], kv_cache[1]
+                
+                # write to cache
+                cache_k = VLLMKVCache()
+                cache_v = VLLMKVCache()
+                # [num_layers, seq_len, num_kv_heads, k/v_head_size] -> [seq_len, k_head_size]
+                key = keys[current_layer_idx].to(key_cache.device).squeeze(-2)
+                value = values[current_layer_idx].to(key_cache.device).squeeze(-2) 
+                # print(f"ori kv shape: key: {key.shape}, value: {value.shape}")
+                #[seq_len, k/v_head_size] ->(padding) [seq_len + block_size, k/v_head_size]
+                # ->(slice) [num_blocks * block_size, k/v_head_size]
+                key = torch.cat([key, padding_k_tensor], dim=0)[:-slen] 
+                value = torch.cat([value, padding_v_tenosr], dim=0)[:-slen] 
+                
+                # [num_blocks, block_size, k/v_head_size]
+                key = key.view(num_blocks, block_size, k_head_size)
+                value = value.view(num_blocks, block_size, v_head_size)
+
+                cache_k(key,
+                        key_cache,
+                        attn_metadata.block_indices[start_block_idx:end_block_idx],
+                        attn_metadata.block_offsets,
+                        )
+                cache_v(value,
+                        value_cache,
+                        attn_metadata.block_indices[start_block_idx:end_block_idx],
+                        attn_metadata.block_offsets,
+                        )
+            start_block_idx = end_block_idx
+            hidden_or_intermediate_states_for_one_req.append(hidden)
+        if not bypass_model_exec:
+            # Some of the KV cache is not retrieved
+            # Here we will fall back to normal model forwarding
+            # But optionally you can adjust model_input so that you only do
+            # prefilling on those tokens that are missing KV caches.
+            logger.debug(
+                "[rank%d]: Failed to receive all KVs and hidden "
+                "states, redo model forwarding.", torch.distributed.get_rank())
+            hidden_or_intermediate_states = None
+
+        else:
+            logger.debug(
+                "[rank%d]: Successfully received all KVs and hidden "
+                "states, skip model forwarding.", torch.distributed.get_rank())
+            hidden_or_intermediate_states = torch.cat(
+                hidden_or_intermediate_states_for_one_req, dim=0)
+
+        return hidden_or_intermediate_states.to("hpu"), bypass_model_exec, model_input
 
     def close(self):
         self.producer_data_pipe.close()

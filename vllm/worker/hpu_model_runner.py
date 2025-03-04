@@ -30,7 +30,7 @@ from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
 
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.config import DeviceConfig, VllmConfig
-from vllm.distributed import broadcast_tensor_dict
+from vllm.distributed import get_kv_transfer_group, broadcast_tensor_dict
 from vllm.distributed.parallel_state import get_world_group
 from vllm.forward_context import set_forward_context
 from vllm.inputs import INPUT_REGISTRY, InputRegistry
@@ -307,7 +307,7 @@ class HpuModelAdapter:
             mask, -math.inf))
 
         if not is_fake_hpu():
-            block_mapping = torch.nn.functional.one_hot(metadata.block_groups,
+            block_mapping = torch.nn.functional.one_hot(metadata.block_groups.long(),
                                                         num_classes=batch_size)
         else:
             # Unfortunately one_hot on CPU
@@ -390,6 +390,22 @@ class HpuModelAdapter:
                 "The module at the end of the path does not have \
                 a 'prepare_cos_sin' method.")
 
+    def forward_update_meta_only(self, *args, **kwargs):
+        kwargs = kwargs.copy()
+        selected_token_indices = kwargs.pop('selected_token_indices')
+        if 'warmup_mode' in kwargs:
+            kwargs.pop('warmup_mode')
+        virtual_engine = 0
+        if 'virtual_engine' in kwargs:
+            virtual_engine = kwargs.pop('virtual_engine')
+        input_ids = kwargs['input_ids']
+        attn_metadata = self._update_metadata(
+            kwargs['attn_metadata'], input_ids.size(0), input_ids.size(1),
+            input_ids.device, self.dtype)
+        kwargs['attn_metadata'] = attn_metadata
+        return attn_metadata
+
+    
     def forward(self, *args, **kwargs):
         kwargs = kwargs.copy()
         selected_token_indices = kwargs.pop('selected_token_indices')
@@ -1248,7 +1264,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 tensor, block_bucket_size, pad_value)
 
         block_list = padding_fn(block_list, _PAD_BLOCK_ID)
-        block_groups = padding_fn(block_groups, -1)
+        block_groups = padding_fn(block_groups, 0)
         block_usage = padding_fn(block_usage, 1)
 
         if is_enc_dec_model:
@@ -2110,6 +2126,54 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                                    is_prompt=is_prompt,
                                    virtual_engine=virtual_engine)
 
+    def need_recv_kv(self, model_input, kv_caches) -> bool:
+        """Check if we need to receive kv-cache from the other worker.
+        We need to receive KV when
+            1. current vLLM instance is KV cache consumer/decode vLLM instance
+            2. this batch is not a profiling run
+            3. this batch is a prefill run
+            
+        Args:
+            model_input: input to the model executable
+            kv_caches: vLLM's paged memory
+        """
+
+        if self.vllm_config.kv_transfer_config is None:
+            return False
+        
+        is_prefill_run = model_input.attn_metadata.is_prompt
+
+        # check if the current run is profiling
+        is_profile_run = kv_caches[0] is None or (kv_caches[0][0].numel() == 0)
+        # check if the current run is prefill
+        return self.vllm_config.kv_transfer_config.is_kv_consumer and (
+            not is_profile_run) and is_prefill_run
+
+    def need_send_kv(self, model_input, kv_caches) -> bool:
+        """Check if we need to send kv-cache to the other worker.
+        We need to send KV when
+            1. current vLLM instance is KV cache producer/prefill vLLM instance
+            2. this batch is not a profiling run
+            3. this batch is a prefill run
+            
+        Args:
+            model_input: input to the model executable
+            kv_caches: vLLM's paged memory
+        """
+
+        if self.vllm_config.kv_transfer_config is None:
+            return False
+
+        is_prefill_run = model_input.attn_metadata.is_prompt
+
+        # check if the current run is profiling
+        is_profile_run = kv_caches[0] is None or (kv_caches[0][0].numel() == 0)
+        # check if the current run is prefill
+
+        return self.vllm_config.kv_transfer_config.is_kv_producer and (
+            not is_profile_run) and is_prefill_run
+
+
     def _check_config(self, batch_size, seq_len, is_prompt, warmup_mode):
         cfg = (batch_size, seq_len, is_prompt)
         seen = cfg in self.seen_configs
@@ -2299,16 +2363,56 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         self.trim_attn_metadata(
                             broadcast_data["attn_metadata"])
                     })
-                with self.profiler.record_event('internal', model_event_name):
-                    hidden_states = self.model.forward(
-                        **execute_model_kwargs,
-                        selected_token_indices=sampling_metadata.
-                        selected_token_indices)
-                    if warmup_mode == True:
-                        torch.hpu.synchronize()
-                        import torch.distributed as dist
-                        if dist.is_initialized():
-                            dist.barrier()
+                # Receive KV cache in distributed KV cache transfer setting
+                # In disagg prefill setting, it will also recv hidden states and bypass
+                # model forwarding
+                # In KV cache database setting, it will change the model input so that
+                # we can skip prefilling on tokens that successfully received KV caches
+                # NOTE: The receive operation is blocking
+                bypass_model_exec = False
+                if self.need_recv_kv(model_input, kv_caches):
+                    attn_metadata = self.model.forward_update_meta_only(
+                            **execute_model_kwargs,
+                            selected_token_indices=sampling_metadata.
+                            selected_token_indices)
+                    # model_input.attn_metadata._replace(block_offsets=execute_model_kwargs["attn_metadata"].block_offsets,
+                    #                                    block_indices=execute_model_kwargs["attn_metadata"].block_indices)
+                    hidden_states, bypass_model_exec, model_input = \
+                    get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
+                        # model is used to know which layer the current worker
+                        # is working on, so that we can receive KV for only those
+                        # layers.
+                        self.get_model(),
+                        model_input,
+                        attn_metadata,
+                        kv_caches=kv_caches
+                    )
+                if not bypass_model_exec:
+                    with self.profiler.record_event('internal', model_event_name):
+                        hidden_states = self.model.forward(
+                            **execute_model_kwargs,
+                            selected_token_indices=sampling_metadata.
+                            selected_token_indices)
+                        if warmup_mode == True:
+                            torch.hpu.synchronize()
+                            import torch.distributed as dist
+                            if dist.is_initialized():
+                                dist.barrier()
+                else:
+                    logger.debug("Bypassing model execution")
+                htorch.core.mark_step()
+                # Sending KV cache in distributed KV cache transfer setting
+                # NOTE: the send operation is non-blocking
+                if self.need_send_kv(model_input, kv_caches):
+                    get_kv_transfer_group().send_kv_caches_and_hidden_states_hpu(
+                        # model_executable is used to know which layer the current
+                        # worker is working on, so that we can send KV for only those
+                        # layers.
+                        self.get_model(),
+                        model_input,
+                        kv_caches,
+                        hidden_states,
+                    )
                 if self.lora_config:
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
