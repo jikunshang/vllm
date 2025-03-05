@@ -231,6 +231,8 @@ class SimpleConnector(KVConnectorBase):
         # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
         # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
         for idx, slen in enumerate(seq_lens):
+            if slen == 1: # we think this is a padding sequence, so we skip it
+                continue
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
             current_tokens = input_tokens_tensor[idx][:slen]
@@ -249,6 +251,8 @@ class SimpleConnector(KVConnectorBase):
 
             keys = torch.cat(keys, dim=0)
             values = torch.cat(values, dim=0)
+            print(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
+            print(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
             self.insert(current_tokens,
                         torch.ones_like(current_tokens,
                                         dtype=bool), keys, values,
@@ -380,7 +384,7 @@ class SimpleConnector(KVConnectorBase):
         slot_mapping = attn_metadata.slot_mapping.flatten()
 
         hidden_or_intermediate_states_for_one_req = []
-
+        # print(f"we want to recv total {len(seq_lens)} requests, seq_lens: {seq_lens}")
         input_tokens_list = []
         num_computed_tokens_list = []
         start_pos_list = []
@@ -391,7 +395,9 @@ class SimpleConnector(KVConnectorBase):
         padding_k_tensor = torch.zeros((block_size, k_head_size), dtype=torch.bfloat16, device="hpu")
         padding_v_tenosr = torch.zeros((block_size, v_head_size), dtype=torch.bfloat16, device="hpu")
         start_block_idx = 0
-        
+        # write to cache
+        cache_k = VLLMKVCache()
+        cache_v = VLLMKVCache()
         # For each sequence in the batch, we recv
         # 0. current_tokens [seq_len]
         # 1. bool mask [seq_len]
@@ -404,7 +410,26 @@ class SimpleConnector(KVConnectorBase):
             end_pos = start_pos + slen
             current_tokens = input_tokens_tensor[idx][:slen]
             num_tokens = slen
-
+            num_blocks = (slen + 127) // 128
+            end_block_idx = start_block_idx + num_blocks
+            
+            # we think this is a padding sequence, so we skip it. but we still need write kv cache
+            if slen == 1:
+                cache_k(padding_k_tensor.unsqueeze(0),
+                        key_cache,
+                        attn_metadata.block_indices[start_block_idx:end_block_idx],
+                        attn_metadata.block_offsets,
+                        )
+                cache_v(padding_k_tensor.unsqueeze(0),
+                        key_cache,
+                        attn_metadata.block_indices[start_block_idx:end_block_idx],
+                        attn_metadata.block_offsets,
+                        )
+                hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
+                start_block_idx = end_block_idx
+                continue
+            
+            
             # collecting data for rebuilding the input
             input_tokens_list.append(current_tokens)
             start_pos_list.append(start_pos)
@@ -413,6 +438,7 @@ class SimpleConnector(KVConnectorBase):
                               torch.ones_like(current_tokens, dtype=bool))
             if ret[0] is None:
                 # didn't find any match.
+                print(f"cannot find match, token: {current_tokens}")
                 bypass_model_exec = False
                 num_computed_tokens_list.append(0)
                 continue
@@ -421,6 +447,7 @@ class SimpleConnector(KVConnectorBase):
             keys: torch.Tensor = ret[2]
             values: torch.Tensor = ret[3]
             hidden: torch.Tensor = ret[4]
+            # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
 
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
@@ -429,13 +456,12 @@ class SimpleConnector(KVConnectorBase):
             # If not, need to redo the forwarding to compute missing states
             if not all([(num_computed_tokens == num_tokens), hidden is not None
                         ]):
+                print(f"num_computed_tokens: {num_computed_tokens}, num_tokens: {num_tokens}, hidden: {hidden}")
                 bypass_model_exec = False
 
             # update the end position based on how many tokens are cached.
             end_pos = start_pos + num_computed_tokens
 
-            num_blocks = (slen + 127)// 128
-            end_block_idx = start_block_idx + num_blocks
             # put received KV caches into paged memory layer by layer
             # for each layer, we need to pad the key and value to 128, so 
             # key shape should be [num_blocks, block_size, num_kv_heads(1,ommited), k_head_size]
@@ -448,17 +474,14 @@ class SimpleConnector(KVConnectorBase):
 
                 key_cache, value_cache = kv_cache[0], kv_cache[1]
                 
-                # write to cache
-                cache_k = VLLMKVCache()
-                cache_v = VLLMKVCache()
                 # [num_layers, seq_len, num_kv_heads, k/v_head_size] -> [seq_len, k_head_size]
                 key = keys[current_layer_idx].to(key_cache.device).squeeze(-2)
                 value = values[current_layer_idx].to(key_cache.device).squeeze(-2) 
                 # print(f"ori kv shape: key: {key.shape}, value: {value.shape}")
                 #[seq_len, k/v_head_size] ->(padding) [seq_len + block_size, k/v_head_size]
                 # ->(slice) [num_blocks * block_size, k/v_head_size]
-                key = torch.cat([key, padding_k_tensor], dim=0)[:-slen] 
-                value = torch.cat([value, padding_v_tenosr], dim=0)[:-slen] 
+                key = torch.cat([key, padding_k_tensor], dim=0)[:num_blocks * block_size] 
+                value = torch.cat([value, padding_v_tenosr], dim=0)[:num_blocks * block_size] 
                 
                 # [num_blocks, block_size, k/v_head_size]
                 key = key.view(num_blocks, block_size, k_head_size)
@@ -491,9 +514,9 @@ class SimpleConnector(KVConnectorBase):
                 "[rank%d]: Successfully received all KVs and hidden "
                 "states, skip model forwarding.", torch.distributed.get_rank())
             hidden_or_intermediate_states = torch.cat(
-                hidden_or_intermediate_states_for_one_req, dim=0)
+                hidden_or_intermediate_states_for_one_req, dim=0).to("hpu")
 
-        return hidden_or_intermediate_states.to("hpu"), bypass_model_exec, model_input
+        return hidden_or_intermediate_states, bypass_model_exec, model_input
 
     def close(self):
         self.producer_data_pipe.close()

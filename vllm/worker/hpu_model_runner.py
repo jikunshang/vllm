@@ -307,7 +307,7 @@ class HpuModelAdapter:
             mask, -math.inf))
 
         if not is_fake_hpu():
-            block_mapping = torch.nn.functional.one_hot(metadata.block_groups.long(),
+            block_mapping = torch.nn.functional.one_hot(metadata.block_groups,#.long(),
                                                         num_classes=batch_size)
         else:
             # Unfortunately one_hot on CPU
@@ -1264,7 +1264,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 tensor, block_bucket_size, pad_value)
 
         block_list = padding_fn(block_list, _PAD_BLOCK_ID)
-        block_groups = padding_fn(block_groups, 0)
+        block_groups = padding_fn(block_groups, -1)
         block_usage = padding_fn(block_usage, 1)
 
         if is_enc_dec_model:
@@ -1400,7 +1400,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         is_prompt = seq_group_metadata_list[0].is_prompt
         base_event_name = 'prompt' if is_prompt else 'decode'
         self.profiler.start('internal', base_event_name)
-
+        # print(f"seq_group_metadata_list: {seq_group_metadata_list}")
         seq_group_metadata_list, real_batch_size, batch_size_padded = (
             self._add_dummy_seq(seq_group_metadata_list, is_prompt))
 
@@ -2387,6 +2387,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         attn_metadata,
                         kv_caches=kv_caches
                     )
+                htorch.core.mark_step()
                 if not bypass_model_exec:
                     with self.profiler.record_event('internal', model_event_name):
                         hidden_states = self.model.forward(
