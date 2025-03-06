@@ -236,7 +236,7 @@ class SimpleConnector(KVConnectorBase):
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
             current_tokens = input_tokens_tensor[idx][:slen]
-
+            print(f"send token len: {slen}, token: {current_tokens}")
             keys, values = [], []
 
             for layer_id in range(start_layer, end_layer):
@@ -253,10 +253,10 @@ class SimpleConnector(KVConnectorBase):
             values = torch.cat(values, dim=0)
             print(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
             print(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
-            self.insert(current_tokens,
+            self.insert(current_tokens.cpu(),
                         torch.ones_like(current_tokens,
-                                        dtype=bool), keys, values,
-                        hidden_or_intermediate_states[idx].unsqueeze(0))
+                                        dtype=bool).cpu(), keys.cpu(), values.cpu(),
+                        hidden_or_intermediate_states[idx].unsqueeze(0).cpu())
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
 
@@ -393,7 +393,7 @@ class SimpleConnector(KVConnectorBase):
         v_head_size = 512
         block_size = 128
         padding_k_tensor = torch.zeros((block_size, k_head_size), dtype=torch.bfloat16, device="hpu")
-        padding_v_tenosr = torch.zeros((block_size, v_head_size), dtype=torch.bfloat16, device="hpu")
+        padding_v_tensor = torch.zeros((block_size, v_head_size), dtype=torch.bfloat16, device="hpu")
         start_block_idx = 0
         # write to cache
         cache_k = VLLMKVCache()
@@ -420,8 +420,8 @@ class SimpleConnector(KVConnectorBase):
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
                         )
-                cache_v(padding_k_tensor.unsqueeze(0),
-                        key_cache,
+                cache_v(padding_v_tensor.unsqueeze(0),
+                        value_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
                         )
@@ -433,9 +433,9 @@ class SimpleConnector(KVConnectorBase):
             # collecting data for rebuilding the input
             input_tokens_list.append(current_tokens)
             start_pos_list.append(start_pos)
-
-            ret = self.select(current_tokens,
-                              torch.ones_like(current_tokens, dtype=bool))
+            logger.debug(f"call select API from decode server, select tokens: {current_tokens.shape}")
+            ret = self.select(current_tokens.cpu(),
+                              torch.ones_like(current_tokens, dtype=bool).cpu())
             if ret[0] is None:
                 # didn't find any match.
                 print(f"cannot find match, token: {current_tokens}")
@@ -481,7 +481,7 @@ class SimpleConnector(KVConnectorBase):
                 #[seq_len, k/v_head_size] ->(padding) [seq_len + block_size, k/v_head_size]
                 # ->(slice) [num_blocks * block_size, k/v_head_size]
                 key = torch.cat([key, padding_k_tensor], dim=0)[:num_blocks * block_size] 
-                value = torch.cat([value, padding_v_tenosr], dim=0)[:num_blocks * block_size] 
+                value = torch.cat([value, padding_v_tensor], dim=0)[:num_blocks * block_size] 
                 
                 # [num_blocks, block_size, k/v_head_size]
                 key = key.view(num_blocks, block_size, k_head_size)

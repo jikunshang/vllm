@@ -73,6 +73,11 @@ class SimpleBuffer(KVLookupBufferBase):
 
         # simple common prefix matching
         min_length = min(len(tokens_sender), len(tokens_recver))
+        # print(f"min_length is: {min_length}")
+        if tokens_sender is None:
+            print(f"tokens_sender is: None")
+        if tokens_recver is None:
+            print(f"tokens_recver is none")
         if torch.allclose(tokens_sender[:min_length],
                           tokens_recver[:min_length]):
             return min_length
