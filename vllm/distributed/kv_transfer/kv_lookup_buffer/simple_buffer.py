@@ -107,17 +107,17 @@ class SimpleBuffer(KVLookupBufferBase):
     def _add_to_buffer(self, input_tokens: torch.Tensor, roi: torch.Tensor,
                        key: torch.Tensor, value: torch.Tensor,
                        hidden: torch.Tensor):
-
-        if isinstance(input_tokens, torch.Tensor):
-            input_tokens = input_tokens.clone()
-        if isinstance(roi, torch.Tensor):
-            roi = roi.clone()
-        if isinstance(key, torch.Tensor):
-            key = key.clone()
-        if isinstance(value, torch.Tensor):
-            value = value.clone()
-        if isinstance(hidden, torch.Tensor):
-            hidden = hidden.clone()
+        # we move to cpu before calling insert, so we don't clone another copy here
+        # if isinstance(input_tokens, torch.Tensor):
+        #     input_tokens = input_tokens.clone()
+        # if isinstance(roi, torch.Tensor):
+        #     roi = roi.clone()
+        # if isinstance(key, torch.Tensor):
+        #     key = key.clone()
+        # if isinstance(value, torch.Tensor):
+        #     value = value.clone()
+        # if isinstance(hidden, torch.Tensor):
+        #     hidden = hidden.clone()
 
         buffer_item = [input_tokens, roi, key, value, hidden]
 
@@ -190,11 +190,11 @@ class SimpleBuffer(KVLookupBufferBase):
         assert self.request_handling_thread is None, \
             "drop_select should be called by the KV cache consumer "\
             "(e.g. the decode vLLM instance)"
-
-        if isinstance(input_tokens, torch.Tensor):
-            input_tokens = input_tokens.clone()
-        if isinstance(roi, torch.Tensor):
-            roi = roi.clone().float()
+        # we move to cpu before calling insert, so we don't clone another copy here
+        # if isinstance(input_tokens, torch.Tensor):
+        #     input_tokens = input_tokens.clone()
+        # if isinstance(roi, torch.Tensor):
+        #     roi = roi.clone().float()
 
         self.signal_pipe.send_tensor(self.normal_signal)
         self.data_pipe.send_tensor(input_tokens)
