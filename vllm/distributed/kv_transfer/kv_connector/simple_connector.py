@@ -236,7 +236,7 @@ class SimpleConnector(KVConnectorBase):
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
             current_tokens = input_tokens_tensor[idx][:slen]
-            print(f"send token len: {slen}, token: {current_tokens}")
+            logger.debug(f"send token len: {slen}, token: {current_tokens}")
             keys, values = [], []
 
             for layer_id in range(start_layer, end_layer):
@@ -251,8 +251,8 @@ class SimpleConnector(KVConnectorBase):
 
             keys = torch.cat(keys, dim=0)
             values = torch.cat(values, dim=0)
-            print(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
-            print(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
+            logger.debug(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
+            logger.debug(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
             self.insert(current_tokens.cpu(),
                         torch.ones_like(current_tokens,
                                         dtype=bool).cpu(), keys.cpu(), values.cpu(),
