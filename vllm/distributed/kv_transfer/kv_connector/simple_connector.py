@@ -19,7 +19,7 @@ from vllm.distributed.kv_transfer.kv_lookup_buffer.simple_buffer import (
     SimpleBuffer)
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
-from vllm.distributed import tensor_model_parallel_all_reduce
+from vllm.distributed import tensor_model_parallel_all_gather
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
@@ -40,6 +40,9 @@ class SimpleConnector(KVConnectorBase):
 
         self.config = config.kv_transfer_config
         self.tp_size = config.parallel_config.tensor_parallel_size
+        self.local_rank = local_rank
+        self.local_offset_start = (64+512) // self.tp_size * local_rank
+        self.local_offset_end = (64+512) // self.tp_size * (local_rank + 1)
 
         if self.config.kv_connector == "PyNcclConnector":
             from vllm.distributed.kv_transfer.kv_pipe.pynccl_pipe import (
@@ -229,8 +232,8 @@ class SimpleConnector(KVConnectorBase):
         # For each sequence in the batch, we send
         # 0. current_tokens [seq_len]
         # 1. bool mask [seq_len]
-        # 2. key [num_layers, seq_len, num_kv_heads, k_head_size], [61, seq_len, 1, 64]
-        # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
+        # 2. key [num_layers, seq_len, num_kv_heads, (k_head_size + v_head_size) // tp_size ], [61, seq_len, 1, 72]
+        # 3. empty tensor
         # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
         for idx, slen in enumerate(seq_lens):
             if slen == 1: # we think this is a padding sequence, so we skip it
@@ -242,9 +245,10 @@ class SimpleConnector(KVConnectorBase):
             keys, values = [], []
 
             for layer_id in range(start_layer, end_layer):
-                kv_cache = kv_caches[layer_id - start_layer] 
-                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)
-                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
+                kv_cache = kv_caches[layer_id - start_layer]
+                # only get current rank shard 
+                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)[..., self.local_offset_start:self.local_offset_end]
+                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)[..., self.local_offset_start:self.local_offset_end]
 
                 current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
 
@@ -407,8 +411,8 @@ class SimpleConnector(KVConnectorBase):
         # For each sequence in the batch, we recv
         # 0. current_tokens [seq_len]
         # 1. bool mask [seq_len]
-        # 2. key [num_layers, seq_len, num_kv_heads, k_head_size], [61, seq_len, 1, 64]
-        # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
+        # 2. key_values [num_layers, seq_len, num_kv_heads, (k_head_size + v_head_size) // 8], [61, seq_len, 1, 72]
+        # 3. empty tensor
         # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
         for idx, slen in enumerate(seq_lens):
             start = time.time()
@@ -454,7 +458,15 @@ class SimpleConnector(KVConnectorBase):
             placeholder: torch.Tensor = ret[3]
             hidden: torch.Tensor = ret[4]
             # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
-            # TODO: all gather here
+            # all gather here
+            key_values = key_values.to("hpu")
+            torch.hpu.synchronize()
+            start = time.time()
+            key_values = tensor_model_parallel_all_gather(key_values, -1)
+            torch.hpu.synchronize()
+            end = time.time()
+            logger.info(f"all gather time takes: {end - start}")
+            
             keys = key_values[..., :k_head_size]
             values = key_values[..., k_head_size:]
             num_computed_tokens = roi.shape[0]
