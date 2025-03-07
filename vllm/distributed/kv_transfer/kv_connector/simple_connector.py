@@ -8,6 +8,7 @@ MooncakePipe.
 But the logic can be extended to support other pipe and lookup buffer.
 """
 from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+import time
 
 import torch
 
@@ -405,6 +406,7 @@ class SimpleConnector(KVConnectorBase):
         # 3. value [num_layers, seq_len, num_kv_heads, v_head_size], [61, seq_len, 1, 512]
         # 4. hidden_or_intermediate_states [???seq_len, hidden_size]
         for idx, slen in enumerate(seq_lens):
+            start = time.time()
 
             start_pos = sum(seq_lens[:idx])
             end_pos = start_pos + slen
@@ -428,8 +430,7 @@ class SimpleConnector(KVConnectorBase):
                 hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
                 start_block_idx = end_block_idx
                 continue
-            
-            
+
             # collecting data for rebuilding the input
             input_tokens_list.append(current_tokens)
             start_pos_list.append(start_pos)
@@ -451,6 +452,8 @@ class SimpleConnector(KVConnectorBase):
 
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
+            cur = time.time()
+            logger.info(f"select time for this request: {cur - start}")
 
             # check if both KV cache and the hidden states are received
             # If not, need to redo the forwarding to compute missing states

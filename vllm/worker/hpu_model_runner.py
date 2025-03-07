@@ -2371,6 +2371,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 # NOTE: The receive operation is blocking
                 bypass_model_exec = False
                 if self.need_recv_kv(model_input, kv_caches):
+                    cur_time = time.time()
                     attn_metadata = self.model.forward_update_meta_only(
                             **execute_model_kwargs,
                             selected_token_indices=sampling_metadata.
@@ -2387,6 +2388,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         attn_metadata,
                         kv_caches=kv_caches
                     )
+                    now = time.time()
+                    logger.info(f"KV transfer recv time: {now - cur_time}")
                 htorch.core.mark_step()
                 if not bypass_model_exec:
                     with self.profiler.record_event('internal', model_event_name):
@@ -2402,8 +2405,10 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 else:
                     logger.debug("Bypassing model execution")
                 htorch.core.mark_step()
+                torch.hpu.synchronize()
                 # Sending KV cache in distributed KV cache transfer setting
                 # NOTE: the send operation is non-blocking
+                cur_time = time.time()
                 if self.need_send_kv(model_input, kv_caches):
                     get_kv_transfer_group().send_kv_caches_and_hidden_states_hpu(
                         # model_executable is used to know which layer the current
@@ -2414,6 +2419,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         kv_caches,
                         hidden_states,
                     )
+                    now = time.time()
+                    logger.info(f"KV transfer recv time: {now - cur_time}")
                 if self.lora_config:
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
