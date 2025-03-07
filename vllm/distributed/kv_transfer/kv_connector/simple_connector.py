@@ -19,6 +19,7 @@ from vllm.distributed.kv_transfer.kv_lookup_buffer.simple_buffer import (
     SimpleBuffer)
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
+from vllm.distributed import tensor_model_parallel_all_reduce
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
@@ -252,11 +253,13 @@ class SimpleConnector(KVConnectorBase):
 
             keys = torch.cat(keys, dim=0)
             values = torch.cat(values, dim=0)
+            # we pack kv together, only need send one tensor
+            key_values = torch.cat([keys, values], dim=-1)
             logger.debug(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
             logger.debug(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
             self.insert(current_tokens.cpu(),
                         torch.ones_like(current_tokens,
-                                        dtype=bool).cpu(), keys.cpu(), values.cpu(),
+                                        dtype=bool).cpu(), key_values.cpu(), 
                         hidden_or_intermediate_states[idx].unsqueeze(0).cpu())
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
@@ -445,11 +448,12 @@ class SimpleConnector(KVConnectorBase):
                 continue
 
             roi: torch.Tensor = ret[1]
-            keys: torch.Tensor = ret[2]
-            values: torch.Tensor = ret[3]
-            hidden: torch.Tensor = ret[4]
+            key_values: torch.Tensor = ret[2]
+            hidden: torch.Tensor = ret[3]
             # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
-
+            # TODO: all gather here
+            keys = key_values[:, :, :k_head_size]
+            values = key_values[:, :, k_head_size:]
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
             cur = time.time()
@@ -469,6 +473,7 @@ class SimpleConnector(KVConnectorBase):
             # for each layer, we need to pad the key and value to 128, so 
             # key shape should be [num_blocks, block_size, num_kv_heads(1,ommited), k_head_size]
             # value shape should be [num_blocks, block_size, num_kv_heads(1,ommited), v_head_size]
+            
             for i in range(model_executable.model.start_layer,
                            model_executable.model.end_layer):
                 current_layer_idx = i - model_executable.model.start_layer
@@ -502,6 +507,8 @@ class SimpleConnector(KVConnectorBase):
                         )
             start_block_idx = end_block_idx
             hidden_or_intermediate_states_for_one_req.append(hidden)
+            end = time.time()
+            logger.info(f"cache time: {end - cur}")
         if not bypass_model_exec:
             # Some of the KV cache is not retrieved
             # Here we will fall back to normal model forwarding
