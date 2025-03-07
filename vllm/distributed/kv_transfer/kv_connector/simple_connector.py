@@ -447,6 +447,7 @@ class SimpleConnector(KVConnectorBase):
             logger.debug(f"call select API from decode server, select tokens: {current_tokens.shape}")
             ret = self.select(current_tokens.cpu(),
                               torch.ones_like(current_tokens, dtype=bool).cpu())
+            logger.info(f"select time takes: {time.time() - start}")
             if ret[0] is None:
                 # didn't find any match.
                 print(f"cannot find match, token: {current_tokens}")
@@ -462,11 +463,11 @@ class SimpleConnector(KVConnectorBase):
             # all gather here
             key_values = key_values.to("hpu")
             torch.hpu.synchronize()
-            start = time.time()
+            all_gather_start = time.time()
             key_values = tensor_model_parallel_all_gather(key_values, -1)
             torch.hpu.synchronize()
             end = time.time()
-            logger.info(f"all gather time takes: {end - start}")
+            logger.info(f"all gather time takes: {end - all_gather_start}")
             
             keys = key_values[..., :self.k_head_size]
             values = key_values[..., self.k_head_size:]
