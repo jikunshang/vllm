@@ -455,8 +455,8 @@ class SimpleConnector(KVConnectorBase):
             hidden: torch.Tensor = ret[4]
             # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
             # TODO: all gather here
-            keys = key_values[:, :, :k_head_size]
-            values = key_values[:, :, k_head_size:]
+            keys = key_values[..., :k_head_size]
+            values = key_values[..., k_head_size:]
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
             cur = time.time()
