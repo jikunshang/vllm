@@ -76,7 +76,13 @@ class SimpleConnector(KVConnectorBase):
         self.consumer_data_pipe: Union[PyNcclPipe, MooncakePipe]
         self.producer_signal_pipe: Union[PyNcclPipe, MooncakePipe]
         self.consumer_signal_pipe: Union[PyNcclPipe, MooncakePipe]
-
+        self.k_head_size = 64
+        self.v_head_size = 512
+        self.block_size = 128
+        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=torch.bfloat16, device="hpu")
+        self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=torch.bfloat16, device="hpu")
+        self.cache_k = VLLMKVCache()
+        self.cache_v = VLLMKVCache()
         # 2 pipes for every rank in the world
         port_offset_base = 2 * rank
 
@@ -247,8 +253,8 @@ class SimpleConnector(KVConnectorBase):
             for layer_id in range(start_layer, end_layer):
                 kv_cache = kv_caches[layer_id - start_layer]
                 # only get current rank shard 
-                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)[..., self.local_offset_start:self.local_offset_end]
-                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)[..., self.local_offset_start:self.local_offset_end]
+                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)
+                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
 
                 current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
 
@@ -261,6 +267,7 @@ class SimpleConnector(KVConnectorBase):
             key_values = torch.cat([keys, values], dim=-1)
             logger.debug(f"idx: {idx}, slen: {slen}, start_pos: {start_pos}, end_pos: {end_pos}")
             logger.debug(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
+            key_values = key_values[..., self.local_offset_start:self.local_offset_end]
             self.insert(current_tokens.cpu(),
                         torch.ones_like(current_tokens,
                                         dtype=bool).cpu(),
@@ -399,15 +406,9 @@ class SimpleConnector(KVConnectorBase):
         num_computed_tokens_list = []
         start_pos_list = []
         num_kv_heads = 1
-        k_head_size = 64
-        v_head_size = 512
-        block_size = 128
-        padding_k_tensor = torch.zeros((block_size, k_head_size), dtype=torch.bfloat16, device="hpu")
-        padding_v_tensor = torch.zeros((block_size, v_head_size), dtype=torch.bfloat16, device="hpu")
         start_block_idx = 0
         # write to cache
-        cache_k = VLLMKVCache()
-        cache_v = VLLMKVCache()
+
         # For each sequence in the batch, we recv
         # 0. current_tokens [seq_len]
         # 1. bool mask [seq_len]
@@ -426,12 +427,12 @@ class SimpleConnector(KVConnectorBase):
             
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
             if slen == 1:
-                cache_k(padding_k_tensor.unsqueeze(0),
+                self.cache_k(self.padding_k_tensor.unsqueeze(0),
                         key_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
                         )
-                cache_v(padding_v_tensor.unsqueeze(0),
+                self.cache_v(self.padding_v_tensor.unsqueeze(0),
                         value_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
@@ -467,12 +468,12 @@ class SimpleConnector(KVConnectorBase):
             end = time.time()
             logger.info(f"all gather time takes: {end - start}")
             
-            keys = key_values[..., :k_head_size]
-            values = key_values[..., k_head_size:]
+            keys = key_values[..., :self.k_head_size]
+            values = key_values[..., self.k_head_size:]
             num_computed_tokens = roi.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
             cur = time.time()
-            logger.info(f"select time for this request: {cur - start}")
+            logger.info(f"select + allgather time for this request: {cur - start}")
 
             # check if both KV cache and the hidden states are received
             # If not, need to redo the forwarding to compute missing states
@@ -503,19 +504,19 @@ class SimpleConnector(KVConnectorBase):
                 # print(f"ori kv shape: key: {key.shape}, value: {value.shape}")
                 #[seq_len, k/v_head_size] ->(padding) [seq_len + block_size, k/v_head_size]
                 # ->(slice) [num_blocks * block_size, k/v_head_size]
-                key = torch.cat([key, padding_k_tensor], dim=0)[:num_blocks * block_size] 
-                value = torch.cat([value, padding_v_tensor], dim=0)[:num_blocks * block_size] 
+                key = torch.cat([key, self.padding_k_tensor], dim=0)[:num_blocks * self.block_size] 
+                value = torch.cat([value, self.padding_v_tensor], dim=0)[:num_blocks * self.block_size] 
                 
                 # [num_blocks, block_size, k/v_head_size]
-                key = key.view(num_blocks, block_size, k_head_size)
-                value = value.view(num_blocks, block_size, v_head_size)
+                key = key.view(num_blocks, self.block_size, self.k_head_size)
+                value = value.view(num_blocks, self.block_size, self.v_head_size)
 
-                cache_k(key,
+                self.cache_k(key,
                         key_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
                         )
-                cache_v(value,
+                self.cache_v(value,
                         value_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,

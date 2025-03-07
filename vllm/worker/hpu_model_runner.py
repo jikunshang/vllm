@@ -2405,7 +2405,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 else:
                     logger.debug("Bypassing model execution")
                 htorch.core.mark_step()
-                torch.hpu.synchronize()
+                # torch.hpu.synchronize()
                 # Sending KV cache in distributed KV cache transfer setting
                 # NOTE: the send operation is non-blocking
                 cur_time = time.time()
@@ -2420,7 +2420,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         hidden_states,
                     )
                     now = time.time()
-                    logger.info(f"KV transfer recv time: {now - cur_time}")
+                    logger.info(f"KV transfer send time: {now - cur_time}")
                 if self.lora_config:
                     LoraMask.setLoraMask(
                         lora_logits_mask.index_select(
