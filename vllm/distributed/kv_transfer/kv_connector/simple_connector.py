@@ -259,7 +259,9 @@ class SimpleConnector(KVConnectorBase):
             logger.debug(f"keys shape: {keys.shape}, values shape: {values.shape}, hidden_or_intermediate_states: {hidden_or_intermediate_states.shape}")
             self.insert(current_tokens.cpu(),
                         torch.ones_like(current_tokens,
-                                        dtype=bool).cpu(), key_values.cpu(), 
+                                        dtype=bool).cpu(),
+                        key_values.cpu(),
+                        torch.zeros(1, device="cpu"),
                         hidden_or_intermediate_states[idx].unsqueeze(0).cpu())
 
         logger.debug("[rank%d]: KV send DONE.", torch.distributed.get_rank())
@@ -449,7 +451,8 @@ class SimpleConnector(KVConnectorBase):
 
             roi: torch.Tensor = ret[1]
             key_values: torch.Tensor = ret[2]
-            hidden: torch.Tensor = ret[3]
+            placeholder: torch.Tensor = ret[3]
+            hidden: torch.Tensor = ret[4]
             # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
             # TODO: all gather here
             keys = key_values[:, :, :k_head_size]
