@@ -76,6 +76,17 @@ class MooncakeTransferEngine:
             raise
         prefill_host, base_prefill_port = self.config.prefill_url.split(':')
         decode_host, base_decode_port = self.config.decode_url.split(':')
+        prefill_host_list = prefill_host.split('.')
+        decode_host_list = decode_host.split('.')
+        prefill_last = prefill_host_list[-1]
+        decode_last = decode_host_list[-1]
+        prefill_real = str(int(prefill_last)+self.local_rank)
+        decode_real = str(int(decode_last)+self.local_rank)
+        prefill_host_list[-1] = prefill_real
+        decode_host_list[-1] = decode_real
+        prefill_host = '.'.join(prefill_host_list)
+        decode_host = '.'.join(decode_host_list)
+        # print(f"prefill_host: {prefill_host}, decode_host: {decode_host}")
 
         # Avoid ports conflict when running prefill and decode on the same node
         if prefill_host == decode_host and \
