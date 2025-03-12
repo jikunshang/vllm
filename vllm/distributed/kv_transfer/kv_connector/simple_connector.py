@@ -422,6 +422,7 @@ class SimpleConnector(KVConnectorBase):
             current_tokens = input_tokens_tensor[idx][:slen]
             num_tokens = slen
             num_blocks = (slen + 127) // 128
+            padding_size = (128 - slen % 128) % 128
             end_block_idx = start_block_idx + num_blocks
                         
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
@@ -504,8 +505,8 @@ class SimpleConnector(KVConnectorBase):
                 
                 # [seq_len, k/v_head_size] ->(padding [seq_len % block_size, k/v_head_size]) ->
                 # [num_blocks * block_size, k/v_head_size]
-                key = torch.cat([key, self.padding_k_tensor[slen % self.block_size:]], dim=0)
-                value = torch.cat([value, self.padding_v_tensor[slen % self.block_size:]], dim=0)
+                key = torch.cat([key, self.padding_k_tensor[:padding_size]], dim=0)
+                value = torch.cat([value, self.padding_v_tensor[:padding_size]], dim=0)
                 
                 # [num_blocks, block_size, k/v_head_size]
                 key = key.view(num_blocks, self.block_size, self.k_head_size)
