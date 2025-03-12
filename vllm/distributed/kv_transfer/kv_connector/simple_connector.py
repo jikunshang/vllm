@@ -401,7 +401,6 @@ class SimpleConnector(KVConnectorBase):
         slot_mapping = attn_metadata.slot_mapping.flatten()
 
         hidden_or_intermediate_states_for_one_req = []
-        # print(f"we want to recv total {len(seq_lens)} requests, seq_lens: {seq_lens}")
         input_tokens_list = []
         num_computed_tokens_list = []
         start_pos_list = []
@@ -424,7 +423,7 @@ class SimpleConnector(KVConnectorBase):
             num_tokens = slen
             num_blocks = (slen + 127) // 128
             end_block_idx = start_block_idx + num_blocks
-            
+                        
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
             if slen == 1:
                 self.cache_k(self.padding_k_tensor.unsqueeze(0),
@@ -450,7 +449,7 @@ class SimpleConnector(KVConnectorBase):
             logger.info(f"select time takes: {time.time() - start}")
             if ret[0] is None:
                 # didn't find any match.
-                print(f"cannot find match, token: {current_tokens}")
+                logger.warning(f"cannot find match, token: {current_tokens}")
                 bypass_model_exec = False
                 num_computed_tokens_list.append(0)
                 continue
@@ -459,7 +458,7 @@ class SimpleConnector(KVConnectorBase):
             key_values: torch.Tensor = ret[2]
             placeholder: torch.Tensor = ret[3]
             hidden: torch.Tensor = ret[4]
-            # print(f"idx: {idx}  keys shape: {keys.shape}, values shape: {values.shape}, hidden shape: {hidden.shape}")
+
             # all gather here
             key_values = key_values.to("hpu")
             torch.hpu.synchronize()
@@ -480,7 +479,7 @@ class SimpleConnector(KVConnectorBase):
             # If not, need to redo the forwarding to compute missing states
             if not all([(num_computed_tokens == num_tokens), hidden is not None
                         ]):
-                print(f"num_computed_tokens: {num_computed_tokens}, num_tokens: {num_tokens}, hidden: {hidden}")
+                logger.info(f"Cannot bypass, num_computed_tokens: {num_computed_tokens}, num_tokens: {num_tokens}, hidden: {hidden}")
                 bypass_model_exec = False
 
             # update the end position based on how many tokens are cached.
@@ -498,20 +497,21 @@ class SimpleConnector(KVConnectorBase):
                 layer = model_executable.model.layers[i] # for kv scale
 
                 key_cache, value_cache = kv_cache[0], kv_cache[1]
+
+                # [num_layers, seq_len, num_kv_heads, k/v_head_size] -> [seq_len, k/v_head_size]
+                key = keys[current_layer_idx].squeeze(-2)
+                value = values[current_layer_idx].squeeze(-2) 
                 
-                # [num_layers, seq_len, num_kv_heads, k/v_head_size] -> [seq_len, k_head_size]
-                key = keys[current_layer_idx].to(key_cache.device).squeeze(-2)
-                value = values[current_layer_idx].to(key_cache.device).squeeze(-2) 
-                # print(f"ori kv shape: key: {key.shape}, value: {value.shape}")
-                #[seq_len, k/v_head_size] ->(padding) [seq_len + block_size, k/v_head_size]
-                # ->(slice) [num_blocks * block_size, k/v_head_size]
-                key = torch.cat([key, self.padding_k_tensor], dim=0)[:num_blocks * self.block_size] 
-                value = torch.cat([value, self.padding_v_tensor], dim=0)[:num_blocks * self.block_size] 
+                # [seq_len, k/v_head_size] ->(padding [seq_len % block_size, k/v_head_size]) ->
+                # [num_blocks * block_size, k/v_head_size]
+                key = torch.cat([key, self.padding_k_tensor[slen % self.block_size:]], dim=0)
+                value = torch.cat([value, self.padding_v_tensor[slen % self.block_size:]], dim=0)
                 
                 # [num_blocks, block_size, k/v_head_size]
                 key = key.view(num_blocks, self.block_size, self.k_head_size)
                 value = value.view(num_blocks, self.block_size, self.v_head_size)
 
+                # ====== D2D =======
                 self.cache_k(key,
                         key_cache,
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
@@ -523,7 +523,7 @@ class SimpleConnector(KVConnectorBase):
                         attn_metadata.block_offsets,
                         )
             start_block_idx = end_block_idx
-            hidden_or_intermediate_states_for_one_req.append(hidden)
+            hidden_or_intermediate_states_for_one_req.append(hidden.to("hpu"))
             end = time.time()
             logger.info(f"cache time: {end - cur}")
         if not bypass_model_exec:
@@ -531,7 +531,7 @@ class SimpleConnector(KVConnectorBase):
             # Here we will fall back to normal model forwarding
             # But optionally you can adjust model_input so that you only do
             # prefilling on those tokens that are missing KV caches.
-            logger.debug(
+            logger.warning(
                 "[rank%d]: Failed to receive all KVs and hidden "
                 "states, redo model forwarding.", torch.distributed.get_rank())
             hidden_or_intermediate_states = None
