@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional, Union
 
+import time
+
 import torch
 import zmq
 
@@ -241,7 +243,9 @@ class MooncakePipe(KVPipeBase):
 
     def _recv_impl(self) -> torch.Tensor:
         """Implement the tensor receiving logic."""
+        start = time.time()
         data = self.transfer_engine.recv_bytes()
+        logger.info("Time taken to receive bytes: %s", time.time() - start)
         return pickle.loads(data)
 
     def send_tensor(self, tensor: Optional[torch.Tensor]) -> None:
