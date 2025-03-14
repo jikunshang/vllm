@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 import gc
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 import torch
@@ -14,6 +14,9 @@ from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
                         is_pin_memory_available)
 from vllm.v1.attention.backends.ipex_attn import IPEXAttentionMetadata
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
+from vllm.v1.sample.rejection_sampler import RejectionSampler
+from vllm.v1.spec_decode.metadata import SpecDecodeMetadata
+from vllm.v1.spec_decode.ngram_proposer import NgramProposer
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
@@ -55,6 +58,14 @@ class XPUModelRunner(GPUModelRunner):
             self.kv_cache_dtype = STR_DTYPE_TO_TORCH_DTYPE[
                 cache_config.cache_dtype]
 
+        # NOTE(woosuk): sliding_window is None for models with interleaved
+        # attention. Use interleaved_sliding_window instead.
+        self.sliding_window = model_config.get_sliding_window()
+        self.interleaved_sliding_window = getattr(
+            model_config.hf_text_config, "interleaved_sliding_window", None)
+        self.window_size = (self.sliding_window
+                            or self.interleaved_sliding_window)
+
         self.is_multimodal_model = model_config.is_multimodal_model
         self.sliding_window = model_config.get_sliding_window()
         self.block_size = cache_config.block_size
@@ -79,6 +90,16 @@ class XPUModelRunner(GPUModelRunner):
             self.model_config.is_attention_free,
             use_mla=self.model_config.use_mla,
         )
+        if self.attn_backend is None:
+            error_msg = (
+                f"Error with get_att_backend: {self.head_size=}, "
+                f"{self.dtype=}, {self.kv_cache_dtype=}, {self.block_size=}, "
+                f"{self.model_config.is_attention_free=}, "
+                f"{self.model_config.use_mla=}")
+            logger.error(error_msg)
+            raise NotImplementedError(
+                "Non-Attention backend is not supported by V1 GPUModelRunner.")
+
         # Multi-modal data support
         self.input_registry = INPUT_REGISTRY
         self.mm_registry = MULTIMODAL_REGISTRY
@@ -97,7 +118,26 @@ class XPUModelRunner(GPUModelRunner):
         self.kv_caches: list[torch.Tensor] = []
         # req_id -> (input_id -> encoder_output)
         self.encoder_cache: dict[str, dict[int, torch.Tensor]] = {}
+
+        # Set up speculative decoding.
         self.use_spec_decode = False
+        if self.speculative_config:
+            self.use_spec_decode = True
+            # TODO: find a better way to check if we are using ngram.
+            assert self.speculative_config.method == "ngram", \
+                    "Currently, only ngram spec decode is supported in V1."
+            self.rejection_sampler = RejectionSampler()
+            #if get_pp_group().is_last_rank:
+            self.drafter = NgramProposer()
+            # Trigger Numba JIT compilation for N-gram proposer.
+            # This usually takes less than 1 second.
+            self.drafter.propose(
+                np.zeros(1024, dtype=np.int32),
+                self.speculative_config.prompt_lookup_min,
+                self.speculative_config.prompt_lookup_max,
+                self.speculative_config.num_speculative_tokens,
+            )
+
         # Request states.
         self.requests: dict[str, CachedRequestState] = {}
         # Persistent batch.
@@ -121,6 +161,10 @@ class XPUModelRunner(GPUModelRunner):
             reversed(
                 self.vllm_config.compilation_config.cudagraph_capture_sizes))
 
+        # Cache the device properties.
+        #self.device_properties = torch.cuda.get_device_properties(self.device)
+        #!!!hack this value doesn't matter
+        self.num_sms = 0
         # Persistent buffers for CUDA graphs.
         self.input_ids = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int32,
@@ -135,7 +179,8 @@ class XPUModelRunner(GPUModelRunner):
 
         # OPTIMIZATION: Cache the tensors rather than creating them every step.
         self.arange_np = np.arange(max(self.max_num_reqs + 1,
-                                       self.max_model_len),
+                                       self.max_model_len,
+                                       self.max_num_tokens),
                                    dtype=np.int32)
         # NOTE(woosuk): These tensors are "stateless", i.e., they are literally
         # a faster version of creating a new tensor every time. Thus, we should
@@ -171,7 +216,11 @@ class XPUModelRunner(GPUModelRunner):
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
 
-    def _prepare_inputs(self, scheduler_output: "SchedulerOutput"):
+    def _prepare_inputs(
+        self,
+        scheduler_output: "SchedulerOutput",
+    ) -> tuple[IPEXAttentionMetadata, torch.Tensor,
+               Optional[SpecDecodeMetadata]]:
         total_num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         assert total_num_scheduled_tokens > 0
         num_reqs = self.input_batch.num_reqs
@@ -198,7 +247,7 @@ class XPUModelRunner(GPUModelRunner):
         # E.g., [2, 5, 3] -> [0, 0, 1, 1, 1, 1, 1, 2, 2, 2]
         req_indices = np.repeat(self.arange_np[:num_reqs],
                                 num_scheduled_tokens)
-
+        cu_num_tokens = np.cumsum(num_scheduled_tokens)
         # Get batched arange.
         # E.g., [2, 5, 3] -> [0, 1, 0, 1, 2, 3, 4, 0, 1, 2]
         arange = np.concatenate(
@@ -308,15 +357,32 @@ class XPUModelRunner(GPUModelRunner):
             prefix_kv_lens=prefix_kv_lens,
             suffix_kv_lens=suffix_kv_lens,
         )
-        # NOTE(woosuk): Due to chunked prefills, there can be at most 1 partial
-        # request in the batch. While we should not sample any token from this
-        # partial request, we do so for simplicity. We will ignore the sampled
-        # token from the partial request.
-        # TODO: Support prompt logprobs.
-        logits_indices = query_start_loc[1:] - 1
+        use_spec_decode = len(
+            scheduler_output.scheduled_spec_decode_tokens) > 0
+        if not use_spec_decode:
+            # NOTE(woosuk): Due to chunked prefills, the batch may contain
+            # partial requests. While we should not sample any token
+            # from these partial requests, we do so for simplicity.
+            # We will ignore the sampled tokens from the partial requests.
+            # TODO: Support prompt logprobs.
+            logits_indices = attn_metadata.query_start_loc[1:] - 1
+            spec_decode_metadata = None
+        else:
+            # Get the number of draft tokens for each request.
+            # Iterate over the dictionary rather than all requests since not
+            # all requests have draft tokens.
+            num_draft_tokens = np.zeros(num_reqs, dtype=np.int32)
+            for req_id, draft_token_ids in (
+                    scheduler_output.scheduled_spec_decode_tokens.items()):
+                req_idx = self.input_batch.req_id_to_index[req_id]
+                num_draft_tokens[req_idx] = len(draft_token_ids)
 
-        # FIXME:xpu spec decode not support now.
-        spec_decode_metadata = None
+            spec_decode_metadata = self._calc_spec_decode_metadata(
+                num_draft_tokens, cu_num_tokens)
+            logits_indices = spec_decode_metadata.logits_indices
+        # Hot-Swap lora model
+        if self.lora_config:
+            self.set_active_loras(self.input_batch, num_scheduled_tokens)
         return attn_metadata, logits_indices, spec_decode_metadata
 
     def profile_run(self) -> None:
