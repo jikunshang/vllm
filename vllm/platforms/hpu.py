@@ -59,7 +59,11 @@ class HpuPlatform(Platform):
 
         parallel_config = vllm_config.parallel_config
         if parallel_config.worker_cls == "auto":
-            parallel_config.worker_cls = "vllm.worker.hpu_worker.HPUWorker"
+            if envs.VLLM_USE_V1:
+                parallel_config.worker_cls = \
+                    "vllm.v1.worker.hpu_worker.HPUWorker"
+            else:
+                parallel_config.worker_cls = "vllm.worker.hpu_worker.HPUWorker"
 
         # NOTE(kzawora): default block size for Gaudi should be 128
         # smaller sizes still work, but very inefficiently

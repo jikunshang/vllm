@@ -561,7 +561,9 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
         value = value.view(-1, self.num_kv_heads, self.head_size)
         block_indices = attn_metadata.block_indices
         block_offsets = attn_metadata.block_offsets
-        if attn_metadata.is_prompt:
+        if attn_metadata.is_prompt and self.attn_type \
+            is not AttentionType.ENCODER_ONLY \
+            and attn_metadata.block_list is None:
             key = key.unflatten(0, (block_indices.size(0), -1))
             value = value.unflatten(0, (block_indices.size(0), -1))
         if kv_cache is not None:

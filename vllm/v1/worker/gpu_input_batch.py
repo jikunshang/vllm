@@ -581,6 +581,96 @@ class InputBatch:
             allowed_token_ids_mask=allowed_token_ids_mask,
             bad_words_token_ids=self.bad_words_token_ids,
         )
+    def make_selective_sampling_metadata(
+        self,
+        req_id_output_token_ids: list[tuple[str, list[int]]],
+        skip_copy: bool = False,
+    ) -> SamplingMetadata:
+        req_indices: list[int] = [
+            self.req_id_to_index[req_id]
+            for req_id, _ in req_id_output_token_ids
+        ]
+        if not skip_copy:
+            self.temperature[req_indices].copy_(
+                self.temperature_cpu_tensor[req_indices], non_blocking=True)
+            self.top_p[req_indices].copy_(self.top_p_cpu_tensor[req_indices],
+                                          non_blocking=True)
+            self.top_k[req_indices].copy_(self.top_k_cpu_tensor[req_indices],
+                                          non_blocking=True)
+            if not self.no_penalties:
+                # Since syncing these tensors is expensive only copy them
+                # if necessary i.e. if there are requests which require
+                # penalties to be applied during sampling.
+                self.frequency_penalties[req_indices].copy_(
+                    self.frequency_penalties_cpu_tensor[req_indices],
+                    non_blocking=True)
+                self.presence_penalties[req_indices].copy_(
+                    self.presence_penalties_cpu_tensor[req_indices],
+                    non_blocking=True)
+                self.repetition_penalties[req_indices].copy_(
+                    self.repetition_penalties_cpu_tensor[req_indices],
+                    non_blocking=True)
+                # The prompt tokens are used only for applying penalties during
+                # the sampling process. Hence copy these tensors only when
+                # there are requests which need penalties to be applied.
+                self.prompt_token_ids = self._make_prompt_token_ids_tensor()
+
+        output_token_ids: list[list[int]] = []
+
+        for req_id, output_tokens in req_id_output_token_ids:
+            assert req_id is not None
+            # Currently we create a tensor for output_token_ids from scratch
+            # at each step. However, for the penalties computation what we
+            # need is stats about the token ids present in the output. This
+            # stats can be maintained incrementally instead of computing it
+            # from scratch at each step.
+            # TODO - Replace this with incremental update to output token
+            # statistics.
+            output_token_ids.append(output_tokens)
+
+        return SamplingMetadata(
+            temperature=self.temperature[req_indices],
+            all_greedy=self.all_greedy,
+            all_random=self.all_random,
+            top_p=self.top_p[req_indices],
+            top_k=self.top_k[req_indices],
+            no_top_p=self.no_top_p,
+            no_top_k=self.no_top_k,
+            generators=self.generators,
+            max_num_logprobs=self.max_num_logprobs,
+            prompt_token_ids=self.prompt_token_ids,
+            frequency_penalties=self.frequency_penalties[req_indices],
+            presence_penalties=self.presence_penalties[req_indices],
+            repetition_penalties=self.repetition_penalties[req_indices],
+            output_token_ids=output_token_ids,
+            min_tokens=[self.min_tokens[req_idx] for req_idx in req_indices],
+            stop_token_ids=[
+                self.stop_token_ids[req_idx] for req_idx in req_indices
+            ],
+            no_penalties=self.no_penalties,
+        )
+        
+    @classmethod
+    def make_decode_metadata(cls, block_list, block_usage, block_groups,
+                             num_decode_tokens, slot_mapping):
+        return cls(is_prompt=False,
+                   block_mapping=None,
+                   block_indices=None,
+                   block_offsets=None,
+                   block_scales=None,
+                   attn_bias=None,
+                   seq_lens_tensor=None,
+                   context_lens_tensor=None,
+                   num_prefills=0,
+                   num_prefill_tokens=0,
+                   multi_modal_placeholder_index_maps=None,
+                   block_list=block_list,
+                   block_usage=block_usage,
+                   block_groups=block_groups,
+                   num_decode_tokens=num_decode_tokens,
+                   slot_mapping=slot_mapping,
+                   enable_kv_scales_calculation=False)
+       
 
     def _make_prompt_token_ids_tensor(self) -> torch.Tensor:
         max_prompt_len = self.num_prompt_tokens[:self.num_reqs].max()
