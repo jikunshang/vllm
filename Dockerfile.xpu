@@ -1,4 +1,4 @@
-FROM intel/deep-learning-essentials:2025.0.1-0-devel-ubuntu22.04 AS vllm-base
+FROM intel/deep-learning-essentials:2025.0.2-0-devel-ubuntu22.04 AS vllm-base
 
 RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/intel-oneapi-archive-keyring.gpg > /dev/null && \
     echo "deb [signed-by=/usr/share/keyrings/intel-oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main " | tee /etc/apt/sources.list.d/oneAPI.list && \
@@ -49,9 +49,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 # Please refer xpu doc, we need manually install intel-extension-for-pytorch 2.6.10+xpu due to there are some conflict dependencies with torch 2.6.0+xpu
 # FIXME: This will be fix in ipex 2.7. just leave this here for awareness.
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install intel-extension-for-pytorch==2.6.10+xpu \
-    --extra-index-url=https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
+# RUN --mount=type=cache,target=/root/.cache/pip \
+#     pip install intel-extension-for-pytorch==2.6.10+xpu \
+#     --extra-index-url=https://pytorch-extension.intel.com/release-whl/stable/xpu/us/
 
 CMD ["/bin/bash"]
 
