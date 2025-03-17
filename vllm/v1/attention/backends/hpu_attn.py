@@ -11,6 +11,7 @@ import torch
 
 from vllm.attention.backends.abstract import AttentionMetadata
 from vllm.attention.backends.hpu_attn import (HPUAttentionBackend,
+                                              HPUMLAAttentionBackend,
                                               HPUAttentionMetadata)
 from vllm.logger import init_logger
 
@@ -27,6 +28,25 @@ class HPUAttentionBackendV1(HPUAttentionBackend):
     def get_metadata_cls() -> Type["AttentionMetadata"]:
         return HPUAttentionMetadataV1
 
+class HPUMLAAttentionBackendV1(HPUMLAAttentionBackend):
+    
+    @staticmethod
+    def get_name() -> str:
+        return "HPU_MLA_ATTN_V1"
+    
+    @staticmethod
+    def get_metadata_cls() -> Type["AttentionMetadata"]:
+        return HPUAttentionMetadataV1
+    
+    @staticmethod
+    def get_kv_cache_shape(
+        num_blocks: int,
+        block_size: int,
+        num_kv_heads: int,
+        head_size: int,
+    ) -> tuple[int, ...]:
+        return (num_blocks, block_size, head_size // 9 * 1, head_size // 9 * 8)
+
 
 @dataclass
 class HPUAttentionMetadataV1(HPUAttentionMetadata):
@@ -39,7 +59,8 @@ class HPUAttentionMetadataV1(HPUAttentionMetadata):
 
     @classmethod
     def make_prefill_metadata(cls, seq_lens_tensor, num_prefills,
-                              num_prefill_tokens, slot_mapping):
+                              num_prefill_tokens, slot_mapping,
+                              positions):
         return cls(is_prompt=True,
                    block_list=None,
                    block_mapping=None,
@@ -56,7 +77,9 @@ class HPUAttentionMetadataV1(HPUAttentionMetadata):
                    num_prefills=num_prefills,
                    num_prefill_tokens=num_prefill_tokens,
                    slot_mapping=slot_mapping,
-                   enable_kv_scales_calculation=False)
+                   enable_kv_scales_calculation=False,
+                   input_positions=positions,
+                   )
 
     @classmethod
     def make_cached_prefill_metadata(cls, seq_lens_tensor, context_lens_tensor,

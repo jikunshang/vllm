@@ -611,7 +611,8 @@ class DeepseekV2Model(nn.Module):
             self.embed_tokens = PPMissingLayer()
 
         self.start_layer, self.end_layer, self.layers = make_layers(
-            config.num_hidden_layers,
+            # config.num_hidden_layers,
+            4,
             lambda prefix: DeepseekV2DecoderLayer(
                 config,
                 prefix,
@@ -652,6 +653,7 @@ class DeepseekV2Model(nn.Module):
 
         for layer in self.layers[self.start_layer:self.end_layer]:
             hidden_states, residual = layer(positions, hidden_states, residual)
+            print(f"decoder layer output: {hidden_states}")
 
         if not get_pp_group().is_last_rank:
             return IntermediateTensors({
@@ -660,6 +662,7 @@ class DeepseekV2Model(nn.Module):
             })
 
         hidden_states, _ = self.norm(hidden_states, residual)
+        print(f"norm res: {hidden_states}")
         return hidden_states
 
 
@@ -774,7 +777,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                 if is_pp_missing_parameter(name, self):
                     continue
-
+                if name not in params_dict:
+                    continue 
                 param = params_dict[name]
                 weight_loader = param.weight_loader
                 weight_loader(param, loaded_weight, shard_id)
@@ -788,7 +792,8 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    if name not in params_dict:
+                        continue 
                     param = params_dict[name]
                     weight_loader = param.weight_loader
                     weight_loader(param,
@@ -809,7 +814,10 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
                     if is_pp_missing_parameter(name, self):
                         continue
-
+                    
+                    if name not in params_dict:
+                        continue 
+                    
                     param = params_dict[name]
                     weight_loader = getattr(param, "weight_loader",
                                             default_weight_loader)

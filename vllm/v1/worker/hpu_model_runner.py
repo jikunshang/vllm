@@ -18,7 +18,7 @@ import torch
 import torch.distributed
 import vllm_hpu_extension.environment as environment
 from vllm_hpu_extension.bucketing import HPUBucketingContext
-from vllm_hpu_extension.flags import enabled_flags
+# from vllm_hpu_extension.flags import enabled_flags
 from vllm_hpu_extension.ops import batch2block, block2batch
 from vllm_hpu_extension.profiler import HabanaMemoryProfiler, format_bytes
 
@@ -34,7 +34,7 @@ from vllm.model_executor.model_loader import get_model
 from vllm.sampling_params import SamplingType
 from vllm.transformers_utils.tokenizer_group import init_tokenizer_from_configs
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
-                        is_fake_hpu, is_pin_memory_available)
+                        is_pin_memory_available)
 from vllm.v1.attention.backends.hpu_attn import (HPUAttentionBackendV1,
                                                  HPUAttentionMetadataV1)
 from vllm.v1.kv_cache_interface import (FullAttentionSpec, KVCacheConfig,
@@ -372,7 +372,7 @@ class HpuModelAdapter:
 
     def __init__(self, model, vllm_config, layer_names):
         self.model = model
-        self.prefill_use_fusedsdpa = "fsdpa" in enabled_flags()
+        self.prefill_use_fusedsdpa = True # "fsdpa" in enabled_flags()
         self.recompute_cos_sin = os.getenv('VLLM_COS_SIN_RECOMPUTE',
                                            'false').lower() in ['1', 'true']
         self.vllm_config = vllm_config
@@ -380,7 +380,7 @@ class HpuModelAdapter:
         self.dtype = vllm_config.model_config.dtype
         self.layer_names = layer_names
         enforce_eager = vllm_config.model_config.enforce_eager
-        if not is_fake_hpu() and not htorch.utils.internal.is_lazy(
+        if not htorch.utils.internal.is_lazy(
         ) and not enforce_eager:
             if os.getenv('VLLM_REGIONAL_COMPILATION',
                          'true').lower() == 'true':
@@ -461,7 +461,7 @@ class HpuModelAdapter:
         attn_bias = (torch.zeros_like(mask, dtype=dtype).masked_fill_(
             mask, -math.inf))
 
-        if not is_fake_hpu():
+        if True: # not is_fake_hpu():
             block_mapping = torch.nn.functional.one_hot(metadata.block_groups,
                                                         num_classes=batch_size)
         else:
@@ -558,7 +558,9 @@ class HpuModelAdapter:
             input_ids.device, self.dtype)
         if self.layer_names is not None:
             self._prepare_cos_sin(kwargs['positions'])
-        with set_forward_context(kwargs['attn_metadata'], self.vllm_config):
+        attn_metadata = kwargs.pop('attn_metadata')
+        kv_caches = kwargs.pop('kv_caches')
+        with set_forward_context(attn_metadata, self.vllm_config):
             hidden_states = self.model(*args, **kwargs)
 
 
@@ -632,7 +634,8 @@ def trim_attn_metadata(metadata: HPUAttentionMetadataV1) -> object:
     attention_metadata = subtuple(metadata, 'TrimmedAttentionMetadata', [
         'attn_bias', 'seq_lens_tensor', 'context_lens_tensor', 'block_list',
         'block_mapping', 'block_usage', 'slot_mapping', 'is_prompt',
-        'block_indices', 'block_offsets', 'block_scales', 'block_groups'
+        'block_indices', 'block_offsets', 'block_scales', 'block_groups',
+        'input_positions'
     ])
     return attention_metadata
 
@@ -665,7 +668,7 @@ class HPUModelRunner:
         #TODO(kzawora): remove this, this is ugly and only used for diagnostics
         self._ENGINE_ITER = 0
         # TODO: use ModelRunnerBase.__init__(self, vllm_config=vllm_config)
-        environment.set_model_config(vllm_config.model_config)
+        # environment.set_model_config(vllm_config.model_config)
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config
@@ -782,6 +785,7 @@ class HPUModelRunner:
 
         forward_ctx = self.vllm_config.compilation_config.static_forward_context
         block_size = self.vllm_config.cache_config.block_size
+        use_mla = self.vllm_config.model_config.use_mla
         kv_cache_spec: KVCacheSpec = {}
         for layer_name, attn_module in forward_ctx.items():
             # TODO: Support other attention modules, e.g., sliding window,
@@ -793,6 +797,7 @@ class HPUModelRunner:
                     num_kv_heads=attn_module.num_kv_heads,
                     head_size=attn_module.head_size,
                     dtype=attn_module.dtype,
+                    use_mla=use_mla
                 )
             elif attn_module.attn_type in (AttentionType.ENCODER,
                                            AttentionType.ENCODER_ONLY):
@@ -1273,6 +1278,7 @@ class HPUModelRunner:
             prefill_token_ids.append(token_ids_device)
             prefill_position_ids.append(positions_device)
             prefill_logits_indices.append(logits_indices_device)
+            input_positions = torch.stack(prefill_position_ids).to("hpu")
             attn_metadata = None
             if use_prefix_prefill:
                 # Prefix caching
@@ -1330,6 +1336,7 @@ class HPUModelRunner:
                     num_prefills=num_prefills,
                     num_prefill_tokens=sum(batch_num_scheduled_tokens),
                     slot_mapping=slot_mapping_device,
+                    positions=input_positions,
                 )
                 if (self.validate_accesses
                         and self.cache_access_validator is not None):
@@ -2233,6 +2240,8 @@ class HPUModelRunner:
                 "Hybrid models with more than one KV cache type are not "
                 "supported yet.")
 
+        print(f"model is : {self.model.model}")
+
         kv_caches: Dict[str, torch.Tensor] = {}
         for layer_name, layer_spec in kv_cache_config.kv_cache_spec.items():
             tensor_config = kv_cache_config.tensors[layer_name]
@@ -2247,13 +2256,24 @@ class HPUModelRunner:
                 kv_cache_shape = HPUAttentionBackendV1.get_kv_cache_shape(
                     num_blocks + 1, layer_spec.block_size,
                     layer_spec.num_kv_heads, layer_spec.head_size)
+                print(f"kv_cache_shape: {kv_cache_shape}") # [block_num, block_size, 1, 576] 
+                if True: # for deepseek only
+                    k_cache_shape = list(kv_cache_shape[:-2]) + [64]
+                    v_cache_shape = list(kv_cache_shape[:-2]) + [512]
+                else:
+                    k_cache_shape = kv_cache_shape
+                    v_cache_shape = kv_cache_shape
+                print(f"k_cache_shape: {k_cache_shape}")
+                print(f"v_cache_shape: {v_cache_shape}")
                 dtype = layer_spec.dtype
                 if dtype == torch.float8_e4m3fn:
                     dtype = torch.uint8
-                key_cache = torch.zeros(kv_cache_shape,
+                key_cache = torch.zeros(k_cache_shape,
                                         dtype=dtype,
                                         device=self.device)
-                value_cache = torch.zeros_like(key_cache)
+                value_cache = torch.zeros(v_cache_shape,
+                                        dtype=dtype,
+                                        device=self.device)
 
                 kv_caches[layer_name] = (key_cache, value_cache)
             else:

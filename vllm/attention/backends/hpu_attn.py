@@ -370,6 +370,7 @@ class HPUMLAImpl(
 
         # write the latent and rope to kv cache
         if kv_cache is not None and len(kv_cache) == 2:
+            print(f"latent_vec_k shape: {latent_vec_k.shape}")
             latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
             latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
             k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0],
