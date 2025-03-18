@@ -19,7 +19,8 @@ from vllm.attention.backends.utils import CommonAttentionState
 from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
                                                HPUPagedAttentionMetadata)
 from vllm.logger import init_logger
-
+from vllm.distributed import (get_tensor_model_parallel_world_size,
+                              get_tensor_model_parallel_rank)
 logger = init_logger(__name__)
 
 
@@ -213,21 +214,30 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         # Restore head dim (for rotary embedding)
         # k_pe = k_pe.unsqueeze(1)
         assert hasattr(attn_metadata, "input_positions"), f"attn meta: {attn_metadata}"
+        input_positions = attn_metadata.input_positions
+        
+        if True: #DP_enable
+            dp_rank_id = get_tensor_model_parallel_rank()
+            dp_world_size = get_tensor_model_parallel_world_size()
+            bs = input_positions.shape[0]
+            bs_shard_size = bs // dp_world_size
+            bs_start = dp_rank_id * bs_shard_size
+            bs_end = (dp_rank_id+1) * bs_shard_size
+            input_positions = input_positions[bs_start:bs_end, ...]
+        input_positions = input_positions.view(-1)
 
         if not is_prefill:
             q_nope = self._q_proj_and_k_up_proj(hidden_states_or_q_c)
             q_pe = torch.matmul(hidden_states_or_q_c, self.W_QR)\
                 .view(-1, self.num_heads, self.qk_rope_head_dim)
-            input_positions = attn_metadata.input_positions.view(-1)
             q_pe, k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)
         else:
             q = self.q_proj(hidden_states_or_q_c)[0]\
                 .view(-1, self.num_heads, self.qk_head_dim)
-            
+
             q_pe = q[..., self.qk_nope_head_dim:]
 
-            input_positions = attn_metadata.input_positions.view(-1)
             # TODO(lucas): there must be a nicer way to write this line
             q[..., self.qk_nope_head_dim:], k_pe = \
                 self.rotary_emb(input_positions, q_pe, k_pe)

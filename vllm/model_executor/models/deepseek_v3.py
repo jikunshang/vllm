@@ -30,6 +30,8 @@ from transformers import PretrainedConfig
 from vllm.attention import Attention, AttentionMetadata
 from vllm.config import CacheConfig, ModelConfig, VllmConfig
 from vllm.distributed import (get_pp_group,
+                              tensor_model_parallel_all_gather,
+                              get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
                               tensor_model_parallel_all_reduce)
 from vllm.model_executor.layers.activation import SiluAndMul
@@ -575,12 +577,33 @@ class DeepseekV3DecoderLayer(nn.Module):
         else:
             hidden_states, residual = self.input_layernorm(
                 hidden_states, residual)
+
+        print(f"input pos shape: {positions.shape}")
+
+        # normal: hidden_states: [bs, seq_len, hidden_size]
+        # DP: hidden_states: [bs//8, seq_len, hidden_size]
+        if True: #enable_DP
+            dp_rank_id = get_tensor_model_parallel_rank()
+            dp_world_size = get_tensor_model_parallel_world_size()
+            bs = hidden_states.shape[0]
+            assert bs % dp_world_size == 0
+            bs_shard_size = bs // dp_world_size
+            bs_start = dp_rank_id * bs_shard_size
+            bs_end = (dp_rank_id+1) * bs_shard_size
+            hidden_states = hidden_states[bs_start:bs_end, ...] 
+            positions = positions[bs_start:bs_end, ...] 
+             
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
             kv_cache=kv_cache,
             attn_metadata=attn_metadata,
         )
+        # normal: hidden_states: [bs, seq_len, hidden_size]
+        # DP: hidden_states: [bs//8, seq_len, hidden_size]
+        # DP: all gather 
+        if True: #enable_DP
+            hidden_states = tensor_model_parallel_all_gather(hidden_states, 0)
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
