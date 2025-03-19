@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
 from vllm_hpu_extension.utils import VLLMKVCache
 
+import habana_frameworks.torch as htorch
+
 logger = init_logger(__name__)
 
 
@@ -260,7 +262,7 @@ class SimpleConnector(KVConnectorBase):
                 value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
 
                 current_slot_mapping = slot_mapping_flat[start_pos:end_pos]
-
+                htorch.core.mark_step()
                 keys.append(key_cache[current_slot_mapping].unsqueeze(0))
                 values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
