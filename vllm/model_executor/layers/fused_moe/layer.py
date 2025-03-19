@@ -189,9 +189,12 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                     renormalize: bool,
                     topk_group: Optional[int] = None,
                     num_expert_group: Optional[int] = None,
+                    global_num_experts: int = -1,
+                    expert_map: Optional[torch.Tensor] = None,
                     custom_routing_function: Optional[Callable] = None,
                     scoring_func: str = "softmax",
-                    e_score_correction_bias: Optional[torch.Tensor] = None):
+                    e_score_correction_bias: Optional[torch.Tensor] = None,
+                    activation: str = "silu"):
         assert len(x.shape) == 2
         import habana_frameworks.torch as htorch
         htorch.core.mark_step()
@@ -237,7 +240,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 w12=w13_list_slice,
                 w3=w2_list_slice,
                 permuted_weights=True,
-                activation="silu",
+                activation=activation,
                 experts_min=min_expert,
                 experts_max=max_expert - 1)
             htorch.core.mark_step()
@@ -849,7 +852,6 @@ class FusedMoE(torch.nn.Module):
             scoring_func=self.scoring_func,
             e_score_correction_bias=self.e_score_correction_bias,
             activation=self.activation,
-            ep_rank=self.ep_rank,
         )
 
         if self.dp_size > 1:
