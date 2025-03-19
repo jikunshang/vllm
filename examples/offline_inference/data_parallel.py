@@ -10,6 +10,8 @@ from vllm.utils import get_open_port
 
 GPUs_per_dp_rank = 2
 DP_size = 2
+# GPUs_per_dp_rank = 1
+# DP_size = 4
 
 
 def main(dp_size, dp_rank, dp_master_ip, dp_master_port, GPUs_per_dp_rank):
@@ -55,7 +57,8 @@ def main(dp_size, dp_rank, dp_master_ip, dp_master_port, GPUs_per_dp_rank):
     llm = LLM(model="ibm-research/PowerMoE-3b",
               tensor_parallel_size=GPUs_per_dp_rank,
               enforce_eager=True,
-              enable_expert_parallel=True)
+              enable_expert_parallel=True,
+              seed=0)
     outputs = llm.generate(prompts, sampling_params)
     # Print the outputs.
     for output in outputs:

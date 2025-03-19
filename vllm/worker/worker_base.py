@@ -320,6 +320,12 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         if not broadcast_data:
             return None
 
+        if "is_dummy_batch" in broadcast_data and broadcast_data[
+                "is_dummy_batch"]:
+            self.model_runner._dummy_run(1)
+            # we should make sure that the "worker_execution_loop" do not exit
+            return False
+
         worker_input = WorkerInput.from_broadcasted_tensor_dict(broadcast_data)
         model_input = (
             self.model_runner.make_model_input_from_broadcasted_tensor_dict(
@@ -376,6 +382,11 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                     # notify all other workers to stop their execution loop.
                     broadcast_tensor_dict({}, src=0)
                 return None
+            elif execute_model_req.is_dummy_batch:
+                if self.do_metadata_broadcast:
+                    broadcast_tensor_dict({"is_dummy_batch": True}, src=0)
+                self.model_runner._dummy_run(1)
+                return None
             return self._get_driver_input_and_broadcast(execute_model_req)
         else:
             return self._get_worker_input_from_broadcast()
@@ -394,6 +405,9 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         inputs = self.prepare_input(execute_model_req)
         if inputs is None:
             return None
+        # we should make sure that the "worker_execution_loop" do not exit
+        if inputs is False:
+            return False
 
         model_input, worker_input, kwargs = inputs
         num_steps = worker_input.num_steps
