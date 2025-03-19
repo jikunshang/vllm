@@ -1418,12 +1418,19 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.warmup_scenario(max_batch_size, max_seq_len, True, False, True)
         return
 
+    def _dummy_run(self,
+                   max_num_batched_tokens: int) -> None:
+        assert max_num_batched_tokens == 1
+        self.warmup_scenario(max_num_batched_tokens, 1, True, False, True, 1)
+        return
+
     def warmup_scenario(self,
                         batch_size,
                         seq_len,
                         is_prompt,
                         is_pt_profiler_run=False,
-                        is_lora_profile_run=False) -> None:
+                        is_lora_profile_run=False,
+                        iters = 3) -> None:
         use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
         scenario_name = ("warmup_"
                          f"{'prompt' if is_prompt else 'decode'}_"
@@ -1454,7 +1461,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     for idx in range(batch_size)
                 ]
         self.profiler.start('internal', scenario_name)
-        times = 3 if use_graphs or is_pt_profiler_run else 1
+        times = iters if use_graphs or is_pt_profiler_run else 1
         if is_prompt:
             seqs = [
                 self.create_dummy_seq_group_metadata(
