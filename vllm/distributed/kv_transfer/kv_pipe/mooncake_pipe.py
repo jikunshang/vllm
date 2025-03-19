@@ -2,16 +2,16 @@
 
 import json
 import os
-import io
-import pickle
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Optional, Union
 
-import time
-
 import torch
 import zmq
+
+from safetensors.torch import load as safetensors_load
+from safetensors.torch import save as safetensors_save
 
 from vllm.config import KVTransferConfig
 from vllm.distributed.kv_transfer.kv_pipe.base import KVPipeBase
@@ -241,17 +241,15 @@ class MooncakePipe(KVPipeBase):
 
     def _send_impl(self, tensor: torch.Tensor) -> None:
         """Implement the tensor sending logic."""
-        buffer = io.BytesIO()
-        torch.save(tensor, buffer)
-        self.transfer_engine.send_bytes(buffer.getvalue())
+        start = time.time()
+        self.transfer_engine.send_bytes(safetensors_save({"tensor": tensor}))
+        logger.info("Time taken to send bytes: %s", time.time() - start)
 
     def _recv_impl(self) -> torch.Tensor:
-        """Implement the tensor receiving logic."""
         start = time.time()
         data = self.transfer_engine.recv_bytes()
         logger.debug("Time taken to receive bytes: %s", time.time() - start)
-        data = io.BytesIO(data)
-        return torch.load(data)
+        return safetensors_load(data)["tensor"].to(self.device)
 
     def send_tensor(self, tensor: Optional[torch.Tensor]) -> None:
         """Send tensor to the target process."""
