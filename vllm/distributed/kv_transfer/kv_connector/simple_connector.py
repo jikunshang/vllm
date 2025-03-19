@@ -84,8 +84,12 @@ class SimpleConnector(KVConnectorBase):
         self.producer_signal_pipe: Union[PyNcclPipe, MooncakePipe]
         self.consumer_signal_pipe: Union[PyNcclPipe, MooncakePipe]
 
-        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=torch.bfloat16, device="hpu")
-        self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=torch.bfloat16, device="hpu")
+        if config.cache_config.cache_dtype == "fp8_inc":
+            dtype = torch.float8_e4m3fn
+        else:
+            dtype = torch.bfloat16
+        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=dtype, device="hpu")
+        self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=dtype, device="hpu")
         self.cache_k = VLLMKVCache()
         self.cache_v = VLLMKVCache()
         # 2 pipes for every rank in the world
