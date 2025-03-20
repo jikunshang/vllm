@@ -250,6 +250,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                     output,
                     attn_metadata.seqlen_q,
                     attn_metadata.seqlen_q,
+                    self.alibi_slopes,
                     attn_metadata.max_seqlen,
                     attn_metadata.max_seqlen,
                     pdropout=0.0,
@@ -259,6 +260,9 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
                     return_softmax=False,
                     gen_=None,
                     logits_soft_cap=self.logits_soft_cap,
+                    window_size_left=-1,
+                    window_size_right=-1,
+                    logits_soft_cap=-1,
                 )
             else:
                 # prefix-enabled attention
