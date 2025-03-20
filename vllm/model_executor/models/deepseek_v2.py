@@ -611,8 +611,8 @@ class DeepseekV2Model(nn.Module):
             self.embed_tokens = PPMissingLayer()
 
         self.start_layer, self.end_layer, self.layers = make_layers(
-            config.num_hidden_layers,
-            # 4, # if you want to load 4 layer only, comment out the above line and use this
+            # config.num_hidden_layers,
+            4, # if you want to load 4 layer only, comment out the above line and use this
             lambda prefix: DeepseekV2DecoderLayer(
                 config,
                 prefix,
