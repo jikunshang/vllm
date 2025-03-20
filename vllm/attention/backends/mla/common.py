@@ -1252,7 +1252,10 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
             W_Q_UK = torch.einsum("qnd,lnd -> qnl",
                                   W_Q.bfloat16(),
                                   W_UK.bfloat16())\
-                .flatten(start_dim=1).contiguous().float()
+                .flatten(start_dim=1).contiguous().float() if current_platform.is_hpu() else torch.einsum("qnd,lnd -> qnl",
+                                  W_Q,
+                                  W_UK)\
+                .flatten(start_dim=1).contiguous()
 
             if is_fp8(weight_dtype) and requantization_enabled:
                 W_Q_UK, W_Q_UK_scales = scaled_quantize(
@@ -1271,7 +1274,10 @@ class MLACommonImpl(MLAAttentionImpl[T], Generic[T]):
             W_UV_O = torch.einsum("lnd,hnd -> nlh",
                                   W_UV.bfloat16(),
                                   W_O.bfloat16())\
-                .flatten(start_dim=0, end_dim=1).contiguous().float()
+                .flatten(start_dim=0, end_dim=1).contiguous().float() if current_platform.is_hpu() else torch.einsum("lnd,hnd -> nlh",
+                                  W_UV,
+                                  W_O)\
+                .flatten(start_dim=0, end_dim=1).contiguous()
 
             if is_fp8(weight_dtype) and requantization_enabled:
                 W_UV_O, W_UV_O_scales = scaled_quantize(
