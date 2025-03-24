@@ -236,7 +236,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                                              IntermediateTensors],
     ) -> None:
         input_tokens_tensor = model_input.input_tokens # shape: [batch_size, seq_len_padding_to_128]
-        seq_lens = model_input.seq_lens # 2D list
+        seq_lens = model_input.attn_metadata.seq_lens # 2D list
         slot_mapping_flat = model_input.attn_metadata.slot_mapping.flatten()
         start_layer = model_executable.model.model.start_layer
         end_layer = model_executable.model.model.end_layer
@@ -285,7 +285,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             store_kvcache_key = f"{store_key_prefix}_{self.local_tp_rank}"
             self.kv_store.put(store_kvcache_key, kvcache_to_sent)
             
-            print(f"put kv cache key: {store_kvcache_key}")
+            logger.debug(f"put kv cache key: {store_kvcache_key}")
             
             hidden_key = f"{store_key_prefix}_hidden_{self.local_tp_rank}"
             self.kv_store.put(hidden_key,
@@ -361,7 +361,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             
             if remote_kv is None or hidden is None:
                 # didn't find any match.
-                print(f"Didn't find any match, load_key_prefix: {load_kvcache_key}")
+                logger.warning(f"Didn't find any match, load_key_prefix: {load_kvcache_key}")
                 bypass_model_exec = False
                 continue
 

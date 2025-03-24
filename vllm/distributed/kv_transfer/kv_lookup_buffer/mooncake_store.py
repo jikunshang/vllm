@@ -40,7 +40,7 @@ class MooncakeStoreConfig:
         return MooncakeStoreConfig(
             local_hostname=config.get("local_hostname"),
             metadata_server=config.get("metadata_server"),
-            global_segment_size=config.get("global_segment_size", 3355443200),
+            global_segment_size=config.get("global_segment_size", 32212254720),
             local_buffer_size=config.get("local_buffer_size", 1073741824),
             protocol=config.get("protocol", "tcp"),
             device_name=config.get("device_name", ""),
@@ -143,7 +143,7 @@ class MooncakeStore(KVLookupBufferBase):
     ) -> None:
         """Put KVCache to Mooncake Store"""
         device_id = value.device.index if value.device.type == 'hpu' else -1
-        print(f"putting, device id: {device_id}")
+        logger.debug(f"putting, device id: {device_id}")
         device_tensor = torch.tensor(device_id, dtype=torch.int32, device="cpu")
         value = value.cpu()
         value_bytes = safetensors_save({

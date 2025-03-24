@@ -1032,6 +1032,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             block_scales=None,
             block_groups=None,
             attn_bias=None,
+            seq_lens=seq_lens,
             seq_lens_tensor=seq_lens_tensor,
             num_prefills=real_num_seqs,
             num_prefill_tokens=sum_query_len,
