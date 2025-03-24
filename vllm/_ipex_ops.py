@@ -177,6 +177,7 @@ class ipex_ops:
         out: torch.Tensor,
         seqlen_q: torch.Tensor,
         seqlen_k: torch.Tensor,
+        alibi_slopes: torch.Tensor,
         max_seqlen_q: int,
         max_seqlen_k: int,
         pdropout: float,
@@ -185,17 +186,16 @@ class ipex_ops:
         is_causal: bool,
         return_softmax: bool,
         gen_: torch.Generator,
+        window_size_left: float,
+        window_size_right: float,
         logits_soft_cap: float,
     ) -> None:
-        ipex.llm.functional.varlen_attention(query.contiguous(),
-                                             key.contiguous(),
-                                             value.contiguous(), out,
-                                             seqlen_q.int(), seqlen_k.int(),
-                                             max_seqlen_q, max_seqlen_k,
-                                             pdropout, softmax_scale,
-                                             zero_tensors, is_causal,
-                                             return_softmax, gen_,
-                                             logits_soft_cap)
+        ipex.llm.functional.varlen_attention(
+            query.contiguous(), key.contiguous(), value.contiguous(), out,
+            seqlen_q.int(), seqlen_k.int(), alibi_slopes, max_seqlen_q,
+            max_seqlen_k, pdropout, softmax_scale, zero_tensors, is_causal,
+            return_softmax, gen_, window_size_left, window_size_right,
+            logits_soft_cap)
 
     @staticmethod
     def reshape_and_cache(
