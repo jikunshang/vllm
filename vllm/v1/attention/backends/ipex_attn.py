@@ -166,5 +166,6 @@ class IPEXAttentionImpl(AttentionImpl):
             True,
             False,
             None,
+            self.kv_cache_dtype,
         )
         return output
