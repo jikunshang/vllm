@@ -52,6 +52,7 @@ class IPEXAttentionBackend(AttentionBackend):
         # TODO: support cascade attention
         return False
 
+
 class IPEXAttentionImpl(AttentionImpl):
 
     def __init__(
@@ -163,6 +164,8 @@ class IPEXAttentionImpl(AttentionImpl):
             0.0,
             self.scale,
             False,
+            self.sliding_window[0],
+            self.sliding_window[1],
             True,
             False,
             None,

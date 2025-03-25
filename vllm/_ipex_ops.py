@@ -256,6 +256,8 @@ class ipex_ops:
         p_dropout: float,
         softmax_scale: float,
         zero_tensors: bool,
+        window_size_left: int,
+        window_size_right: int,
         is_casual: bool,
         return_softmax: bool,
         gen_: Optional[torch.Generator],
@@ -275,6 +277,8 @@ class ipex_ops:
             block_table,
             alibi_slopes,
             kv_cache_dtype=kv_cache_dtype,  # "fp8"
+            window_size_left=window_size_left,
+            window_size_right=window_size_right,
             k_scale=1.0,
             v_scale=1.0,
         )
