@@ -338,18 +338,23 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
             if slen == 1:
-                self.cache_k(self.padding_k_tensor.unsqueeze(0),
-                        key_cache,
-                        attn_metadata.block_indices[start_block_idx:end_block_idx],
-                        attn_metadata.block_offsets,
-                        )
-                self.cache_v(self.padding_v_tensor.unsqueeze(0),
-                        value_cache,
-                        attn_metadata.block_indices[start_block_idx:end_block_idx],
-                        attn_metadata.block_offsets,
-                        )
-                hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
-                start_block_idx = end_block_idx
+                for i in range(model_executable.model.model.start_layer,
+                               model_executable.model.model.end_layer):
+                    current_layer_idx = i - model_executable.model.model.start_layer
+                    kv_cache = kv_caches[current_layer_idx]
+                    key_cache, value_cache = kv_cache[0], kv_cache[1]
+                    self.cache_k(self.padding_k_tensor.unsqueeze(0),
+                            key_cache,
+                            attn_metadata.block_indices[start_block_idx:end_block_idx],
+                            attn_metadata.block_offsets,
+                            )
+                    self.cache_v(self.padding_v_tensor.unsqueeze(0),
+                            value_cache,
+                            attn_metadata.block_indices[start_block_idx:end_block_idx],
+                            attn_metadata.block_offsets,
+                            )
+                    hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
+                    start_block_idx = end_block_idx
                 continue
 
             # get roi for current seq
