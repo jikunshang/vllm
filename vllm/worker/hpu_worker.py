@@ -227,7 +227,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
         with HabanaMemoryProfiler() as m:
-            self.model_runner.profile_run()
+            # self.model_runner.profile_run()
             torch.hpu.synchronize()
         msg = ("Model profiling run "
                f"took {m.get_summary_string()}")
