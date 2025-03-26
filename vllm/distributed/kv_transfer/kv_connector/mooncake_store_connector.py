@@ -353,8 +353,9 @@ class MooncakeStoreConnector(KVConnectorBase):
                             attn_metadata.block_indices[start_block_idx:end_block_idx],
                             attn_metadata.block_offsets,
                             )
-                    hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
-                    start_block_idx = end_block_idx
+                # the first one should never be padding, so we can append the first one.
+                hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
+                start_block_idx = end_block_idx
                 continue
 
             # get roi for current seq
