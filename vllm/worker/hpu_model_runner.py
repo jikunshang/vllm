@@ -328,10 +328,12 @@ class HpuModelAdapter:
         enforce_eager = vllm_config.model_config.enforce_eager
         self.dp_size = self.vllm_config.parallel_config.data_parallel_size
         self.dp_awared_padding = True if self.dp_size > 1 and htorch.utils.internal.is_lazy() and not enforce_eager else False
-        self.use_hpu_multicast = os.environ.get('VLLM_DP_HPU_MULTICAST', 'true') 
-        if not self.dp_awared_padding and self.use_hpu_multicast:
-            raise NotImplementedError(
-                "Set VLLM_DP_HPU_MULTICAST=false along with enforce_eager mode.")
+        self.use_hpu_multicast = os.environ.get('VLLM_DP_HPU_MULTICAST',
+                                                'true').lower() in ['1', 'true'] 
+        # FIXME(kusnhang): disable this for now
+        # if not self.dp_awared_padding and self.use_hpu_multicast:
+        #     raise NotImplementedError(
+        #         "Set VLLM_DP_HPU_MULTICAST=false along with enforce_eager mode.")
 
         if not htorch.utils.internal.is_lazy() and not enforce_eager:
             if os.getenv('VLLM_REGIONAL_COMPILATION',
