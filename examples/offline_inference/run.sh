@@ -9,6 +9,7 @@
 : ${IN=${7:-1024}}                         # input prompt length
 : ${OUT=${8:-4}}                           # output generate length
 : ${PROFILE=${9:-0}}                       # enable profile
+: ${XPU_CCL_BACKEND=${10:-"xccl"}}         # ccl, xccl
 
 export VLLM_USE_V1=1
 export VLLM_MLA_DISABLE=1
@@ -18,6 +19,7 @@ export TORCH_DEVICE_BACKEND_AUTOLOAD=0
 export NUM_DUMMY_LAYERS=${DUMMY}
 export ZE_FLAT_DEVICE_HIERARCHY=COMPOSITE  # TP8+COMPOSITE | TP16+FLAT
 export SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS=2
+export XPU_CCL_BACKEND=${XPU_CCL_BACKEND}
 
 export OPT_W8A8_BLOCK_FP8_MATMUL=1
 
