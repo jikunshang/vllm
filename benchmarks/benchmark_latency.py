@@ -17,6 +17,7 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.engine.arg_utils import EngineArgs
 from vllm.inputs import PromptType
+from vllm.platforms import current_platform
 from vllm.sampling_params import BeamSearchParams
 from vllm.utils import FlexibleArgumentParser
 
@@ -80,15 +81,13 @@ def main(args: argparse.Namespace):
     def run_to_completion(profile_dir: Optional[str] = None):
         if profile_dir:
             with torch.profiler.profile(
-                    activities=[
-                        torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA,
-                    ],
-                    on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                        str(profile_dir)),
+                activities=torch.profiler.supported_activities(),
+                on_trace_ready=torch.profiler.tensorboard_trace_handler(
+                    str(profile_dir)),
+                with_stack=True,
             ) as p:
                 llm_generate()
-            print(p.key_averages().table(sort_by="self_cuda_time_total"))
+            print(p.key_averages().table(sort_by=f"self_{current_platform.device_type}_time_total"))
         else:
             start_time = time.perf_counter()
             llm_generate()

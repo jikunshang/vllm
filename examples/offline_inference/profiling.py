@@ -14,6 +14,7 @@ import tqdm
 
 from vllm import LLM, SamplingParams
 from vllm.engine.arg_utils import EngineArgs
+from vllm.platforms import current_platform
 from vllm.profiler import layerwise_profile
 from vllm.utils import FlexibleArgumentParser
 
@@ -235,7 +236,7 @@ def run_profile(context: ProfileContext, csv_output: Optional[str],
             assert isinstance(sampling_params.max_tokens, int)
 
             prompt_token_ids = torch.randint(
-                llm.llm_engine.model_config.get_vocab_size(),
+                min(llm.llm_engine.model_config.get_vocab_size(), llm.llm_engine.model_config.max_model_len),
                 size=(prompt_len, )).tolist()
 
             llm.llm_engine.add_request(
@@ -257,18 +258,27 @@ def run_profile(context: ProfileContext, csv_output: Optional[str],
     print("Profile run ...")
     add_requests()
 
-    with layerwise_profile() as prefill_prof:
+    # with layerwise_profile() as prefill_prof:
+    with torch.profiler.profile(
+        activities=torch.profiler.supported_activities(),
+        with_stack=True,
+    ) as prefill_prof:
         llm.llm_engine.step()  # First step is prefill
 
     decode_profs = []
     for _ in tqdm.tqdm(range(num_steps_to_profile - 1)):
         num_running_seqs = llm.llm_engine.scheduler[
             0].get_num_unfinished_seq_groups()
-        with layerwise_profile(
-                num_running_seqs=num_running_seqs) as decode_prof:
+        # with layerwise_profile(
+        #         num_running_seqs=num_running_seqs) as decode_prof:
+        with torch.profiler.profile(
+            activities=torch.profiler.supported_activities(),
+            with_stack=True,
+        ) as decode_prof:
             llm.llm_engine.step()
         decode_profs.append(decode_prof)
 
+    """
     decode_results_list = [prof.results for prof in decode_profs]
     prefill_results = prefill_prof.results
     has_decode = len(decode_results_list) > 0
@@ -348,14 +358,29 @@ def run_profile(context: ProfileContext, csv_output: Optional[str],
         with open(json_output_file, "w+") as f:
             json.dump(json_dict, f, indent=2)
         pass
+    """
 
     if context.save_chrome_traces_folder is not None:
         os.makedirs(context.save_chrome_traces_folder, exist_ok=True)
         prefill_prof.profiler.export_chrome_trace(
             context.save_chrome_traces_folder + "/prefill.json")
+        prof_table = prefill_prof.profiler.key_averages().table(
+            sort_by=f"self_{current_platform.device_type}_time_total"
+        )
+        torch.save(
+            prof_table, f"{context.save_chrome_traces_folder}/prefill_{current_platform.device_type}.pt"
+        )
+        print(f"=== prefill profile ===\n{prof_table}")
         for idx, decode_prof in enumerate(decode_profs):
             decode_prof.profiler.export_chrome_trace(
                 context.save_chrome_traces_folder + f"/decode_{idx + 1}.json")
+            prof_table = decode_prof.profiler.key_averages().table(
+                sort_by=f"self_{current_platform.device_type}_time_total"
+            )
+            torch.save(
+                prof_table, f"{context.save_chrome_traces_folder}/decode_{idx + 1}_{current_platform.device_type}.pt"
+            )
+            print(f"=== decode {idx + 1} profile ===\n{prof_table}")
         print("Traces saved as prefill.json and decode_1.json, etc."
               f" in folder {context.save_chrome_traces_folder}")
 
