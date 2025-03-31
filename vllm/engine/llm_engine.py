@@ -1470,6 +1470,9 @@ class LLMEngine:
             logger.info(f"schedule empty batch!!!!")
             # Nothing scheduled => If there is pending async postprocessor,
             # then finish it here.
+            self.model_executor.execute_model(
+                execute_model_req=ExecuteModelRequest(
+                seq_group_metadata_list=[], is_dummy_batch=True))
             if len(ctx.output_queue) > 0:
                 self._process_model_outputs(ctx=ctx)
             # No outputs in this case
