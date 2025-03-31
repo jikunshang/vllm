@@ -998,11 +998,12 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.bucketing_global_state.prompt_seq_bucket_cfg),
             self.block_size)
 
-        if self.dp_size > 1 and self.dp_awared_padding:
-            if self.is_driver_worker:
-                max_prompt_len = align_dp_groups(max_prompt_len, torch.distributed.ReduceOp.MAX)
-            if align_worker:
-                max_prompt_len = align_tp_workers(max_prompt_len, torch.distributed.ReduceOp.MAX)
+        # Prefill does not need padding.
+        # if self.dp_size > 1 and self.dp_awared_padding:
+        #     if self.is_driver_worker:
+        #         max_prompt_len = align_dp_groups(max_prompt_len, torch.distributed.ReduceOp.MAX)
+        #     if align_worker:
+        #         max_prompt_len = align_tp_workers(max_prompt_len, torch.distributed.ReduceOp.MAX)
 
         lora_ids: List[int] = []
         for seq_group_metadata, context_len in zip(seq_group_metadata_list,
@@ -1271,7 +1272,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         bucket_cfg = self.bucketing_global_state.prompt_bs_bucket_cfg \
             if is_prompt else self.bucketing_global_state.decode_bs_bucket_cfg
         batch_size_padded = find_bucket(real_batch_size, bucket_cfg)
-        if self.dp_size > 1 and self.dp_awared_padding:
+        # only decode batch need align
+        if self.dp_size > 1 and self.dp_awared_padding and not is_prompt:
             if self.is_driver_worker:
                 batch_size_padded = align_dp_groups(batch_size_padded, torch.distributed.ReduceOp.MAX)
             if align_worker:
