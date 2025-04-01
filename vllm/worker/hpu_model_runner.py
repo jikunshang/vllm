@@ -33,7 +33,7 @@ import vllm.envs as envs
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.config import DeviceConfig, VllmConfig
 from vllm.distributed import broadcast_tensor_dict, get_kv_transfer_group
-from vllm.distributed.parallel_state import get_world_group, get_dp_group
+from vllm.distributed.parallel_state import get_world_group, get_dp_group, get_tp_group
 from vllm.forward_context import set_forward_context
 from vllm.logger import init_logger
 from vllm.lora.layers import LoRAMapping
