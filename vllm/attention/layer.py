@@ -8,7 +8,7 @@ import torch.nn.functional as F
 import vllm.envs as envs
 from vllm.attention import AttentionMetadata, AttentionType
 from vllm.attention.selector import backend_name_to_enum, get_attn_backend
-from vllm.config import CacheConfig, get_current_vllm_config
+#from vllm.config import CacheConfig, get_current_vllm_config
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
@@ -28,6 +28,7 @@ class Attention(nn.Module):
     2. Perform (multi-head/multi-query/grouped-query) attention.
     3. Return the output tensor.
     """
+    from vllm.config import CacheConfig, get_current_vllm_config
 
     def __init__(
         self,
@@ -128,6 +129,7 @@ class Attention(nn.Module):
         # and let torch.compile handle them.
         self.use_direct_call = not current_platform.is_cuda_alike(
         ) and not current_platform.is_cpu()
+        from vllm.config import CacheConfig, get_current_vllm_config
 
         self.use_output = attn_backend.accept_output_buffer
         compilation_config = get_current_vllm_config().compilation_config

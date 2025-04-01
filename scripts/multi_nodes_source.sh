@@ -19,7 +19,7 @@ export HABANA_VISIBLE_MODULES="0,1,2,3,4,5,6,7"
 export PT_HPUGRAPH_DISABLE_TENSOR_CACHE=1
 
 export VLLM_MOE_N_SLICE=8
-export VLLM_EP_SIZE=16
+export VLLM_EP_SIZE=8
 
 block_size=128
 # DO NOT change ends...
@@ -30,7 +30,7 @@ export VLLM_GRAPH_RESERVED_MEM=0.1
 export VLLM_GRAPH_PROMPT_RATIO=0
 # params
 max_num_batched_tokens=2048
-max_num_seqs=128
+max_num_seqs=1
 input_min=1024
 input_max=1024
 output_max=1024

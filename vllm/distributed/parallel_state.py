@@ -1064,7 +1064,7 @@ def ensure_kv_transfer_initialized(vllm_config: "VllmConfig") -> None:
     """
 
     global _KV_TRANSFER
-
+    print(" vllm_config.kv_transfer_config.need_kv_parallel_group=", vllm_config.kv_transfer_config.need_kv_parallel_group)
     if vllm_config.kv_transfer_config is None:
         return
 
@@ -1076,7 +1076,10 @@ def ensure_kv_transfer_initialized(vllm_config: "VllmConfig") -> None:
             rank=get_world_group().rank,
             local_rank=get_world_group().local_rank,
             config=vllm_config)
-
+    if _KV_TRANSFER is not None:
+        print("%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%")
+    else:
+        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
 def ensure_model_parallel_initialized(
     tensor_model_parallel_size: int,

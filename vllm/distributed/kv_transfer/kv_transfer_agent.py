@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
     from vllm.config import VllmConfig
 
-from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
+#from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
 import torch
 
 from vllm.distributed.kv_transfer.kv_connector.factory import (
@@ -36,7 +36,7 @@ class KVTransferAgent:
         local_rank: int,
         config: "VllmConfig",
     ):
-
+        print(" hlin hlin hlin hlin hlin ")
         self.config = config
 
         if config.kv_transfer_config is None:

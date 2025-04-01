@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from vllm.config import VllmConfig
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
 
-from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
+#from vllm.worker.hpu_model_runner import ModelInputForHPUWithSamplingMetadata
 
 class KVConnectorBase(ABC):
     """

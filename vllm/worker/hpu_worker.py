@@ -119,6 +119,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
                 on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
         else:
             self.profiler = None
+        self.init_device()
 
     def full_trace_handler(self, dir_name, use_gzip=False):
 
