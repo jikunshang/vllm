@@ -999,7 +999,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             self.block_size)
 
         if self.dp_size > 1 and self.dp_awared_padding:
-            rank = torch.distributed.get_rank()
             if self.is_driver_worker:
                 max_prompt_len = align_dp_groups(max_prompt_len, torch.distributed.ReduceOp.MAX)
             if align_worker:
@@ -1175,7 +1174,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 block_bucket_size,
                 self.bucketing_global_state.decode_block_bucket_cfg)
             if self.dp_size > 1 and self.dp_awared_padding:
-                rank = torch.distributed.get_rank()
                 if self.is_driver_worker:
                     block_bucket_size = align_dp_groups(block_bucket_size, torch.distributed.ReduceOp.MAX)
                 if align_worker:
@@ -1191,7 +1189,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 len(block_list),
                 self.bucketing_global_state.decode_block_bucket_cfg)
             if self.dp_size > 1 and self.dp_awared_padding:
-                rank = torch.distributed.get_rank()
                 if self.is_driver_worker:
                     block_bucket_size = align_dp_groups(block_bucket_size, torch.distributed.ReduceOp.MAX)
                 if align_worker:
@@ -1275,7 +1272,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             if is_prompt else self.bucketing_global_state.decode_bs_bucket_cfg
         batch_size_padded = find_bucket(real_batch_size, bucket_cfg)
         if self.dp_size > 1 and self.dp_awared_padding:
-            rank = torch.distributed.get_rank()
             if self.is_driver_worker:
                 batch_size_padded = align_dp_groups(batch_size_padded, torch.distributed.ReduceOp.MAX)
             if align_worker:
@@ -1495,7 +1491,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _dummy_run(self,
                    max_num_batched_tokens: int) -> None:
         assert max_num_batched_tokens == 1
-        rank = torch.distributed.get_rank()
         self.warmup_scenario(max_num_batched_tokens, 1, False, False, True, 1, True)
         return
 
