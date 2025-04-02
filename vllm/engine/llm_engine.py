@@ -1467,7 +1467,6 @@ class LLMEngine:
             if self.scheduler_config.is_multi_step:
                 self._update_cached_scheduler_output(virtual_engine, outputs)
         else:
-            logger.info(f"schedule empty batch!!!!")
             # Nothing scheduled => If there is pending async postprocessor,
             # then finish it here.
             self.model_executor.execute_model(
@@ -1513,7 +1512,6 @@ class LLMEngine:
             # Check if need to run the usual non-async path
             if not allow_async_output_proc:
                 self._process_model_outputs(ctx=ctx)
-                logger.info("processed model outputs done")
                 # Log stats.
                 self.do_log_stats(scheduler_outputs, outputs)
 

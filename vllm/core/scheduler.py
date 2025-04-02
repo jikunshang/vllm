@@ -1307,7 +1307,7 @@ class Scheduler:
 
         ignored_seq_groups = prefills.ignored_seq_groups
         ignored_seq_groups.extend(swapped_in.infeasible_seq_groups)
-        logger.info(f"schedule result: prefill req num: {num_prefill_groups}, decode req num: {len(running_scheduled.decode_seq_groups)}")
+        logger.debug(f"schedule result: prefill req num: {num_prefill_groups}, decode req num: {len(running_scheduled.decode_seq_groups)}")
         return SchedulerOutputs(
             scheduled_seq_groups=scheduled_seq_groups,
             num_prefill_groups=num_prefill_groups,
