@@ -252,6 +252,22 @@ def align_workers(value, op):
     return value_t.item()
 
 
+def align_tp_workers(value, op):
+    group = get_tp_group().cpu_group
+    world_size = get_tp_group().world_size
+    if world_size <= 1:
+        return value
+    value_t = torch.tensor(value, device='cpu')
+    torch.distributed.all_reduce(value_t, op=op, group=group)
+    return value_t.item()
+
+
+def align_dp_groups(value, op):
+    group = get_dp_group().cpu_group
+    value_t = torch.tensor(value, device="cpu", dtype=torch.int32)
+    torch.distributed.all_reduce(value_t, op=op, group=group)
+    return value_t.item()
+
 def setup_profiler():
     schedule = torch.profiler.schedule(wait=0, warmup=2, active=1, repeat=1)
     DEVICE = 'hpu'
@@ -321,6 +337,14 @@ class HpuModelAdapter:
         self.block_size = vllm_config.cache_config.block_size
         self.dtype = vllm_config.model_config.dtype
         enforce_eager = vllm_config.model_config.enforce_eager
+        self.dp_size = self.vllm_config.parallel_config.data_parallel_size
+        self.dp_awared_padding = True if self.dp_size > 1 and htorch.utils.internal.is_lazy() and not enforce_eager else False
+        self.use_hpu_multicast = os.environ.get('VLLM_DP_HPU_MULTICAST',
+                                                'true').lower() in ['1', 'true'] 
+        # FIXME(kusnhang): disable this for now
+        # if not self.dp_awared_padding and self.use_hpu_multicast:
+        #     raise NotImplementedError(
+        #         "Set VLLM_DP_HPU_MULTICAST=false along with enforce_eager mode.")
 
         if not htorch.utils.internal.is_lazy() and not enforce_eager:
             if os.getenv('VLLM_REGIONAL_COMPILATION',
@@ -443,7 +467,7 @@ class HpuModelAdapter:
                                               input_ids.device, self.dtype)
         LoraMask.setLoraMask(kwargs.pop('lora_mask'))
         with set_forward_context(attn_metadata, self.vllm_config,
-                                 virtual_engine):
+                                 virtual_engine, dp_awared_padding=self.dp_awared_padding):
             hidden_states = self.model(*args, **kwargs)
             hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
             hidden_states = hidden_states.index_select(0,
@@ -693,6 +717,12 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.cached_step_inputs: List[
             ModelInputForHPUWithSamplingMetadata] = []
 
+        # Data Parallel
+        self.dp_size = vllm_config.parallel_config.data_parallel_size
+        if self.dp_size > 1:
+            self.dp_rank = vllm_config.parallel_config.data_parallel_rank
+            self.dp_awared_padding = True if htorch.utils.internal.is_lazy() and not self.enforce_eager else False
+
     def _set_gc_threshold(self) -> None:
         # Read https://docs.python.org/3/library/gc.html#gc.set_threshold
         # for comprehensive description of gc generations.
@@ -851,6 +881,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _prepare_prompt(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
+        align_worker = False,
     ) -> PreparePromptMetadata:
         input_tokens: List[List[int]] = []
         input_positions: List[List[int]] = []
@@ -967,6 +998,13 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         self.bucketing_global_state.prompt_seq_bucket_cfg),
             self.block_size)
 
+        # Prefill does not need padding.
+        # if self.dp_size > 1 and self.dp_awared_padding:
+        #     if self.is_driver_worker:
+        #         max_prompt_len = align_dp_groups(max_prompt_len, torch.distributed.ReduceOp.MAX)
+        #     if align_worker:
+        #         max_prompt_len = align_tp_workers(max_prompt_len, torch.distributed.ReduceOp.MAX)
+
         lora_ids: List[int] = []
         for seq_group_metadata, context_len in zip(seq_group_metadata_list,
                                                    context_lens):
@@ -1044,6 +1082,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _prepare_decode(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
+        align_worker = False,
     ) -> PrepareDecodeMetadata:
         input_tokens: List[List[int]] = []
         input_positions: List[List[int]] = []
@@ -1135,6 +1174,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             block_bucket_size = find_bucket(
                 block_bucket_size,
                 self.bucketing_global_state.decode_block_bucket_cfg)
+            if self.dp_size > 1 and self.dp_awared_padding:
+                if self.is_driver_worker:
+                    block_bucket_size = align_dp_groups(block_bucket_size, torch.distributed.ReduceOp.MAX)
+                if align_worker:
+                    block_bucket_size = align_tp_workers(block_bucket_size, torch.distributed.ReduceOp.MAX)
             indices: List[Any]
             indices = [None] * block_bucket_size
             for i, bid in enumerate(block_list):
@@ -1145,6 +1189,11 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             block_bucket_size = find_bucket(
                 len(block_list),
                 self.bucketing_global_state.decode_block_bucket_cfg)
+            if self.dp_size > 1 and self.dp_awared_padding:
+                if self.is_driver_worker:
+                    block_bucket_size = align_dp_groups(block_bucket_size, torch.distributed.ReduceOp.MAX)
+                if align_worker:
+                    block_bucket_size = align_tp_workers(block_bucket_size, torch.distributed.ReduceOp.MAX)
             padding_fn = lambda tensor, pad_value: pad_list(
                 tensor, block_bucket_size, pad_value)
 
@@ -1198,6 +1247,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def prepare_input_tensors(
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
+        align_worker = False,
     ) -> Tuple[TModelInputForHPU, SamplingMetadata]:
         if len(seq_group_metadata_list) == 0:
             return self._model_input_cls(), None
@@ -1222,6 +1272,12 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         bucket_cfg = self.bucketing_global_state.prompt_bs_bucket_cfg \
             if is_prompt else self.bucketing_global_state.decode_bs_bucket_cfg
         batch_size_padded = find_bucket(real_batch_size, bucket_cfg)
+        # only decode batch need align
+        if self.dp_size > 1 and self.dp_awared_padding and not is_prompt:
+            if self.is_driver_worker:
+                batch_size_padded = align_dp_groups(batch_size_padded, torch.distributed.ReduceOp.MAX)
+            if align_worker:
+                batch_size_padded = align_tp_workers(batch_size_padded, torch.distributed.ReduceOp.MAX)
         batch_size_padding = batch_size_padded - real_batch_size
         seq_group_metadata_list = seq_group_metadata_list.copy()
         if batch_size_padding > 0:
@@ -1251,7 +1307,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             multi_modal_kwargs,
             slot_mapping,
             lora_ids,
-        ) = self._prepare_prompt(prefill_reqs)
+        ) = self._prepare_prompt(prefill_reqs, align_worker)
         (
             decode_input_tokens,
             decode_input_positions,
@@ -1261,7 +1317,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             decode_lora_requests,
             decode_slot_mapping,
             decode_lora_ids,
-        ) = self._prepare_decode(decode_reqs)
+        ) = self._prepare_decode(decode_reqs, align_worker)
         sampling_metadata = SamplingMetadata.prepare(seq_group_metadata_list,
                                                      seq_lens, query_lens,
                                                      self.device,
@@ -1390,7 +1446,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         attention_metadata = subtuple(metadata, 'TrimmedAttentionMetadata', [
             'attn_bias', 'seq_lens_tensor', 'block_list', 'block_mapping',
             'block_usage', 'slot_mapping', 'is_prompt', 'block_indices',
-            'block_offsets', 'block_scales', 'block_groups', 'input_positions'
+            'block_offsets', 'block_scales', 'block_groups', 'input_positions',
         ])
         return attention_metadata
 
@@ -1434,12 +1490,20 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.warmup_scenario(max_batch_size, max_seq_len, True, False, True)
         return
 
+    def _dummy_run(self,
+                   max_num_batched_tokens: int) -> None:
+        assert max_num_batched_tokens == 1
+        self.warmup_scenario(max_num_batched_tokens, 1, False, False, True, 1, True)
+        return
+
     def warmup_scenario(self,
                         batch_size,
                         seq_len,
                         is_prompt,
                         is_pt_profiler_run=False,
-                        is_lora_profile_run=False) -> None:
+                        is_lora_profile_run=False,
+                        iters = 3,
+                        align_worker = False) -> None:
         use_graphs = self._use_graphs(batch_size, seq_len, is_prompt)
         scenario_name = ("warmup_"
                          f"{'prompt' if is_prompt else 'decode'}_"
@@ -1470,7 +1534,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     for idx in range(batch_size)
                 ]
         self.profiler.start('internal', scenario_name)
-        times = 3 if use_graphs or is_pt_profiler_run else 1
+        times = iters if use_graphs or is_pt_profiler_run else 1
         if is_prompt:
             seqs = [
                 self.create_dummy_seq_group_metadata(
@@ -1500,7 +1564,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             profiler = setup_profiler()
             profiler.start()
         for _ in range(times):
-            inputs = self.prepare_model_input(seqs)
+            inputs = self.prepare_model_input(seqs, align_worker=align_worker)
             additional_inputs = {}
             if self.model_type in ("medusa", "mlp_speculator", "eagle",
                                    "deepseek_mtp"):
@@ -1972,7 +2036,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         self,
         seq_group_metadata_list: List[SequenceGroupMetadata],
         virtual_engine: int = 0,
-        finished_requests_ids: Optional[List[str]] = None
+        finished_requests_ids: Optional[List[str]] = None,
+        align_worker: bool = False,
     ) -> ModelInputForHPUWithSamplingMetadata:
         """Prepare the model input based on a given sequence group, including
         metadata for the sampling step.
@@ -1989,7 +2054,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 self.profiler_counter_helper.capture_seq_group_metadata_stats(
                     seq_group_metadata_list=seq_group_metadata_list)
             model_input, sampling_metadata = self.prepare_input_tensors(
-                seq_group_metadata_list)
+                seq_group_metadata_list, align_worker=align_worker)
             assert model_input.attn_metadata is not None
             is_prompt = model_input.attn_metadata.is_prompt
 

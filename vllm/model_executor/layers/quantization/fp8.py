@@ -911,6 +911,8 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             scoring_func=scoring_func,
             e_score_correction_bias=e_score_correction_bias)
 
+        if ep_rank is None:
+            ep_rank = 0
         # need to figure out ep_shift
         assert ep_rank is not None
         ep_shift = ep_rank * num_experts

@@ -2,6 +2,7 @@
 
 from abc import abstractmethod
 from enum import Enum
+import os
 from typing import Callable, List, Optional, Tuple
 
 import torch
@@ -189,9 +190,12 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                     renormalize: bool,
                     topk_group: Optional[int] = None,
                     num_expert_group: Optional[int] = None,
+                    global_num_experts: int = -1,
+                    expert_map: Optional[torch.Tensor] = None,
                     custom_routing_function: Optional[Callable] = None,
                     scoring_func: str = "softmax",
-                    e_score_correction_bias: Optional[torch.Tensor] = None):
+                    e_score_correction_bias: Optional[torch.Tensor] = None,
+                    activation: str = "silu"):
         assert len(x.shape) == 2
         import habana_frameworks.torch as htorch
         htorch.core.mark_step()
@@ -237,7 +241,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 w12=w13_list_slice,
                 w3=w2_list_slice,
                 permuted_weights=True,
-                activation="silu",
+                activation=activation,
                 experts_min=min_expert,
                 experts_max=max_expert - 1)
             htorch.core.mark_step()
@@ -469,6 +473,8 @@ class FusedMoE(torch.nn.Module):
         self.scoring_func = scoring_func
         self.e_score_correction_bias = e_score_correction_bias
         self.activation = activation
+        self.use_hpu_multicast = current_platform.is_hpu() and os.environ.get('VLLM_DP_HPU_MULTICAST', 'true').lower() == 'true'
+        self.multicast_fn = self.hpu_multicast if self.use_hpu_multicast else self.naive_multicast
 
         if self.scoring_func != "softmax" and not self.use_grouped_topk:
             raise ValueError("Only softmax scoring function is supported for "
@@ -796,7 +802,9 @@ class FusedMoE(torch.nn.Module):
 
     def naive_multicast(self, x: torch.Tensor,
                         cu_tokens_across_dp_cpu: torch.Tensor):
-        assert (len(x.shape) == 2)
+        assert (len(x.shape) == 2 or len(x.shape) == 3)
+        if len(x.shape) == 3:
+            x = x.view(-1, x.size(2))
         buffer = torch.empty((cu_tokens_across_dp_cpu[-1], x.size(1)),
                              device=x.device,
                              dtype=x.dtype)
@@ -812,6 +820,12 @@ class FusedMoE(torch.nn.Module):
 
         return buffer
 
+    def hpu_multicast(self, x: torch.Tensor,
+                      cu_tokens_across_dp_cpu: torch.Tensor):
+        buffer = get_dp_group().all_gather(x, 0)
+
+        return buffer
+
     def forward(self, hidden_states: torch.Tensor,
                 router_logits: torch.Tensor):
         if self.use_direct_call:
@@ -824,14 +838,15 @@ class FusedMoE(torch.nn.Module):
                      router_logits: torch.Tensor):
         assert self.quant_method is not None
 
+        origin_hidden_states_shape = hidden_states.shape
         if self.dp_size > 1:
             cu_tokens_across_dp_cpu = get_forward_context(
             ).dp_metadata.cu_tokens_across_dp_cpu
 
-            hidden_states = self.naive_multicast(hidden_states,
-                                                 cu_tokens_across_dp_cpu)
-            router_logits = self.naive_multicast(router_logits,
-                                                 cu_tokens_across_dp_cpu)
+            hidden_states = self.multicast_fn(hidden_states,
+                                              cu_tokens_across_dp_cpu)
+            router_logits = self.multicast_fn(router_logits,
+                                              cu_tokens_across_dp_cpu)
 
         # Matrix multiply.
         final_hidden_states = self.quant_method.apply(
@@ -849,7 +864,7 @@ class FusedMoE(torch.nn.Module):
             scoring_func=self.scoring_func,
             e_score_correction_bias=self.e_score_correction_bias,
             activation=self.activation,
-            ep_rank=self.ep_rank,
+            ep_rank = self.ep_rank,
         )
 
         if self.dp_size > 1:
@@ -859,6 +874,11 @@ class FusedMoE(torch.nn.Module):
 
             all_hidden_states = get_dp_group().all_reduce(final_hidden_states)
             final_hidden_states = all_hidden_states[start:end, :]
+            # Need to reshape back to the original shape. However, Fp8MoEMethod
+            # will always view the hidden_states as 2D tensor and i don't know
+            # why it won't be reshaped back to the original shape.
+            # if len(origin_hidden_states_shape) == 3:
+            #     final_hidden_states = final_hidden_states.view(origin_hidden_states_shape)
 
         if self.reduce_results and (self.tp_size > 1 or self.ep_size > 1):
             # Default set to False. (May have to add shared expert outputs.)

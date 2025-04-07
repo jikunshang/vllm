@@ -31,7 +31,7 @@ from vllm.worker.model_runner_base import InputProcessingError
 
 logger = init_logger(__name__)
 
-POLLING_TIMEOUT_MS = 10000
+POLLING_TIMEOUT_MS = 500
 HEALTHY_RESPONSE = (pickle.dumps(VLLM_RPC_SUCCESS_STR), )
 
 
@@ -188,7 +188,7 @@ class MQLLMEngine:
         while True:
             if not self.engine.has_unfinished_requests():
                 # Poll until there is work to do.
-                while self.input_socket.poll(timeout=POLLING_TIMEOUT_MS) == 0:
+                if self.input_socket.poll(timeout=POLLING_TIMEOUT_MS) == 0:
                     # When there's no work, check on engine health and send
                     # health status back to client
                     self._health_check()

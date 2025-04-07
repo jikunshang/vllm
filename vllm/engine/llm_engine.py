@@ -921,18 +921,18 @@ class LLMEngine:
                    for scheduler in self.scheduler)
 
     def has_unfinished_requests(self,
+                                is_prefill:Optional[bool] = None,
                                 virtual_engine: Optional[int] = None) -> bool:
         """Returns True if there are unfinished requests."""
-        if virtual_engine is not None:
-            schedulers = [self.scheduler[virtual_engine]]
-        else:
-            schedulers = self.scheduler
-        has_unfinished = any(scheduler.has_unfinished_seqs()
-                             for scheduler in schedulers)
-        if not self.need_to_sync_across_dp:
-            return has_unfinished
+        return any(scheduler.has_unfinished_seqs()
+                   for scheduler in self.scheduler)
+
+    def dp_group_has_unfinished_request(self, )->bool:
+        has_unfinished = self.has_unfinished_requests()
+        logger.info(f"calling dpgroup unfinished")
         aggregated_has_unfinished = ParallelConfig.\
             has_unfinished_dp(self.dp_group, has_unfinished)
+        logger.info(f"calling dpgroup unfinished done, not hang")
         if not has_unfinished and aggregated_has_unfinished:
             # current rank has no unfinished seqs, but other ranks do,
             # so we should execute a dummy batch to sync across ranks
@@ -1339,21 +1339,28 @@ class LLMEngine:
             raise NotImplementedError(
                 "Pipeline parallelism is only supported through AsyncLLMEngine "
                 "as performance will be severely degraded otherwise.")
+        # is_decode_batch = False
+        # if self.cached_scheduler_outputs[0].scheduler_outputs is not None:
+        #     if self.cached_scheduler_outputs[0].scheduler_outputs.num_prefill_groups == 0:
+        #         is_decode_batch = True
+        # if is_decode_batch:
+        #     dp_group_unfinished = self.dp_group_has_unfinished_request()
+        #     logger.info(f"dp_group_unfinished: {dp_group_unfinished}")
 
-        if self.should_execute_dummy_batch:
-            self.should_execute_dummy_batch = False
-            outputs = self.model_executor.execute_model(
-                execute_model_req=ExecuteModelRequest(
-                    seq_group_metadata_list=[], is_dummy_batch=True))
-            if not self.has_unfinished_requests():
-                # Stop the execute model loop in parallel workers until there are
-                # more requests to process. This avoids waiting indefinitely in
-                # torch.distributed ops which may otherwise timeout, and unblocks
-                # the RPC thread in the workers so that they can process any other
-                # queued control plane messages, such as add/remove lora adapters.
-                logger.debug("Stopping remote worker execution loop.")
-                self.model_executor.stop_remote_worker_execution_loop()
-            return []
+        # if self.should_execute_dummy_batch:
+        #     self.should_execute_dummy_batch = False
+        #     outputs = self.model_executor.execute_model(
+        #         execute_model_req=ExecuteModelRequest(
+        #             seq_group_metadata_list=[], is_dummy_batch=True))
+        #     if not self.has_unfinished_requests():
+        #         # Stop the execute model loop in parallel workers until there are
+        #         # more requests to process. This avoids waiting indefinitely in
+        #         # torch.distributed ops which may otherwise timeout, and unblocks
+        #         # the RPC thread in the workers so that they can process any other
+        #         # queued control plane messages, such as add/remove lora adapters.
+        #         logger.debug("Stopping remote worker execution loop.")
+        #         self.model_executor.stop_remote_worker_execution_loop()
+        #     return []
 
         # For llm_engine, there is no pipeline parallel support, so the engine
         # used is always 0.
@@ -1462,6 +1469,9 @@ class LLMEngine:
         else:
             # Nothing scheduled => If there is pending async postprocessor,
             # then finish it here.
+            self.model_executor.execute_model(
+                execute_model_req=ExecuteModelRequest(
+                seq_group_metadata_list=[], is_dummy_batch=True))
             if len(ctx.output_queue) > 0:
                 self._process_model_outputs(ctx=ctx)
             # No outputs in this case

@@ -296,13 +296,10 @@ def stateless_init_torch_distributed_process_group(
     # different systems (e.g. RPC) in case the store is multi-tenant.
     prefix_store = PrefixStore(init_method, store)
 
-    pg_options = ProcessGroup.Options(backend=backend, timeout=timeout)
-
     pg: ProcessGroup = ProcessGroup(
         prefix_store,
         group_rank,
         group_size,
-        pg_options,
     )
 
     if backend == "gloo":
