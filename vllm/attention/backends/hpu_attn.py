@@ -233,6 +233,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     attn_bias: Optional[torch.Tensor]
     seq_lens_tensor: Optional[torch.Tensor]
     input_positions: torch.Tensor
+    seq_lens: Optional[List[int]] = None
 
 
 @dataclass
