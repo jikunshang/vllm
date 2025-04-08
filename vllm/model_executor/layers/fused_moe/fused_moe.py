@@ -19,6 +19,8 @@ from vllm.model_executor.layers.quantization.utils.fp8_utils import (
 from vllm.model_executor.layers.quantization.utils.int8_utils import (
     per_token_group_quant_int8, per_token_quant_int8)
 from vllm.platforms import current_platform
+if current_platform.is_xpu():
+    from vllm._ipex_ops import ipex_ops
 from vllm.triton_utils import tl, triton
 from vllm.utils import direct_register_custom_op
 
@@ -962,6 +964,27 @@ def get_config_dtype_str(
     return None
 
 
+def dispatch_silu_and_mul(output: torch.Tensor, input: torch.Tensor):
+    if current_platform.is_xpu():
+        ipex_ops.silu_and_mul(output, input)
+    else:
+        torch.ops._C.silu_and_mul(output, input)
+
+
+def dispatch_gelu_and_mul(output: torch.Tensor, input: torch.Tensor):
+    if current_platform.is_xpu():
+        ipex_ops.gelu_and_mul(output, input)
+    else:
+        torch.ops._C.gelu_and_mul(output, input)
+
+
+def dispatch_moe_sum(input: torch.Tensor, output: torch.Tensor):
+    if current_platform.is_xpu():
+        ipex_ops.moe_sum(input, output)
+    else:
+        ops.moe_sum(input, output)
+
+
 def inplace_fused_experts(hidden_states: torch.Tensor,
                           w1: torch.Tensor,
                           w2: torch.Tensor,
@@ -1090,12 +1113,17 @@ direct_register_custom_op(
 
 
 def torch_vllm_inplace_fused_experts(**kwargs) -> torch.Tensor:
-    torch.ops.vllm.inplace_fused_experts(**kwargs)
+    if current_platform.is_xpu():
+        inplace_fused_experts(**kwargs)
+    else:
+        torch.ops.vllm.inplace_fused_experts(**kwargs)
     hidden_states = kwargs['hidden_states']
     return hidden_states
 
 
 def torch_vllm_outplace_fused_experts(**kwargs) -> torch.Tensor:
+    if current_platform.is_xpu():
+        return outplace_fused_experts(**kwargs)
     return torch.ops.vllm.outplace_fused_experts(**kwargs)
 
 
@@ -1379,11 +1407,11 @@ def fused_experts_impl(hidden_states: torch.Tensor,
                                 block_shape=block_shape)
 
         if activation == "silu":
-            torch.ops._C.silu_and_mul(intermediate_cache2,
-                                      intermediate_cache1.view(-1, N))
+            dispatch_silu_and_mul(intermediate_cache2,
+                                  intermediate_cache1.view(-1, N))
         elif activation == "gelu":
-            torch.ops._C.gelu_and_mul(intermediate_cache2,
-                                      intermediate_cache1.view(-1, N))
+            dispatch_gelu_and_mul(intermediate_cache2,
+                                  intermediate_cache1.view(-1, N))
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}")
 
@@ -1420,9 +1448,8 @@ def fused_experts_impl(hidden_states: torch.Tensor,
                                 per_channel_quant=per_channel_quant,
                                 block_shape=block_shape)
 
-        ops.moe_sum(intermediate_cache3.view(*intermediate_cache3.shape),
-                    out_hidden_states[begin_chunk_idx:end_chunk_idx])
-
+        dispatch_moe_sum(intermediate_cache3.view(*intermediate_cache3.shape),
+                         out_hidden_states[begin_chunk_idx:end_chunk_idx])
     return out_hidden_states
 
 

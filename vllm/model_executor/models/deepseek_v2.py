@@ -24,6 +24,7 @@
 """Inference-only DeepseekV2/DeepseekV3 model."""
 from typing import Any, Dict, Iterable, Optional, Set, Tuple, Union
 
+import os
 import torch
 from torch import nn
 from transformers import PretrainedConfig
@@ -606,6 +607,7 @@ class DeepseekV2Model(nn.Module):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
+        self.num_dummy_layers = int(os.environ.get("NUM_DUMMY_LAYERS", "-1"))
 
         config = vllm_config.model_config.hf_config
         model_config = vllm_config.model_config
@@ -625,7 +627,7 @@ class DeepseekV2Model(nn.Module):
             self.embed_tokens = PPMissingLayer()
 
         self.start_layer, self.end_layer, self.layers = make_layers(
-            config.num_hidden_layers,
+            config.num_hidden_layers if self.num_dummy_layers == -1 else self.num_dummy_layers,
             lambda prefix: DeepseekV2DecoderLayer(
                 config,
                 prefix,
@@ -681,12 +683,14 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
         super().__init__()
+        self.num_dummy_layers = int(os.environ.get("NUM_DUMMY_LAYERS", "-1"))
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
         self.config = config
         self.quant_config = quant_config
         self.model = DeepseekV2Model(vllm_config=vllm_config,
                                      prefix=maybe_prefix(prefix, "model"))
+        print(f"==>vllm::init model w/ {self.num_dummy_layers} dummy layers\n{self.model}")
         if get_pp_group().is_last_rank:
             self.lm_head = ParallelLMHead(config.vocab_size,
                                           config.hidden_size,
@@ -752,6 +756,20 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
 
         params_dict = dict(self.named_parameters())
         loaded_params: Set[str] = set()
+        if self.num_dummy_layers != -1:
+            # set dummy weights for all layers
+            for name, param in params_dict.items():
+                dtype = params_dict[name].data.dtype
+                # shape = [param.data.size()[i] for i in range(param.data.dim())]
+                # print(f"{name}, {dtype}, {shape}", flush=True)
+                if dtype == torch.float16 or dtype == torch.bfloat16 or dtype == torch.float32:
+                    params_dict[name].data = torch.randn(param.data.size(), device=param.device, dtype=dtype) / 10
+                elif dtype == torch.float8_e4m3fn:
+                    params_dict[name].data = torch.randint(1, 128, param.data.size(), device=param.device, dtype=torch.int8).to(torch.float8_e4m3fn)
+                else:
+                    raise ValueError(f"Unsupported dtype: {dtype}")
+            return loaded_params
+
         for name, loaded_weight in weights:
             if "rotary_emb.inv_freq" in name:
                 continue

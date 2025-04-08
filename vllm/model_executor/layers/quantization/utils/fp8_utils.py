@@ -503,6 +503,20 @@ def w8a8_block_fp8_matmul(
             "num_stages": 2,
         }
 
+    if os.environ.get("OPT_W8A8_BLOCK_FP8_MATMUL", "0") == "1":
+        def ref_w8a8_block_fp8_matmul():
+            As_repeat = As.repeat_interleave(block_size[0], dim=1)
+            Bs_repeat = Bs.repeat_interleave(block_size[1], dim=0)
+            Bs_repeat = Bs_repeat.repeat_interleave(block_size[0], dim=1)
+            Bs_repeat = Bs_repeat[:N, :]
+            A_dequant = A.to(torch.float32) * As_repeat
+            B_dequant = B.to(torch.float32) * Bs_repeat
+            C = torch.matmul(A_dequant.to(torch.float16), B_dequant.t().to(torch.float16)).to(output_dtype)
+            return C
+
+        C_ref = ref_w8a8_block_fp8_matmul()
+        return C_ref
+
     def grid(META):
         return (triton.cdiv(M, META["BLOCK_SIZE_M"]) *
                 triton.cdiv(N, META["BLOCK_SIZE_N"]), )

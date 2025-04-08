@@ -392,9 +392,12 @@ class Fp8LinearMethod(LinearMethodBase):
                 size_k=layer.input_size_per_partition,
                 bias=bias)
 
+        # Note: lazy import to avoid triton import error.
+        from vllm.model_executor.layers.quantization.utils.fp8_utils import (
+            apply_w8a8_block_fp8_linear)
         if self.block_quant:
             assert self.quant_config.weight_block_size is not None
-            return torch.ops.vllm.apply_w8a8_block_fp8_linear(
+            return apply_w8a8_block_fp8_linear(
                 input=x,
                 weight=layer.weight,
                 block_size=self.quant_config.weight_block_size,

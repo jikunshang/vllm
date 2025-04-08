@@ -293,3 +293,128 @@ class ipex_ops:
     def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
                     block_mapping: torch.Tensor) -> None:
         torch.xpu.swap_blocks(src, dst, block_mapping)  # type: ignore
+
+    @staticmethod
+    def bgmv_shrink(inputs: torch.Tensor,
+                    lora_a_weights: torch.Tensor,
+                    output_tensor: torch.Tensor,
+                    lora_indices_tensor: torch.Tensor,
+                    scaling: float = 1.0) -> None:
+        ipex.llm.functional.bgmv_shrink(inputs, lora_a_weights, output_tensor,
+                                        lora_indices_tensor, scaling)
+
+    @staticmethod
+    def bgmv_expand(inputs: torch.Tensor,
+                    lora_b_weights: torch.Tensor,
+                    output_tensor: torch.Tensor,
+                    lora_indices_tensor: torch.Tensor,
+                    add_inputs: bool = True) -> None:
+        ipex.llm.functional.bgmv_expand(inputs, lora_b_weights, output_tensor,
+                                        lora_indices_tensor, add_inputs)
+
+    @staticmethod
+    def bgmv_expand_slice(inputs: torch.Tensor,
+                          lora_b_weights: torch.Tensor,
+                          output_tensor: torch.Tensor,
+                          lora_indices_tensor: torch.Tensor,
+                          slice_offset: int,
+                          slice_size: int,
+                          add_inputs: bool = True) -> None:
+        ipex.llm.functional.bgmv_expand_slice(inputs, lora_b_weights,
+                                              output_tensor,
+                                              lora_indices_tensor,
+                                              slice_offset, slice_size,
+                                              add_inputs)
+
+    @staticmethod
+    def sgmv_shrink(inputs: torch.Tensor,
+                    lora_a_weights: torch.Tensor,
+                    output_tensor: torch.Tensor,
+                    b_seq_start_loc: torch.Tensor,
+                    seq_len_tensor: torch.Tensor,
+                    lora_indices_tensor: torch.Tensor,
+                    batches: int,
+                    max_seq_length: int,
+                    token_nums: int,
+                    scaling: float = 1.0) -> None:
+        assert inputs.size(0) == token_nums
+        ipex.llm.functional.sgmv_shrink(inputs, lora_a_weights, output_tensor,
+                                        b_seq_start_loc, seq_len_tensor,
+                                        lora_indices_tensor, batches,
+                                        max_seq_length, scaling)
+
+    @staticmethod
+    def sgmv_expand(inputs: torch.Tensor,
+                    lora_b_weights: torch.Tensor,
+                    output_tensor: torch.Tensor,
+                    b_seq_start_loc: torch.Tensor,
+                    seq_len_tensor: torch.Tensor,
+                    lora_indices_tensor: torch.Tensor,
+                    batches: int,
+                    max_seq_length: int,
+                    token_nums: int,
+                    add_inputs: bool = False) -> None:
+        assert inputs.size(0) == token_nums
+        ipex.llm.functional.sgmv_expand(inputs, lora_b_weights, output_tensor,
+                                        b_seq_start_loc, seq_len_tensor,
+                                        lora_indices_tensor, batches,
+                                        max_seq_length, add_inputs)
+
+    @staticmethod
+    def sgmv_expand_slice(inputs: torch.Tensor,
+                          lora_b_weights: torch.Tensor,
+                          output_tensor: torch.Tensor,
+                          b_seq_start_loc: torch.Tensor,
+                          seq_len_tensor: torch.Tensor,
+                          lora_indices_tensor: torch.Tensor,
+                          batches: int,
+                          max_seq_length: int,
+                          token_nums: int,
+                          slice_offset: int,
+                          slice_size: int,
+                          add_inputs: bool = False) -> None:
+        assert inputs.size(0) == token_nums
+        ipex.llm.functional.sgmv_expand_slice(inputs, lora_b_weights,
+                                              output_tensor, b_seq_start_loc,
+                                              seq_len_tensor,
+                                              lora_indices_tensor, batches,
+                                              max_seq_length, slice_offset,
+                                              slice_size, add_inputs)
+
+    def moe_sum(input: torch.Tensor, output: torch.Tensor):
+       torch.ops.torch_ipex.moe_sum(input, output)
+
+    # @staticmethod
+    # def lora_expand(inputs: torch.Tensor,
+    #                 lora_b_weights: List[torch.Tensor],
+    #                 output_tensor: torch.Tensor,
+    #                 token_lora_mapping: torch.Tensor,
+    #                 token_indices_sorted_by_lora_ids: torch.Tensor,
+    #                 num_tokens_per_lora: torch.Tensor,
+    #                 lora_token_start_loc: torch.Tensor,
+    #                 lora_ids: torch.Tensor,
+    #                 offset_start: int = 0,
+    #                 add_inputs: bool = False) -> None:
+    #     ipex.llm.functional.lora_expand(inputs, lora_b_weights,
+    #                                     output_tensor, token_lora_mapping,
+    #                                     token_indices_sorted_by_lora_ids,
+    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     lora_token_start_loc, lora_ids,
+    #                                     offset_start, add_inputs)
+
+    # @staticmethod
+    # def lora_shrink(inputs: torch.Tensor,
+    #                 lora_a_weights: List[torch.Tensor],
+    #                 output_tensor: torch.Tensor,
+    #                 token_lora_mapping: torch.Tensor,
+    #                 token_indices_sorted_by_lora_ids: torch.Tensor,
+    #                 num_tokens_per_lora: torch.Tensor,
+    #                 lora_token_start_loc: torch.Tensor,
+    #                 lora_ids: torch.Tensor,
+    #                 scaling: float) -> None:
+    #     ipex.llm.functional.lora_shrink(inputs, lora_a_weights,
+    #                                     output_tensor, token_lora_mapping,
+    #                                     token_indices_sorted_by_lora_ids,
+    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     lora_token_start_loc, lora_ids,
+    #                                     scaling)
