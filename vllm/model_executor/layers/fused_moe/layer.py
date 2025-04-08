@@ -4,6 +4,7 @@ from abc import abstractmethod
 from enum import Enum
 from typing import Callable, List, Optional, Tuple
 
+import os
 import torch
 import torch.nn.functional as F
 from torch.nn.parameter import UninitializedParameter
@@ -791,15 +792,24 @@ class FusedMoE(torch.nn.Module):
         if use_grouped_topk:
             assert topk_group is not None
             assert num_expert_group is not None
-            topk_weights, topk_ids = grouped_topk(
-                hidden_states=hidden_states,
-                gating_output=router_logits,
-                topk=top_k,
-                renormalize=renormalize,
-                num_expert_group=num_expert_group,
-                topk_group=topk_group,
-                scoring_func=scoring_func,
-                e_score_correction_bias=e_score_correction_bias)
+            if current_platform.is_xpu() and scoring_func == "sigmoid":
+                topk_weights, topk_ids, _, _ = torch.ops.torch_ipex.grouped_topk_sigmoid(
+                    router_logits,
+                    e_score_correction_bias,
+                    num_expert_group,
+                    top_k,
+                    topk_group
+                )
+            else:
+                topk_weights, topk_ids = grouped_topk(
+                    hidden_states=hidden_states,
+                    gating_output=router_logits,
+                    topk=top_k,
+                    renormalize=renormalize,
+                    num_expert_group=num_expert_group,
+                    topk_group=topk_group,
+                    scoring_func=scoring_func,
+                    e_score_correction_bias=e_score_correction_bias)
         elif custom_routing_function is None:
             topk_weights, topk_ids = fused_topk(hidden_states=hidden_states,
                                                 gating_output=router_logits,

@@ -291,3 +291,7 @@ class ipex_ops:
     def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
                     block_mapping: torch.Tensor) -> None:
         torch.xpu.swap_blocks(src, dst, block_mapping)  # type: ignore
+
+    @staticmethod
+    def moe_sum(input: torch.Tensor, output: torch.Tensor):
+       torch.ops.torch_ipex.moe_sum(input, output)
