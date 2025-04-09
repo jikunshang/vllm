@@ -2298,23 +2298,35 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         # NOTE: The receive operation is blocking
         bypass_model_exec = False
         if self.need_recv_kv(model_input, kv_caches):
-            cur_time = time.time()
-            attn_metadata = self.model.forward_update_meta_only(
-                    **execute_model_kwargs,
-                    selected_token_indices=sampling_metadata.
-                    selected_token_indices)
-            hidden_states, bypass_model_exec, model_input = \
-            get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
-                # model is used to know which layer the current worker
-                # is working on, so that we can receive KV for only those
-                # layers.
-                self.get_model(),
-                model_input,
-                attn_metadata,
-                kv_caches=kv_caches
-            )
-            now = time.time()
-            logger.info(f"KV transfer recv time: {now - cur_time}")
+            if warmup_mode and self.is_first_recv:
+                # In warmup mode, we don't want to receive KV cache
+                # from other workers, but we need to warmup lazy graph for performance. and we can set only one prefill shape
+                self.is_first_recv = False
+                bypass_model_exec = False
+                get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
+                    self.get_model(),
+                    model_input,
+                    attn_metadata,
+                    kv_caches=kv_caches,
+                    warmup_mode=True)
+            else:
+                cur_time = time.time()
+                attn_metadata = self.model.forward_update_meta_only(
+                        **execute_model_kwargs,
+                        selected_token_indices=sampling_metadata.
+                        selected_token_indices)
+                hidden_states, bypass_model_exec, model_input = \
+                get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
+                    # model is used to know which layer the current worker
+                    # is working on, so that we can receive KV for only those
+                    # layers.
+                    self.get_model(),
+                    model_input,
+                    attn_metadata,
+                    kv_caches=kv_caches
+                )
+                now = time.time()
+                logger.info(f"KV transfer recv time: {now - cur_time}")
             
         if not bypass_model_exec:
             with self.profiler.record_event('internal', model_event_name):
