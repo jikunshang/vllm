@@ -235,6 +235,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         hidden_or_intermediate_states: Union[torch.Tensor,
                                              IntermediateTensors],
     ) -> None:
+        print(f"start sending!!!!!!!")
         input_tokens_tensor = model_input.input_tokens # shape: [batch_size, seq_len_padding_to_128]
         seq_lens = model_input.attn_metadata.seq_lens # 2D list
         start_layer = model_executable.model.start_layer
@@ -272,16 +273,16 @@ class MooncakeStoreConnector(KVConnectorBase):
             for layer_id in range(start_layer, end_layer):
                 kv_cache = kv_caches[layer_id - start_layer]
                 key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)
-                value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
+                # value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
 
                 htorch.core.mark_step()
                 keys.append(key_cache[current_slot_mapping].unsqueeze(0))
-                values.append(value_cache[current_slot_mapping].unsqueeze(0))
+                # values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
             keys = torch.cat(keys, dim=0)
-            values = torch.cat(values, dim=0)
+            # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
-            kvcache_to_sent = torch.cat([keys, values], dim=-1)
+            kvcache_to_sent = keys
             store_kvcache_key = f"{store_key_prefix}_{self.local_tp_rank}"
             self.kv_store.put(store_kvcache_key, kvcache_to_sent)
             
@@ -342,17 +343,18 @@ class MooncakeStoreConnector(KVConnectorBase):
                                model_executable.model.model.end_layer):
                     current_layer_idx = i - model_executable.model.model.start_layer
                     kv_cache = kv_caches[current_layer_idx]
-                    key_cache, value_cache = kv_cache[0], kv_cache[1]
+                    # key_cache, value_cache = kv_cache[0], kv_cache[1]
+                    key_cache = kv_cache[0]
                     self.cache_k(self.padding_k_tensor.unsqueeze(0),
                             key_cache,
                             attn_metadata.block_indices[start_block_idx:end_block_idx],
                             attn_metadata.block_offsets,
                             )
-                    self.cache_v(self.padding_v_tensor.unsqueeze(0),
-                            value_cache,
-                            attn_metadata.block_indices[start_block_idx:end_block_idx],
-                            attn_metadata.block_offsets,
-                            )
+                    # self.cache_v(self.padding_v_tensor.unsqueeze(0),
+                    #         value_cache,
+                    #         attn_metadata.block_indices[start_block_idx:end_block_idx],
+                    #         attn_metadata.block_offsets,
+                    #         )
                 # the first one should never be padding, so we can append the first one.
                 hidden_or_intermediate_states_for_one_req.append(hidden_or_intermediate_states_for_one_req[0])
                 start_block_idx = end_block_idx
@@ -416,16 +418,16 @@ class MooncakeStoreConnector(KVConnectorBase):
 
                 # [num_layers, seq_len, num_kv_heads, k/v_head_size] -> [seq_len, k/v_head_size]
                 key = keys[current_layer_idx].squeeze(-2)
-                value = values[current_layer_idx].squeeze(-2) 
+                # value = values[current_layer_idx].squeeze(-2) 
 
                 # [seq_len, k/v_head_size] ->(padding [seq_len % block_size, k/v_head_size]) ->
                 # [num_blocks * block_size, k/v_head_size]
                 key = torch.cat([key, self.padding_k_tensor[:padding_size]], dim=0)
-                value = torch.cat([value, self.padding_v_tensor[:padding_size]], dim=0)
+                # value = torch.cat([value, self.padding_v_tensor[:padding_size]], dim=0)
 
                 # [num_blocks, block_size, k/v_head_size]
                 key = key.view(num_blocks, self.block_size, self.k_head_size)
-                value = value.view(num_blocks, self.block_size, self.v_head_size)
+                # value = value.view(num_blocks, self.block_size, self.v_head_size)
 
                 # ====== D2D =======
                 self.cache_k(key,
@@ -433,11 +435,11 @@ class MooncakeStoreConnector(KVConnectorBase):
                         attn_metadata.block_indices[start_block_idx:end_block_idx],
                         attn_metadata.block_offsets,
                         )
-                self.cache_v(value,
-                        value_cache,
-                        attn_metadata.block_indices[start_block_idx:end_block_idx],
-                        attn_metadata.block_offsets,
-                        )
+                # self.cache_v(value,
+                #         value_cache,
+                #         attn_metadata.block_indices[start_block_idx:end_block_idx],
+                #         attn_metadata.block_offsets,
+                #         )
             start_block_idx = end_block_idx
             hidden_or_intermediate_states_for_one_req.append(hidden.to("hpu"))
             end = time.time()
