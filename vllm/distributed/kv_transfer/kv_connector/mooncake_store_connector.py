@@ -71,7 +71,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             dtype = torch.float8_e4m3fn
         else:
             dtype = torch.bfloat16
-        self.padding_k_tensor = torch.zeros((self.block_size, self.k_head_size), dtype=dtype, device="hpu")
+        self.padding_k_tensor = torch.zeros((self.block_size, self.k_v_head_size), dtype=dtype, device="hpu")
         self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=dtype, device="hpu")
         self.cache_k = VLLMKVCache()
         self.cache_v = VLLMKVCache()
@@ -235,7 +235,6 @@ class MooncakeStoreConnector(KVConnectorBase):
         hidden_or_intermediate_states: Union[torch.Tensor,
                                              IntermediateTensors],
     ) -> None:
-        print(f"start sending!!!!!!!")
         input_tokens_tensor = model_input.input_tokens # shape: [batch_size, seq_len_padding_to_128]
         seq_lens = model_input.attn_metadata.seq_lens # 2D list
         start_layer = model_executable.model.start_layer
@@ -272,7 +271,7 @@ class MooncakeStoreConnector(KVConnectorBase):
 
             for layer_id in range(start_layer, end_layer):
                 kv_cache = kv_caches[layer_id - start_layer]
-                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_head_size)
+                key_cache = kv_cache[0].reshape(-1, num_kv_heads, self.k_v_head_size)
                 # value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
 
                 htorch.core.mark_step()
@@ -386,8 +385,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             # end = time.time()
             # logger.debug(f"all gather time takes: {end - all_gather_start}")
 
-            keys = key_values[..., :self.k_head_size]
-            values = key_values[..., self.k_head_size:]
+            keys = key_values
+            # values = key_values[..., self.k_head_size:]
             num_computed_tokens = current_tokens.shape[0]
             num_computed_tokens_list.append(num_computed_tokens)
             cur = time.time()
@@ -426,7 +425,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                 # value = torch.cat([value, self.padding_v_tensor[:padding_size]], dim=0)
 
                 # [num_blocks, block_size, k/v_head_size]
-                key = key.view(num_blocks, self.block_size, self.k_head_size)
+                key = key.view(num_blocks, self.block_size, self.k_v_head_size)
                 # value = value.view(num_blocks, self.block_size, self.v_head_size)
 
                 # ====== D2D =======
