@@ -107,6 +107,7 @@ if TYPE_CHECKING:
     VLLM_TPU_BUCKET_PADDING_GAP: int = 0
     VLLM_USE_DEEP_GEMM: bool = False
     VLLM_XPU_FP8_DTYPE: str = "e5m2"
+    VLLM_XGRAMMAR_CACHE_MB: int = 0
 
 
 def get_default_cache_root():
@@ -697,6 +698,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # fp8 dtype for XPU platform
     "VLLM_XPU_FP8_DTYPE":
     lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2"),
+    # Control the cache sized used by the xgrammar compiler. The default
+    # of 512 MB should be enough for roughly 1000 JSON schemas.
+    # It can be changed with this variable if needed for some reason.
+    "VLLM_XGRAMMAR_CACHE_MB":
+    lambda: int(os.getenv("VLLM_XGRAMMAR_CACHE_MB", "512")),
 }
 
 # end-env-vars-definition
