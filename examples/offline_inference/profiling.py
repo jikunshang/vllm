@@ -235,9 +235,8 @@ def run_profile(context: ProfileContext, csv_output: Optional[str],
             sampling_params.max_tokens = next(output_len_generator)
             assert isinstance(sampling_params.max_tokens, int)
 
-            prompt_token_ids = torch.randint(
-                min(llm.llm_engine.model_config.get_vocab_size(), llm.llm_engine.model_config.max_model_len),
-                size=(prompt_len, )).tolist()
+            prompt_token_ids = torch.randint(llm.get_tokenizer().vocab_size,
+                                             size=(prompt_len, )).tolist()
 
             llm.llm_engine.add_request(
                 request_id=f"seq{i}",
