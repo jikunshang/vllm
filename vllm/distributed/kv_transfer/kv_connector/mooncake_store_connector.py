@@ -47,8 +47,6 @@ class MooncakeStoreConnector(KVConnectorBase):
         self.local_tp_rank = local_rank
         max_num_blocks = 1000
         self.block_indice_place_holder = torch.zeros(max_num_blocks, dtype=torch.int, device="hpu")
-        max_num_token = max_num_blocks * self.block_size
-        self.slot_mapping_tensor = torch.zeros(max_num_token, dtype=torch.int, device="hpu")
         self.padded_length_tensor = torch.zeros(1, dtype=torch.int, device="hpu")
         # Init kv_store
         if self.config.kv_connector == "MooncakeStoreConnector":
@@ -259,10 +257,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             logger.debug(f"send token len: {slen}, token: {current_tokens_cpu}")
             keys, values = [], []
             start = 0
-            end = slen
             padded_total_size = (slen + self.block_size - 1) // self.block_size * self.block_size
             current_slot_mapping = model_input.attn_metadata.slot_mapping[idx][start:padded_total_size]
-            self.slot_mapping_tensor[start:padded_total_size] = current_slot_mapping
             self.padded_length_tensor[0] = padded_total_size
             htorch.core.mark_step()
             # ==== graph should start here ======
@@ -307,6 +303,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         input_tokens_tensor_cpu = model_input.input_tokens.to("cpu")
         seq_lens_tensor = model_input.attn_metadata.seq_lens_tensor
         seq_lens = seq_lens_tensor.tolist() #2D list
+        block_indices_list = attn_metadata.block_indices.tolist() 
 
         hidden_or_intermediate_states_for_one_req = []
         input_tokens_list = []
@@ -323,8 +320,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             current_tokens = input_tokens_tensor_cpu[idx][:slen]
             num_blocks = (slen + 127) // 128
             end_block_idx = start_block_idx + num_blocks
-            self.block_indice_place_holder[:num_blocks] = attn_metadata.block_indices[start_block_idx:end_block_idx]
-            block_indices = self.block_indice_place_holder[:num_blocks]
+            # self.block_indice_place_holder[:num_blocks] = attn_metadata.block_indices[start_block_idx:end_block_idx]
+            block_indices_tensor = torch.tensor(block_indices_list[start_block_idx:end_block_idx], device="hpu", dtype=torch.int32 )
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
             if slen == 1:
                 for i in range(model_executable.model.model.start_layer,
@@ -368,17 +365,15 @@ class MooncakeStoreConnector(KVConnectorBase):
             
             # it's padded to block size now.
             key_values = remote_kv.to("hpu")
-            htorch.core.mark_step()
-            torch.hpu.synchronize()
-
             keys = key_values
             # values = key_values[..., self.k_head_size:]
 
+            htorch.core.mark_step()
+            torch.hpu.synchronize()
             # put received KV caches into paged memory layer by layer
             # for each layer, we need to pad the key and value to 128, so 
             # key shape should be [num_blocks, block_size, num_kv_heads(1,ommited), k_head_size]
             # value shape should be [num_blocks, block_size, num_kv_heads(1,ommited), v_head_size]
-            htorch.core.mark_step()
             for i in range(model_executable.model.start_layer,
                            model_executable.model.end_layer):
                 current_layer_idx = i - model_executable.model.start_layer
@@ -393,7 +388,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                 # ====== D2D =======
                 self.cache_k(key,
                         key_cache,
-                        block_indices,
+                        block_indices_tensor,
                         None,
                         )
             start_block_idx = end_block_idx
