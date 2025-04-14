@@ -7,6 +7,7 @@ import torch
 
 from vllm.attention import get_attn_backend
 from vllm.config import CompilationLevel, VllmConfig
+from vllm.distributed.parallel_state import get_pp_group
 from vllm.inputs import INPUT_REGISTRY
 from vllm.logger import init_logger
 from vllm.multimodal import MULTIMODAL_REGISTRY
@@ -124,19 +125,16 @@ class XPUModelRunner(GPUModelRunner):
         self.use_spec_decode = False
         if self.speculative_config:
             self.use_spec_decode = True
-            self.rejection_sampler = RejectionSampler()
-            # TODO: find a better way to check if we are using ngram.
-            assert self.speculative_config.ngram_prompt_lookup_min, \
-                    "Currently, only ngram spec decode is supported in V1."
-            #if get_pp_group().is_last_rank:
-            self.drafter = NgramProposer()
-            # Trigger Numba JIT compilation for N-gram proposer.
-            # This usually takes less than 1 second.
-            self.drafter.propose(
-                    np.zeros(1024, dtype=np.int32),
-                    self.speculative_config.ngram_prompt_lookup_min,
-                    self.speculative_config.num_speculative_tokens,
-                    )
+            if get_pp_group().is_last_rank:
+                if self.speculative_config.method == "ngram":
+                    self.drafter = NgramProposer(self.vllm_config)
+                elif self.speculative_config.method == "eagle":
+                    self.drafter = EagleProposer(self.vllm_config,
+                                                 self.device)  # type: ignore
+                else:
+                    raise ValueError("Unknown speculative decoding method: "
+                                     f"{self.speculative_config.method}")
+                self.rejection_sampler = RejectionSampler()
 
         # Request states.
         self.requests: dict[str, CachedRequestState] = {}
