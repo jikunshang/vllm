@@ -15,7 +15,7 @@ from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
 from vllm.v1.attention.backends.ipex_attn import IPEXAttentionMetadata
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
-from vllm.v1.sample.rejection_sampler import INVALID_TOKEN_ID, RejectionSampler
+from vllm.v1.sample.rejection_sampler import RejectionSampler
 from vllm.v1.spec_decode.ngram_proposer import NgramProposer
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
