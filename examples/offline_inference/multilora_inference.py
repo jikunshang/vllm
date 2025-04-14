@@ -91,7 +91,9 @@ def initialize_engine() -> LLMEngine:
                              max_loras=1,
                              max_lora_rank=8,
                              max_cpu_loras=2,
-                             max_num_seqs=256)
+                             max_num_seqs=256,
+                             enforce_eager=True,
+                             block_size=64)
     return LLMEngine.from_engine_args(engine_args)
 
 
