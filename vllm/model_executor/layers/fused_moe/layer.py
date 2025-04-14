@@ -113,7 +113,6 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         super().process_weights_after_loading(layer)
 
-<<<<<<< HEAD
         layer.w13_weight = torch.nn.Parameter(self._maybe_pad_weight(
             layer.w13_weight.data),
                                               requires_grad=False)
