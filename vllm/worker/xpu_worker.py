@@ -17,13 +17,13 @@ from vllm.platforms import current_platform
 from vllm.utils import supports_xccl
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.worker import Worker
-from vllm.worker.worker_base import LoRANotSupportedWorkerBase, WorkerBase
+from vllm.worker.worker_base import WorkerBase
 from vllm.worker.xpu_model_runner import XPUModelRunner
 
 logger = init_logger(__name__)
 
 
-class XPUWorker(LoRANotSupportedWorkerBase, Worker):
+class XPUWorker(Worker):
     """A worker class that executes (a partition of) the model on a GPU.
 
     Each worker is associated with a single XPU device. The worker is 
