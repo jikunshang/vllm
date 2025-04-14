@@ -11,7 +11,7 @@ from vllm.inputs import INPUT_REGISTRY
 from vllm.logger import init_logger
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
-                        is_pin_memory_available)
+                        check_use_alibi, is_pin_memory_available)
 from vllm.v1.attention.backends.ipex_attn import IPEXAttentionMetadata
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
 from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
@@ -172,6 +172,9 @@ class XPUModelRunner(GPUModelRunner):
         self.positions = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int64,
                                      device=self.device)
+        # Only relevant for models using ALiBi (e.g, MPT)
+        self.use_alibi = check_use_alibi(model_config)
+
         self.inputs_embeds = torch.zeros(
             (self.max_num_tokens, self.hidden_size),
             dtype=self.dtype,
