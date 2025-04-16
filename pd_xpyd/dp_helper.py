@@ -45,11 +45,11 @@ def post_dummy_req(url):
     response = requests.post(url, headers=headers, json=payload)
     return response
 
-async def post_dummy_req_async(session, url):
+async def post_dummy_req_async(session, url, idx):
     headers = {}
     payload = {
         "model": model_path,
-        "prompt": "this is just a test prompt",
+        "prompt": f"rank id {idx}, this is just a test prompt",
         "max_tokens": 128,
         "temperature": 0.0
     }
@@ -76,12 +76,15 @@ async def post_fun():
             # if all instance don't have running reqs, we skip
             if sum(running_req_nums) == 0:
                 continue
+            # each instance is running at least one req, don't need post dummy req
+            if min(running_req_nums) > 0:
+                continue
 
             # other wise, let's send request to all rank
             tasks = []
             for idx, running_req_num in enumerate(running_req_nums):
                 # if running_req_num == 0:
-                tasks.append(post_dummy_req_async(session, proxy_server_post_url))
+                tasks.append(post_dummy_req_async(session, proxy_server_post_url, idx))
                 print(f"posting to instance {idx}")
 
             responses = await asyncio.gather(*tasks)
