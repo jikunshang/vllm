@@ -15,10 +15,12 @@ from vllm.lora.layers import LoRAMapping
 from vllm.platforms import current_platform
 from vllm.triton_utils import HAS_TRITON
 
-if HAS_TRITON and not current_platform.is_xpu():
+is_xpu = current_platform.is_xpu()
+#is_xpu = False
+if HAS_TRITON and not is_xpu:
     from vllm.lora.ops.triton_ops import (LoRAKernelMeta, lora_expand,
                                           lora_shrink)
-elif current_platform.is_xpu():
+elif is_xpu:
     from vllm._ipex_ops import ipex_ops
     try:
         lora_expand = ipex_ops.lora_expand
@@ -57,7 +59,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
 
         self.max_loras = kwargs['max_loras']
 
-        if not (current_platform.is_xpu() and XPU_KERNEL_V == 0):
+        if not (is_xpu and XPU_KERNEL_V == 0):
             self.token_mapping_meta = LoRAKernelMeta.make(self.max_loras,
                                                           max_num_batched_tokens,
                                                           device=device)
@@ -68,7 +70,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         # V1 doesn't have this problem and always respects max_num_seqs.
         max_num_prompts = (max_batches
                            if envs.VLLM_USE_V1 else max_num_batched_tokens)
-        if not (current_platform.is_xpu() and XPU_KERNEL_V == 0):
+        if not (is_xpu and XPU_KERNEL_V == 0):
             self.prompt_mapping_meta = LoRAKernelMeta.make(self.max_loras,
                                                            max_num_prompts,
                                                            device=device)
@@ -84,7 +86,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
             **kwargs):
 
         self.is_prefill = mapping.is_prefill
-        if current_platform.is_xpu() and XPU_KERNEL_V == 0:
+        if is_xpu and XPU_KERNEL_V == 0:
             PunicaWrapperBase.update_metadata(self, mapping, lora_index_to_id,
                                               max_loras, vocab_size,
                                               extra_vocab_size,
@@ -176,7 +178,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         """
 
         x = x.view(-1, x.shape[-1])
-        if current_platform.is_xpu() and XPU_KERNEL_V == 0:
+        if is_xpu and XPU_KERNEL_V == 0:
             for slice_idx in range(len(lora_a_stacked)):
                 self._apply_shrink_decode(y[slice_idx], x,
                                           lora_a_stacked[slice_idx], scale)
@@ -230,7 +232,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         assert x.ndim == 3
         assert x.size(0) == len(output_slices)
 
-        if current_platform.is_xpu() and XPU_KERNEL_V == 0:
+        if is_xpu and XPU_KERNEL_V == 0:
             # TODO fuse these kernels
             for slice_idx in range(len(lora_b_stacked)):
                 self._apply_expand_decode(
@@ -273,7 +275,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
             add_inputs (bool): Default to True.
         """
 
-        if current_platform.is_xpu() and XPU_KERNEL_V == 0:
+        if is_xpu and XPU_KERNEL_V == 0:
             bgmv_expand(x, lora_b_stacked, y, self.token_lora_indices,
                             add_inputs)
         else:
@@ -387,7 +389,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
                                  dtype=torch.float32,
                                  device=x.device)
 
-        if current_platform.is_xpu() and XPU_KERNEL_V == 0:
+        if is_xpu and XPU_KERNEL_V == 0:
             bgmv_shrink(x, lora_a_stacked, buffer, self.sampler_indices, scale)
             bgmv_expand(buffer,
                         lora_b_stacked,
