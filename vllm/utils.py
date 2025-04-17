@@ -2551,6 +2551,19 @@ def cprofile(save_file: Optional[str] = None, enabled: bool = True):
     return decorator
 
 
+def trace_handler(prof):
+    from vllm.platforms import current_platform
+
+    profile_path = envs.VLLM_TORCH_PROFILER_DIR
+    prof_table = prof.key_averages().table(sort_by=f"self_{current_platform.device_type}_time_total")
+    profile_name = f"{current_platform.device_type}{torch.xpu.current_device()}"
+    print(prof_table)
+    os.makedirs(profile_path, exist_ok=True)
+    torch.save(prof_table, os.path.join(profile_path, f"{profile_name}.pt"))
+    prof.export_chrome_trace(os.path.join(profile_path, f"{profile_name}.trace.json.gz"))
+    logger.info(f"saved profile and tracing to {profile_path}")
+
+
 # Only relevant for models using ALiBi (e.g, MPT)
 def check_use_alibi(model_config: ModelConfig) -> bool:
     return (getattr(model_config.hf_text_config, "alibi", False)  # Falcon

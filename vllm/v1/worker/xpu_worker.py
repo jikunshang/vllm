@@ -14,6 +14,7 @@ from vllm.model_executor import set_random_seed
 from vllm.platforms import current_platform
 from vllm.v1.worker.gpu_worker import Worker
 from vllm.v1.worker.xpu_model_runner import XPUModelRunner
+from vllm.utils import trace_handler
 
 logger = init_logger(__name__)
 
@@ -47,8 +48,7 @@ class XPUWorker(Worker):
                     torch.profiler.ProfilerActivity.XPU,
                 ],
                 with_stack=True,
-                on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                    torch_profiler_trace_dir, use_gzip=True))
+                on_trace_ready=trace_handler)
         else:
             self.profiler = None
 
