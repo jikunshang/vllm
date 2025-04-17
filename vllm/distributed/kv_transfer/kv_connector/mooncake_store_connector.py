@@ -274,11 +274,15 @@ class MooncakeStoreConnector(KVConnectorBase):
             keys = torch.cat(keys, dim=0)
             # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
+            htorch.core.mark_step()
+            torch.hpu.synchronize()
+            put_kv_start = time.time()
             kvcache_to_sent = keys
             store_kvcache_key = f"{store_key_prefix}_{self.local_tp_rank}"
             self.kv_store.put(store_kvcache_key, kvcache_to_sent)
+            put_kv_end = time.time()
             
-            logger.debug(f"put kv cache key: {store_kvcache_key}")
+            logger.debug(f"put kv cache key: {store_kvcache_key}, takes {put_kv_end - put_kv_start} seconds")
             
             hidden_key = f"{store_key_prefix}_hidden_{self.local_tp_rank}"
             self.kv_store.put(hidden_key,
@@ -348,13 +352,16 @@ class MooncakeStoreConnector(KVConnectorBase):
                 start_block_idx = end_block_idx
                 continue
 
+            get_kv_start = time.time()
             # get roi for current seq
             load_key_prefix = self.tensor_hash(current_tokens)
             load_kvcache_key = f"{load_key_prefix}_{self.local_tp_rank}"
             remote_kv = self.kv_store.get(load_kvcache_key)
             hidden_key = f"{load_key_prefix}_hidden_{self.local_tp_rank}"
             hidden = self.kv_store.get(hidden_key)
+            get_kv_end = time.time()
             
+            logger.debug(f"get kv cache key: {load_kvcache_key}, takes {get_kv_end - get_kv_start} seconds")
             if remote_kv is None or hidden is None:
                 # didn't find any match.
                 logger.warning(f"Didn't find any match, load_key_prefix: {load_kvcache_key}")
