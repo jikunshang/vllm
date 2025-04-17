@@ -79,16 +79,19 @@ def main(args: argparse.Namespace):
 
     def run_to_completion(profile_dir: Optional[str] = None):
         if profile_dir:
-            with torch.profiler.profile(
-                    activities=[
-                        torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA,
-                    ],
+            if os.environ.get("VLLM_USE_V1", "0") == "0":
+                with torch.profiler.profile(
+                    activities=torch.profiler.supported_activities(),
                     on_trace_ready=torch.profiler.tensorboard_trace_handler(
                         str(profile_dir)),
-            ) as p:
+                    with_stack=True,
+                ) as p:
+                    llm_generate()
+                print(p.key_averages().table(sort_by=f"self_{current_platform.device_type}_time_total"))
+            else:
+                llm.start_profile()
                 llm_generate()
-            print(p.key_averages().table(sort_by="self_cuda_time_total"))
+                llm.stop_profile()
         else:
             start_time = time.perf_counter()
             llm_generate()
