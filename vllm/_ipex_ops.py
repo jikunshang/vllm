@@ -204,11 +204,13 @@ class ipex_ops:
                                                  key.contiguous(),
                                                  value.contiguous(), out,
                                                  seqlen_q.int(),
-                                                 seqlen_k.int(), max_seqlen_q,
+                                                 seqlen_k.int(),
+                                                 None, max_seqlen_q,
                                                  max_seqlen_k, pdropout,
                                                  softmax_scale, zero_tensors,
                                                  is_causal, return_softmax,
-                                                 gen_, logits_soft_cap)
+                                                 gen_, logits_soft_cap,
+                                                 -1, -1)
 
     @staticmethod
     def reshape_and_cache(
