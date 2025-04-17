@@ -10,7 +10,7 @@ from vllm.utils import FlexibleArgumentParser
 
 def create_test_prompts(args) -> list[tuple[str, SamplingParams]]:
     """Create a list of test prompts with their sampling parameters."""
-    with open(f"{os.getcwd()}/prompt.json") as f:
+    with open(f"{os.path.dirname(__file__)}/prompt.json") as f:
         prompt_pool = json.load(f)
     prompt = prompt_pool[str(args.input_len)]
     sampling_params= SamplingParams(
