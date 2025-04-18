@@ -75,9 +75,11 @@ class XPUWorker(Worker):
     def determine_available_memory(self) -> int:
         """Profiles the peak memory usage of the model to determine how many
         KV blocks may be allocated without OOMs.
+
         The engine will first conduct a profiling of the existing memory usage.
         Then, it calculate the maximum possible number of GPU and CPU blocks
         that can be allocated with the remaining free memory.
+
         .. tip::
             You may limit the usage of GPU memory
             by adjusting the `gpu_memory_utilization` parameter.
@@ -85,50 +87,33 @@ class XPUWorker(Worker):
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
         torch.xpu.empty_cache()
-        torch.xpu.reset_peak_memory_stats()
 
-        free_gpu_memory, total_gpu_memory = torch.xpu.mem_get_info()
-        current_allocated_bytes = torch.xpu.memory_allocated()
-        msg = ("Before memory profiling run, "
-               f"total GPU memory: {total_gpu_memory / 1024**2:.2f} MB, "
-               f"model load takes {current_allocated_bytes / 1024**2:.2f} MB, "
-               f"free gpu memory is {free_gpu_memory / 1024**2:.2f} MB.")
-        logger.info(msg)
         # Execute a forward pass with dummy inputs to profile the memory usage
         # of the model.
         self.model_runner.profile_run()
 
-        free_gpu_memory, _ = self.xpu_get_mem_info()
+        # Calculate the number of blocks that can be allocated with the
+        # profiled peak memory.
+        torch.xpu.synchronize()
+        used_memory = torch.xpu.memory_allocated()
+        total_gpu_memory = torch.xpu.get_device_properties(
+            self.local_rank).total_memory
+        free_gpu_memory = total_gpu_memory - used_memory
+
         # NOTE(woosuk): Here we assume that the other processes using the same
         # GPU did not change their memory usage during the profiling.
-        assert self.init_gpu_memory > free_gpu_memory, (
+        peak_memory = self.init_gpu_memory - free_gpu_memory
+        assert peak_memory > 0, (
             "Error in memory profiling. "
             f"Initial free memory {self.init_gpu_memory}, current free memory"
             f" {free_gpu_memory}. This happens when the GPU memory was "
             "not properly cleaned up before initializing the vLLM instance.")
 
-        # Get the peak memory allocation recorded by torch
-        peak_memory = torch.xpu.memory_stats()["allocated_bytes.all.peak"]
-
         torch.xpu.empty_cache()
-        torch_allocated_bytes = torch.xpu.memory_stats(
-        )["allocated_bytes.all.current"]
-        total_allocated_bytes = self.xpu_get_mem_info(
-        )[1] - self.xpu_get_mem_info()[0]
 
-        non_torch_allocations = total_allocated_bytes - torch_allocated_bytes
-        if non_torch_allocations > 0:
-            peak_memory += non_torch_allocations
         available_kv_cache_memory = (
             total_gpu_memory * self.cache_config.gpu_memory_utilization -
             peak_memory)
-
-        msg = ("After memory profiling run, "
-               f"peak memory usage is {peak_memory / 1024**2:.2f} MB,"
-               f"torch mem is {torch_allocated_bytes / 1024**2:.2f} MB, "
-               f"non-torch mem is {non_torch_allocations / 1024**2:.2f} MB, "
-               f"free gpu memory is {free_gpu_memory / 1024**2:.2f} MB.")
-        logger.info(msg)
 
         return int(available_kv_cache_memory)
 
