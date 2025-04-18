@@ -236,9 +236,17 @@ class MooncakeStoreConnector(KVConnectorBase):
         kv_caches: List[torch.Tensor],
         hidden_or_intermediate_states: Union[torch.Tensor,
                                              IntermediateTensors],
+        input_tokens_tensor_cpu: torch.Tensor,
     ) -> None:
-        input_tokens_tensor_cpu = model_input.input_tokens.to("cpu") # shape: [batch_size, seq_len_padding_to_128]
-        torch.hpu.synchronize()
+        if self.local_tp_rank != 0:
+            # only the first rank will send kv cache
+            return
+        # actually this is not a overhead, hpu and cpu is overlapping D2H should not be much overhead.
+        # to_cpu_time_start = time.time()
+        # input_tokens_tensor_cpu = model_input.input_tokens.to("cpu") # shape: [batch_size, seq_len_padding_to_128]
+        # torch.hpu.synchronize()
+        # to_cpu_time_end = time.time()
+        # logger.info(f"to_cpu takes {to_cpu_time_end - to_cpu_time_start} seconds")
         seq_lens = model_input.attn_metadata.seq_lens # 2D list
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
@@ -355,9 +363,9 @@ class MooncakeStoreConnector(KVConnectorBase):
             get_kv_start = time.time()
             # get roi for current seq
             load_key_prefix = self.tensor_hash(current_tokens)
-            load_kvcache_key = f"{load_key_prefix}_{self.local_tp_rank}"
+            load_kvcache_key = f"{load_key_prefix}_0"
             remote_kv = self.kv_store.get(load_kvcache_key)
-            hidden_key = f"{load_key_prefix}_hidden_{self.local_tp_rank}"
+            hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
             get_kv_end = time.time()
             
@@ -428,7 +436,7 @@ class MooncakeStoreConnector(KVConnectorBase):
     @staticmethod
     def tensor_hash(tensor: torch.Tensor) -> int:
         """Calculate the hash value of the tensor."""
-        tensor_bytes = tensor.clone().detach().cpu().numpy().tobytes()
+        tensor_bytes = tensor.numpy().tobytes()
         hash_object = hashlib.blake2b(tensor_bytes)
         hash_hex = hash_object.hexdigest()
         return int(hash_hex[:16], 16)

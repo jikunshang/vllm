@@ -768,6 +768,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         # For delayed sampling
         self.cached_step_inputs: List[
             ModelInputForHPUWithSamplingMetadata] = []
+        self.input_tokens_tensor_cpu: torch.tensor
 
     def _set_gc_threshold(self) -> None:
         """
@@ -1207,7 +1208,9 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                                    pad=0,
                                                    dtype=torch.long,
                                                    device='cpu')
-
+        # for PD P side, we use this tensor to save D->H overhead. 
+        # will bring a little cpu overhead I guess. 
+        self.input_tokens_tensor_cpu = input_tokens_tensor.clone().detach()
         input_positions = make_tensor_with_pad(input_positions,
                                                max_len=max_prompt_len,
                                                pad=0,
@@ -2782,6 +2785,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         model_input,
                         kv_caches,
                         hidden_states,
+                        self.input_tokens_tensor_cpu,
                     )
                     now = time.time()
                     logger.info(f"KV transfer send time: {now - cur_time}")

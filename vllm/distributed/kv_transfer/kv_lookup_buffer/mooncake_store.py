@@ -38,6 +38,7 @@ class MooncakeStoreConfig:
         with open(file_path) as fin:
             config = json.load(fin)
         rank_id = torch.distributed.get_rank()
+        # please check mlx interface name on your node!! 
         if rank_id == 0:
             device = "mlx5_0"
         else:
@@ -47,7 +48,7 @@ class MooncakeStoreConfig:
             metadata_server=config.get("metadata_server"),
             global_segment_size=config.get("global_segment_size", 53687091200),
             local_buffer_size=config.get("local_buffer_size", 1073741824),
-            protocol="rdma",
+            protocol=config.get("protocol", "tcp"),
             device_name=device,
             master_server_address=config.get("master_server_address"),
         )
