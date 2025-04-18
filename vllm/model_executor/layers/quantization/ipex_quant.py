@@ -129,8 +129,6 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
         self.quant_config = quant_config  # type: ignore
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        bias = layer.bias if not layer.skip_bias_add else None
-
         try:
             import intel_extension_for_pytorch as ipex
             if ipex.__version__ < MIN_IPEX_VERSION:
@@ -169,7 +167,7 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             layer.ipex_output_size,
             qconfig=qconfig,
             g_idx=g_idx,
-            bias=bias,
+            bias=None,
             group_size=self.quant_config.group_size,
             quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"]
         )
