@@ -1861,7 +1861,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
     def _dummy_run(self, max_num_batched_tokens: int) -> None:
         assert max_num_batched_tokens == 1
-        self.warmup_scenario(max_num_batched_tokens, 128, False, None, False,
+        self.warmup_scenario(max_num_batched_tokens, 1, False, None, False,
                              True, False, 0, 1, True, False)
         return
 
@@ -1877,7 +1877,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         num_iters=3,
                         align_worker=False,
                         do_gc=True) -> None:
-        use_graphs = self._use_graphs(batch_size,
+        use_graphs = (not do_gc) or self._use_graphs(batch_size,
                                       seq_len,
                                       is_prompt,
                                       is_profile_run=is_profile_run)
