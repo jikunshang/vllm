@@ -1862,7 +1862,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
     def _dummy_run(self, max_num_batched_tokens: int) -> None:
         assert max_num_batched_tokens == 1
         self.warmup_scenario(max_num_batched_tokens, 128, False, None, False,
-                             True, False, 0, 1, True)
+                             True, False, 0, 1, True, False)
         return
 
     def warmup_scenario(self,
@@ -1875,7 +1875,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         is_profile_run=False,
                         temperature=0,
                         num_iters=3,
-                        align_worker=False) -> None:
+                        align_worker=False,
+                        do_gc=True) -> None:
         use_graphs = self._use_graphs(batch_size,
                                       seq_len,
                                       is_prompt,
@@ -1979,7 +1980,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             profiler.stop()
         self.profiler.end()
         # don't do gc for dummy run
-        if not (batch_size == 1 and seq_len == 128):
+        if do_gc:
             gc.collect()
 
     def remove_all_loras(self):
