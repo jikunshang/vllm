@@ -854,7 +854,7 @@ def run_qwen2_vl(questions: list[str], modality: str) -> ModelRequestData:
 # Qwen2.5-VL
 def run_qwen2_5_vl(questions: list[str], modality: str) -> ModelRequestData:
 
-    model_name = "Qwen/Qwen2.5-VL-3B-Instruct"
+    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
 
     engine_args = EngineArgs(
         model=model_name,
@@ -865,6 +865,7 @@ def run_qwen2_5_vl(questions: list[str], modality: str) -> ModelRequestData:
             "max_pixels": 1280 * 28 * 28,
             "fps": 1,
         },
+        enforce_eager=True,
         disable_mm_preprocessor_cache=args.disable_mm_preprocessor_cache,
     )
 

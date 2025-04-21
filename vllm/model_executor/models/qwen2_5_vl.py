@@ -1073,10 +1073,10 @@ class Qwen2_5_VLForConditionalGeneration(nn.Module, SupportsMultiModal,
             if image_input is None and video_input is None:
                 inputs_embeds = None
             else:
-                if uses_mrope(self.config):
-                    assert positions.ndim == 2 and positions.size(0) == 3, (
-                        "multimodal section rotary embedding requires "
-                        f"(3, seq_len) positions, but got {positions.size()}")
+                # if uses_mrope(self.config):
+                #     assert positions.ndim == 2 and positions.size(0) == 3, (
+                #         "multimodal section rotary embedding requires "
+                #         f"(3, seq_len) positions, but got {positions.size()}")
                 inputs_embeds = self.get_input_embeddings_v0(
                     input_ids,
                     image_input=image_input,
