@@ -749,6 +749,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                                  self.block_size,
                                                  self.max_num_batched_tokens)
         self.graphed_buckets: Set[Any] = set()
+        # Always add minimal decode shape for dummy run in DP 
+        self.graphed_buckets.add((1, 1, False))
 
         # Data Parallel
         self.dp_size = vllm_config.parallel_config.data_parallel_size
@@ -1877,7 +1879,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                         num_iters=3,
                         align_worker=False,
                         do_gc=True) -> None:
-        use_graphs = (not do_gc) or self._use_graphs(batch_size,
+        use_graphs = self._use_graphs(batch_size,
                                       seq_len,
                                       is_prompt,
                                       is_profile_run=is_profile_run)
