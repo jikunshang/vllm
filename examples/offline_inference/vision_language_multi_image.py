@@ -799,12 +799,14 @@ def load_qwen2_5_vl(question: str, image_urls: list[str]) -> ModelRequestData:
         )
         smart_resize = None
 
-    model_name = "Qwen/Qwen2.5-VL-3B-Instruct"
+    model_name = "Qwen/Qwen2.5-VL-7B-Instruct"
 
     engine_args = EngineArgs(
         model=model_name,
         max_model_len=32768 if smart_resize is None else 4096,
-        max_num_seqs=5,
+        max_num_seqs=2,
+        enforce_eager=True,
+        gpu_memory_utilization=0.8,
         limit_mm_per_prompt={"image": len(image_urls)},
     )
 
