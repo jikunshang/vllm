@@ -1474,7 +1474,7 @@ class EngineArgs:
                                    recommend_to_remove=False)
                 return False
 
-        # No FlashInfer or XFormers so far.
+        # No XFormers so far.
         V1_BACKENDS = [
             "FLASH_ATTN_VLLM_V1", "FLASH_ATTN", "PALLAS", "PALLAS_VLLM_V1",
             "TRITON_ATTN_VLLM_V1", "TRITON_MLA", "FLASHMLA", "IPEX_V1"
