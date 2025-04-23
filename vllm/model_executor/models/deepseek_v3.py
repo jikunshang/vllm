@@ -518,6 +518,7 @@ class DeepseekV3DecoderLayer(nn.Module):
                                           8192)
         # DecoderLayers are created with `make_layers` which passes the prefix
         # with the layer's index.
+        self.prefix = prefix
         layer_idx = int(prefix.split(sep='.')[-1])
         if model_config.use_mla:
             attn_cls = DeepseekV3MLAAttention
@@ -603,7 +604,7 @@ class DeepseekV3Model(nn.Module):
         model_config = vllm_config.model_config
         cache_config = vllm_config.cache_config
         quant_config = vllm_config.quant_config
-
+        
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
 

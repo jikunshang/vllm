@@ -2,6 +2,7 @@
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
 
+import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -19,6 +20,7 @@ from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
 from vllm.attention.backends.utils import CommonAttentionState
 from vllm.attention.ops.hpu_paged_attn import (HPUPagedAttention,
                                                HPUPagedAttentionMetadata)
+from vllm.attention.backends.hpu_ext_patch import initialize_fp8_kv_cache, initialize_fp8_matmul, _pipelined_pa
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
@@ -76,8 +78,11 @@ class HPUMLAAttentionBackend(HPUAttentionBackend):
         num_kv_heads: int,
         head_size: int,
     ) -> Tuple[int, ...]:
-        return (num_blocks, block_size, head_size//9*1), (num_blocks, block_size, head_size//9*8)
-    
+        if envs.VLLM_USE_SINGLE_TENSOR_CACHE:
+            return (num_blocks, block_size, head_size), None
+        else:
+            return (num_blocks, block_size, head_size//9*1), (num_blocks, block_size, head_size//9*8)
+
     @staticmethod
     def get_impl_cls() -> Type["HPUAttentionImpl"]:
         return HPUMLAImpl
@@ -126,6 +131,80 @@ def flat_pa_mla(q_nope, q_pe, key_cache, value_cache, block_list, block_mapping,
     if kv_heads != q_heads:
         attn = attn.flatten(1, 2)
     return attn
+
+
+def flat_pa_mla_kv_one_tensor(
+    query,
+    key_cache,
+    value_cache,
+    block_list,
+    block_mapping,
+    block_bias,
+    block_scales,
+    block_groups,
+    scale,
+    matmul_qk_op,
+    matmul_av_op,
+    batch2block_matmul_op,
+    block2batch_matmul_op,
+    keys_fetch_func,
+    values_fetch_func,
+    kv_lora_rank,
+):
+    key_cache = key_cache.unsqueeze(2)
+
+    batch_size = query.size(0)
+    q_heads = query.size(1)
+    kv_heads = key_cache.size(2)
+
+    query = ops.batch2block(
+        scale * query, block_mapping, batch2block_matmul_op
+    ).unsqueeze(-2)
+    key = keys_fetch_func(key_cache, block_list)
+    if value_cache is not None:
+        value_cache = value_cache.unsqueeze(2)
+        value = values_fetch_func(value_cache, block_list)
+        key = torch.concat((value, key), dim=-1)
+    else:
+        value = key[..., :kv_lora_rank]
+
+    key = key.transpose(1, 2)
+    value = value.transpose(1, 2)
+    block_bias = block_bias.view(key.size(0), 1, 1, -1)
+    if kv_heads != q_heads:
+        block_bias = block_bias.unsqueeze(1)
+        query = query.unflatten(1, (kv_heads, -1))
+        key = key.unflatten(1, (kv_heads, 1))
+        value = value.unflatten(1, (kv_heads, 1))
+        key = key.transpose(3, 4)
+    else:
+        key = key.transpose(2, 3)
+
+    attn = matmul_qk_op(query, key)
+
+    if "fp32_softmax" in enabled_flags():
+        attn = attn.float()
+        import habana_frameworks.torch.core as htcore
+
+        htcore.mark_step()
+    attn = attn + block_bias
+    attn = _pipelined_pa(
+        attn,
+        value,
+        block_groups,
+        block_mapping,
+        block_scales=block_scales,
+        batch_size=batch_size,
+        matmul_av_op=matmul_av_op,
+        batch2block_matmul_op=batch2block_matmul_op,
+        block2batch_matmul_op=block2batch_matmul_op,
+    )
+    attn = ops.block2batch(attn, block_mapping, block2batch_matmul_op)
+    attn = attn.squeeze(-2)
+    if kv_heads != q_heads:
+        attn = attn.flatten(1, 2)
+    return attn
+
 
 @dataclass
 class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
@@ -177,8 +256,25 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         self.matmul_av = Matmul()
         self.batch2block_matmul = Matmul()
         self.block2batch_matmul = Matmul()
-        self.latent_cache_k = VLLMKVCache()
-        self.latent_cache_v = VLLMKVCache()
+        self.VLLM_USE_FP8_MATMUL = os.environ.get("VLLM_USE_FP8_MATMUL",
+                                             "0").lower() in ["true", "1"]
+
+        if self.VLLM_USE_FP8_MATMUL:
+            self.latent_cache_k_nodeq = VLLMKVCache()
+            self.latent_cache_v_nodeq = VLLMKVCache()
+            self.latent_cache_k_nodeq = initialize_fp8_kv_cache(
+                self.latent_cache_k_nodeq)
+            self.latent_cache_v_nodeq = initialize_fp8_kv_cache(
+                self.latent_cache_v_nodeq)
+            self.matmul_qk_decode = initialize_fp8_matmul(self.matmul_qk)
+            self.matmul_av_decode = initialize_fp8_matmul(self.matmul_av)
+        else:
+            self.latent_cache_k = VLLMKVCache()
+            self.latent_cache_v = VLLMKVCache()
+        
+
+        self.prefill_use_fusedsdpa = "fsdpa" in enabled_flags()
+
         HPUFusedSDPA = kernels.fsdpa()
         self.fused_scaled_dot_product_attention = None if HPUFusedSDPA is None \
             else ModuleFusedSDPA(HPUFusedSDPA)
@@ -251,38 +347,49 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
         latent_vec_k = latent_vec_k.view(-1, self.qk_rope_head_dim + self.kv_lora_rank)
         #latent_vec_v = k_c_normed.view(-1, self.kv_lora_rank)
         if is_prefill:
-            latent_vec_k = latent_vec_k.unflatten(0, (block_indices.size(0), -1))
-            #latent_vec_v = latent_vec_v.unflatten(0, (block_indices.size(0), -1))
-        # print("latent_vec", latent_vec.shape)
-
-
-        # write the latent and rope to kv cache
-        if kv_cache is not None and len(kv_cache) == 2:
-            # print(f"k cache shape: {kv_cache[0].shape}")
-            # print(f"v cache shape: {kv_cache[1].shape}")
-            # print(f"latent vec k shape: {latent_vec_k.shape}")
-            # print(f"latent vec v shape: {latent_vec_v.shape}")
-            latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
-            latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
-            k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
-                                        block_offsets)
-            v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
-                                        block_offsets)
-            kv_cache = (k_cache, v_cache)
-
+            latent_vec_k = latent_vec_k.unflatten(0,
+                                                  (block_indices.size(0), -1))
+        if not envs.VLLM_USE_SINGLE_TENSOR_CACHE:
+            # write the latent and rope to kv cache
+            if kv_cache is not None and len(kv_cache) == 2:
+                # print(f"k cache shape: {kv_cache[0].shape}")
+                # print(f"v cache shape: {kv_cache[1].shape}")
+                # print(f"latent vec k shape: {latent_vec_k.shape}")
+                # print(f"latent vec v shape: {latent_vec_v.shape}")
+                latent_vec_v = latent_vec_k[..., :self.kv_lora_rank]
+                latent_vec_k = latent_vec_k[..., self.kv_lora_rank:]
+                k_cache = self.latent_cache_k(latent_vec_k, kv_cache[0], block_indices,
+                                            block_offsets)
+                v_cache = self.latent_cache_v(latent_vec_v, kv_cache[1], block_indices,
+                                            block_offsets)
+                kv_cache = (k_cache, v_cache)
+        else:
+            # write the latent and rope to kv cache
+            if kv_cache is not None and len(kv_cache) == 2:
+                if not self.VLLM_USE_FP8_MATMUL:
+                    self.latent_cache_k(latent_vec_k, kv_cache[0],
+                                        block_indices, block_offsets)
+                    k_cache = kv_cache[0]
+                else:
+                    k_cache = self.latent_cache_k_nodeq(latent_vec_k, kv_cache[0],
+                                                        block_indices,
+                                                        block_offsets)
+                v_cache = None
+                kv_cache = (k_cache, v_cache)
+            
         if is_prefill:
             return self._forward_prefill(q, k_c_normed, k_pe, attn_metadata, batch_size)
         else:
-            return self._forward_decode(q_nope, q_pe, kv_cache, attn_metadata, batch_size)
-    
-    def _forward_prefill(
-        self,
-        q: torch.Tensor,
-        k_c_normed: torch.Tensor,
-        k_pe: torch.Tensor,
-        attn_metadata: HPUAttentionMetadata,
-        batch_size: int
-    ) -> torch.Tensor:
+            if self.VLLM_USE_FP8_MATMUL:
+                return self._forward_decode_fp8_matmul(q_nope, q_pe, kv_cache, attn_metadata,
+                                        batch_size)
+            return self._forward_decode(q_nope, q_pe, kv_cache, attn_metadata,
+                                        batch_size)
+
+    def _forward_prefill(self, q: torch.Tensor, k_c_normed: torch.Tensor,
+                         k_pe: torch.Tensor,
+                         attn_metadata: HPUAttentionMetadata,
+                         batch_size: int) -> torch.Tensor:
         kv_nope = self.kv_b_proj(k_c_normed)[0]\
             .view(-1, self.num_heads, self.qk_nope_head_dim + self.v_head_dim)
         k_nope, v = kv_nope\
@@ -344,6 +451,35 @@ class HPUMLAImpl(MLACommonImpl[HPUAttentionMetadata], torch.nn.Module):
             block2batch_matmul_op=self.block2batch_matmul,
             keys_fetch_func=self.latent_cache_k.fetch_from_cache,
             values_fetch_func=self.latent_cache_v.fetch_from_cache)
+        output = output.view(batch_size, 1, -1)
+        result = self._v_up_proj_and_o_proj(output)
+        result = result.view(batch_size, 1, -1)
+        return result
+
+    def _forward_decode_fp8_matmul(self, q_nope: torch.Tensor, q_pe: torch.Tensor,
+                        kv_cache: torch.Tensor,
+                        attn_metadata: HPUAttentionMetadata,
+                        batch_size: int) -> torch.Tensor:
+        q = torch.cat([q_nope, q_pe], dim=-1)
+
+        output = flat_pa_mla_kv_one_tensor(
+            query=q,
+            key_cache=kv_cache[0],
+            value_cache=kv_cache[1],
+            block_list=attn_metadata.block_list,
+            block_mapping=attn_metadata.block_mapping,
+            block_bias=attn_metadata.attn_bias,
+            block_scales=attn_metadata.block_scales,
+            block_groups=attn_metadata.block_groups,
+            scale=self.scale,
+            matmul_qk_op=self.matmul_qk_decode,
+            matmul_av_op=self.matmul_av_decode,
+            batch2block_matmul_op=self.batch2block_matmul,
+            block2batch_matmul_op=self.block2batch_matmul,
+            keys_fetch_func=self.latent_cache_k_nodeq.fetch_from_cache,
+            values_fetch_func=self.latent_cache_v_nodeq.fetch_from_cache,
+            kv_lora_rank=self.kv_lora_rank,
+            )
         output = output.view(batch_size, 1, -1)
         result = self._v_up_proj_and_o_proj(output)
         result = result.view(batch_size, 1, -1)

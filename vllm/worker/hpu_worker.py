@@ -676,9 +676,12 @@ class HPUCacheEngine(CacheEngine):
             dtype = torch.uint8
         for _ in range(self.num_attention_layers):
             key_cache = torch.zeros(k_cache_shape, dtype=dtype, device=device)
-            value_cache = torch.zeros(v_cache_shape,
-                                        dtype=dtype,
-                                        device=device)
+            if v_cache_shape is not None:
+                value_cache = torch.zeros(
+                    v_cache_shape, dtype=dtype, device=device
+                )
+            else:
+                value_cache = None
             kv_layer = (key_cache, value_cache)
             kv_cache.append(kv_layer)
         return kv_cache

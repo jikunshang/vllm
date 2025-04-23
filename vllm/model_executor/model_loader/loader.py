@@ -389,6 +389,19 @@ class DefaultModelLoader(BaseModelLoader):
                               fall_back_to_pt=True,
                               allow_patterns_overrides=None)
 
+    def _need_apply_fp8_inc(self, vllm_config):
+        if vllm_config.cache_config.cache_dtype == "fp8_inc":
+            if os.environ.get("VLLM_USE_FP8_MATMUL", "0").lower() in [
+                "true",
+                "1",
+            ]:
+                logger.warning(
+                    "The VLLM_USE_FP8_MATMUL was enable, skip fp8_inc"
+                )
+                return False
+            else:
+                return True
+
     def load_model(self, vllm_config: VllmConfig) -> nn.Module:
         device_config = vllm_config.device_config
         load_config = vllm_config.load_config
@@ -439,8 +452,9 @@ class DefaultModelLoader(BaseModelLoader):
                     module.process_weights_after_loading(model_config.dtype)
                     if is_hpu:
                         hpu_distributed_barrier()
+        
+        if self._need_apply_fp8_inc(vllm_config):
 
-        if vllm_config.cache_config.cache_dtype == "fp8_inc":
             from neural_compressor.torch.algorithms.fp8_quant._quant_common.helper_modules import PatchedVLLMKVCache
             from neural_compressor.torch.algorithms.fp8_quant._quant_common.quant_config import Fp8cfg
             from neural_compressor.torch.algorithms.fp8_quant.model_configs import ModuleExtraConfig, ModuleConfig
