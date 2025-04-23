@@ -1,7 +1,7 @@
 #!/bin/bash
 set -x
 
-# Usage: source benchmark_client_param.sh 
+# Usage: source benchmark_client_param.sh
 #        test_benchmark_serving INPUT_LEN OUTPUT_LEN MAX_CONCURRENCY NUM_PROMPTS [LEN_RATIO] [HOST] [PORT] [MODEL_PATH] [EVALS]
 # Defaults: LEN_RATIO=1.0, HOST=127.0.0.1, PORT=8688, MODEL_PATH=${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}, EVALS=""
 

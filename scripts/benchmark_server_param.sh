@@ -10,9 +10,15 @@ TP_SIZE=$4
 PP_SIZE=$5
 COMM_BACKEND=$6
 PP_LAYER_PARTITION=${7:-}
-HOST=${8:-127.0.0.1}
-PORT=${9:-8688}
-MODEL_PATH=${10:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}}
+KV_CACHE_DTYPE=${8:-auto}
+HOST=${9:-127.0.0.1}
+PORT=${10:-8688}
+MODEL_PATH=${12:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}}
+
+#hl-prof-config --use-template profile_api --hw-trace off
+#export HABANA_PROFILE=1
+#export VLLM_PROFILER_ENABLED=full
+#export VLLM_TORCH_PROFILER_DIR=./logs/
 
 # Environment settings
 export HABANA_VISIBLE_DEVICES="ALL"
@@ -43,6 +49,11 @@ fi
 
 if [ "$COMM_BACKEND" = "gloo" ]; then
   export VLLM_PP_USE_CPU_COMS=1
+fi
+
+if [ "$KV_CACHE_DTYPE" = "fp8_inc" ]; then
+  export VLLM_USE_FP8_MATMUL="true"
+  export VLLM_USE_SINGLE_TENSOR_CACHE="1"
 fi
 
 # Bucketing configuration
@@ -86,6 +97,7 @@ python3 -m vllm.entrypoints.openai.api_server --host $HOST --port $PORT \
   --model $MODEL_PATH \
   --device hpu \
   --dtype bfloat16 \
+  --kv-cache-dtype $KV_CACHE_DTYPE \
   --tensor-parallel-size $TP_SIZE \
   --pipeline-parallel-size $PP_SIZE \
   --trust-remote-code \
