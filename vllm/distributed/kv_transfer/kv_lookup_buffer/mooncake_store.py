@@ -7,6 +7,7 @@ from this remote lookup buffer.
 """
 import json
 import os
+import ctypes
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -136,6 +137,25 @@ class MooncakeStore(KVLookupBufferBase):
         value = self._get_impl(key)
         return value
 
+    def put_unsafe(
+        self,
+        key: str,
+        value: Optional[torch.Tensor],
+    ) -> None:
+        """Put KVCache to Mooncake Store"""
+        device_id = value.device.index if value.device.type == 'hpu' else -1
+        logger.debug(f"putting unsafe, device id: {device_id}")
+        value = value.cpu().contiguous()
+        data_ptr = value.data_ptr()
+        element_size = value.element_size()
+        numel = value.numel()
+        value_bytes = bytes((ctypes.c_byte * (numel * element_size)).from_address(data_ptr))
+        try:
+            self.store.put(key, value_bytes)
+        except TypeError as err:
+            logger.error("Failed to put value into Mooncake Store: %s", err)
+            raise TypeError("Mooncake Store Put Type Error.") from err
+
     def _put_impl(
         self,
         key: str,
@@ -176,4 +196,13 @@ class MooncakeStore(KVLookupBufferBase):
                 'hpu', device_id) if device_id >= 0 else torch.device('cpu')
             return tensor.to(device)
 
+        return None
+    
+    def get_unsafe(self, key: str, shape) -> Optional[torch.Tensor]:
+        """Get KVCache from Mooncake Store without type checking"""
+        data = self.store.get(key)
+        if data:
+            tensor = torch.frombuffer(data, dtype=torch.bfloat16).clone()
+            tensor = tensor.reshape(shape)
+            return tensor
         return None
