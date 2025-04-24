@@ -304,6 +304,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         # and hidden states.
         bypass_model_exec = True
 
+        num_layers = model_executable.model.end_layer - model_executable.model.start_layer
         input_tokens_tensor_cpu = model_input.input_tokens.to("cpu")
         torch.hpu.synchronize()
         
@@ -355,7 +356,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             load_key_prefix = self.tensor_hash(current_tokens)
             # For deepseek, we only need recv first rank
             load_kvcache_key = f"{load_key_prefix}_0"
-            shape = (61, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
+            shape = (num_layers, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
             remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape)
             hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
