@@ -279,7 +279,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             # we pack kv together, only need send one tensor
             kvcache_to_sent = keys
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
-            self.kv_store.put(store_kvcache_key, kvcache_to_sent)
+            self.kv_store.put_unsafe(store_kvcache_key, kvcache_to_sent)
             
             logger.debug(f"put kv cache key: {store_kvcache_key}")
             
@@ -355,7 +355,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             load_key_prefix = self.tensor_hash(current_tokens)
             # For deepseek, we only need recv first rank
             load_kvcache_key = f"{load_key_prefix}_0"
-            remote_kv = self.kv_store.get(load_kvcache_key)
+            shape = (61, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
+            remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape)
             hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
             
