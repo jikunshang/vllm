@@ -203,14 +203,22 @@ class MooncakeStore(KVLookupBufferBase):
 
         return None
     
-    def get_unsafe(self, key: str, shape) -> Optional[torch.Tensor]:
+    def get_unsafe(self, key: str, shape, ranks) -> Optional[torch.Tensor]:
         """Get KVCache from Mooncake Store without type checking"""
         start_get = time.time()
-        data = self.store.get(key)
+        datas =[]
+        for rank in ranks:
+            key_ = f"{key}_{str(rank)}"
+            datas.append(self.store.get(key_))
+        # data = self.store.get(key)
         end_get = time.time()
-        if data:
-            tensor = torch.frombuffer(data, dtype=torch.bfloat16).clone()
-            tensor = tensor.reshape(shape)
+        if datas:
+            tensors = []
+            for data in datas:
+                tensor = torch.frombuffer(data, dtype=torch.bfloat16).clone()
+                tensor = tensor.reshape(shape)            
+                tensors.append(tensor)
+            tensor = torch.cat(tensors, dim=-1)
             end_from_buffer = time.time()
             logger.info(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
             return tensor

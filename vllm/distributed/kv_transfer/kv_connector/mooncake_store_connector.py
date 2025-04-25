@@ -37,11 +37,15 @@ class MooncakeStoreConnector(KVConnectorBase):
     ):
         self.config = config.kv_transfer_config
         self.tp_size = config.parallel_config.tensor_parallel_size
+        print(f"mooncake init: tp size: {self.tp_size}")
         self.local_tp_rank = local_rank
         self.rank = rank
         self.k_head_size = 64
         self.v_head_size = 512
         self.k_v_head_size = self.k_head_size + self.v_head_size
+        size_per_rank = self.k_v_head_size // self.tp_size
+        self.last_dim_start_idx = self.rank * size_per_rank
+        self.last_dim_end_idx = (self.rank + 1) * size_per_rank
         self.block_size = 128
         # self.local_offset_start = self.k_v_head_size // self.tp_size * local_rank
         # self.local_offset_end = self.k_v_head_size // self.tp_size * (local_rank + 1)
@@ -237,9 +241,9 @@ class MooncakeStoreConnector(KVConnectorBase):
         hidden_or_intermediate_states: Union[torch.Tensor,
                                              IntermediateTensors],
     ) -> None:
-        if self.rank != 0:
-            # only the first rank will send kv cache
-            return
+        # if self.rank != 0:
+        #     # only the first rank will send kv cache
+        #     return
         torch.hpu.synchronize()
         input_tokens_tensor_cpu = model_input.input_tokens.to("cpu") # shape: [batch_size, seq_len_padding_to_128]
         torch.hpu.synchronize()
@@ -275,7 +279,8 @@ class MooncakeStoreConnector(KVConnectorBase):
                 keys.append(key_cache.index_select(0, current_slot_mapping).unsqueeze(0))
                 # values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
-            keys = torch.cat(keys, dim=0)
+            keys = torch.cat(keys, dim=0) #[num_layer, seq_lens, num_kv_heads, kv_head_size]
+            keys = keys[..., self.last_dim_start_idx:self.last_dim_end_idx]
             keys = keys.contiguous()
             # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
@@ -360,9 +365,10 @@ class MooncakeStoreConnector(KVConnectorBase):
             # get roi for current seq
             load_key_prefix = self.tensor_hash(current_tokens)
             # For deepseek, we only need recv first rank
-            load_kvcache_key = f"{load_key_prefix}_0"
-            shape = (num_layers, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
-            remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape)
+            load_kvcache_key = f"{load_key_prefix}"
+            shape = (num_layers, num_blocks * 128, self.k_v_head_size // 8) #num_layers, seq_len, num_kv_heads, k/v_head_size
+            ranks = range(8)
+            remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape, ranks)
             # remote_kv = self.kv_store.get(load_kvcache_key)
             hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
