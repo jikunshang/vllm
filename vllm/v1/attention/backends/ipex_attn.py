@@ -57,6 +57,10 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
         slot_mapping = self.runner.slot_mapping_cpu[:num_actual_tokens].to(
             self.runner.device, non_blocking=True).long()
 
+        def schedule(batch_size, cu_query_lens, max_query_len, seqlens,
+                     max_seq_len, causal):
+            return None
+
         # for local attention
         local_attn_metadata = None
         if self.runner.attention_chunk_size is not None:
@@ -68,23 +72,32 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
                     block_table,
                     self.runner.block_size,
                 )
+            local_query_start_loc = torch.from_numpy(virt_q_cu_seqlens_np).to(
+                self.runner.device, non_blocking=True)
+            local_seqused_k = torch.from_numpy(virt_k_seqlens_np).to(
+                self.runner.device, non_blocking=True)
+            local_max_query_len = seqlens_q_local_np.max()
+            local_max_seq_len = virt_k_seqlens_np.max()
+            local_scheduler_metadata = schedule(
+                batch_size=local_query_start_loc.shape[0] - 1,
+                cu_query_lens=local_query_start_loc,
+                max_query_len=local_max_query_len,
+                seqlens=local_seqused_k,
+                max_seq_len=local_max_seq_len,
+                causal=True)
+
             local_attn_metadata = FlashAttentionMetadata.LocalAttentionMetadata(
-                local_query_start_loc=torch.from_numpy(
-                    virt_q_cu_seqlens_np).to(self.runner.device,
-                                             non_blocking=True),
-                local_seqused_k=torch.from_numpy(virt_k_seqlens_np).to(
-                    self.runner.device, non_blocking=True),
+                local_query_start_loc=local_query_start_loc,
+                local_seqused_k=local_seqused_k,
                 local_block_table=virt_block_table,
-                local_max_query_len=seqlens_q_local_np.max(),
-                local_max_seq_len=virt_k_seqlens_np.max(),
+                local_max_query_len=local_max_query_len,
+                local_max_seq_len=local_max_seq_len,
+                local_scheduler_metadata=local_scheduler_metadata,
             )
 
+        # FIXME(kunshang): support cascade attn
         # use_cascade = common_prefix_len > 0
         use_cascade = False
-
-        def schedule(cu_query_lens, max_query_len, seqlens, max_seq_len,
-                     causal):
-            return None
 
         if use_cascade:
             cu_prefix_query_lens = torch.tensor([0, num_actual_tokens],
@@ -98,12 +111,14 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
             suffix_kv_lens = torch.from_numpy(suffix_kv_lens).to(
                 self.runner.device)
             prefix_scheduler_metadata = schedule(
+                batch_size=num_reqs,
                 cu_query_lens=cu_prefix_query_lens,
                 max_query_len=num_actual_tokens,
                 seqlens=prefix_kv_lens,
                 max_seq_len=common_prefix_len,
                 causal=False)
-            scheduler_metadata = schedule(cu_query_lens=query_start_loc,
+            scheduler_metadata = schedule(batch_size=num_reqs,
+                                          cu_query_lens=query_start_loc,
                                           max_query_len=max_query_len,
                                           seqlens=suffix_kv_lens,
                                           max_seq_len=max_seq_len -
@@ -114,7 +129,8 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
             prefix_kv_lens = None
             suffix_kv_lens = None
             prefix_scheduler_metadata = None
-            scheduler_metadata = schedule(cu_query_lens=query_start_loc,
+            scheduler_metadata = schedule(batch_size=num_reqs,
+                                          cu_query_lens=query_start_loc,
                                           max_query_len=max_query_len,
                                           seqlens=seq_lens,
                                           max_seq_len=max_seq_len,
