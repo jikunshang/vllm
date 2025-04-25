@@ -240,6 +240,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         if self.rank != 0:
             # only the first rank will send kv cache
             return
+        torch.hpu.synchronize()
         input_tokens_tensor_cpu = model_input.input_tokens.to("cpu") # shape: [batch_size, seq_len_padding_to_128]
         torch.hpu.synchronize()
         seq_lens = model_input.attn_metadata.seq_lens # 2D list
@@ -275,11 +276,15 @@ class MooncakeStoreConnector(KVConnectorBase):
                 # values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
             keys = torch.cat(keys, dim=0)
+            keys = keys.contiguous()
             # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
+            htorch.core.mark_step()
+            torch.hpu.synchronize()
             kvcache_to_sent = keys
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
             self.kv_store.put_unsafe(store_kvcache_key, kvcache_to_sent)
+            # self.kv_store.put(store_kvcache_key, kvcache_to_sent)
             
             logger.debug(f"put kv cache key: {store_kvcache_key}")
             
@@ -358,6 +363,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             load_kvcache_key = f"{load_key_prefix}_0"
             shape = (num_layers, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
             remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape)
+            # remote_kv = self.kv_store.get(load_kvcache_key)
             hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
             

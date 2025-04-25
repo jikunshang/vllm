@@ -8,6 +8,7 @@ from this remote lookup buffer.
 import json
 import os
 import ctypes
+import time
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -38,6 +39,8 @@ class MooncakeStoreConfig:
         """Load the config from a JSON file."""
         with open(file_path) as fin:
             config = json.load(fin)
+        local_rank = torch.distributed.get_rank()
+        device_name = "mlx5_0" if local_rank == 0  else "mlx5_"+str(2+local_rank)
         return MooncakeStoreConfig(
             local_hostname=config.get("local_hostname"),
             metadata_server=config.get("metadata_server"),
@@ -143,18 +146,20 @@ class MooncakeStore(KVLookupBufferBase):
         value: Optional[torch.Tensor],
     ) -> None:
         """Put KVCache to Mooncake Store"""
-        device_id = value.device.index if value.device.type == 'hpu' else -1
-        logger.debug(f"putting unsafe, device id: {device_id}")
-        value = value.cpu().contiguous()
+        value = value.cpu()
+        start_serde = time.time()
         data_ptr = value.data_ptr()
         element_size = value.element_size()
         numel = value.numel()
         value_bytes = bytes((ctypes.c_byte * (numel * element_size)).from_address(data_ptr))
+        end_serde = time.time()
         try:
             self.store.put(key, value_bytes)
         except TypeError as err:
             logger.error("Failed to put value into Mooncake Store: %s", err)
             raise TypeError("Mooncake Store Put Type Error.") from err
+        end_put = time.time()
+        logger.info(f"contiguous time: {end_serde - start_serde}, put time: {end_put - end_serde}")
 
     def _put_impl(
         self,
@@ -200,9 +205,13 @@ class MooncakeStore(KVLookupBufferBase):
     
     def get_unsafe(self, key: str, shape) -> Optional[torch.Tensor]:
         """Get KVCache from Mooncake Store without type checking"""
+        start_get = time.time()
         data = self.store.get(key)
+        end_get = time.time()
         if data:
             tensor = torch.frombuffer(data, dtype=torch.bfloat16).clone()
             tensor = tensor.reshape(shape)
+            end_from_buffer = time.time()
+            logger.info(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
             return tensor
         return None
