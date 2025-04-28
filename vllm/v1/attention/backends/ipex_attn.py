@@ -8,10 +8,10 @@ from vllm._ipex_ops import ipex_ops
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionLayer,
                                               AttentionMetadata, AttentionType)
+from vllm.attention.utils.fa_utils import get_flash_attn_version_xpu
 from vllm.v1.attention.backends.flash_attn import (
     FlashAttentionMetadata, FlashAttentionMetadataBuilder,
     make_local_attention_virtual_batches)
-from vllm.vllm_flash_attn.fa_utils import get_flash_attn_version_xpu
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput

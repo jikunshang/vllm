@@ -128,14 +128,17 @@ class XPUModelRunner(GPUModelRunner):
 
         # Set up speculative decoding.
         self.use_spec_decode = False
+        self.use_aux_hidden_state_outputs = False
         if self.speculative_config:
             self.use_spec_decode = True
             if get_pp_group().is_last_rank:
                 if self.speculative_config.method == "ngram":
                     self.drafter = NgramProposer(self.vllm_config)
-                elif self.speculative_config.method == "eagle":
+                elif self.speculative_config.use_eagle():
                     self.drafter = EagleProposer(self.vllm_config,
                                                  self.device)  # type: ignore
+                    if self.speculative_config.method == "eagle3":
+                        self.use_aux_hidden_state_outputs = True
                 else:
                     raise ValueError("Unknown speculative decoding method: "
                                      f"{self.speculative_config.method}")
