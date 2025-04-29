@@ -288,16 +288,15 @@ class Proxy:
             # prefill stage
             prefill_instance = self.schedule(self.prefill_cycler)
             try:
-                async for _ in self.forward_request(
+                generator_p = self.forward_request(
                         f"http://{prefill_instance}/v1/chat/completions",
-                        kv_prepare_request):
-                    continue
+                        kv_prepare_request)
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("prefill", prefill_instance)
                 raise http_exc
             # Perform kv recv and decoding stage
             decode_instance = self.schedule(self.decode_cycler)
-
+            await generator_p
             try:
                 generator = self.forward_request(
                     "http://" + decode_instance + "/v1/chat/completions",
@@ -305,7 +304,13 @@ class Proxy:
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("decode", decode_instance)
                 raise http_exc
-            response = StreamingResponse(content=generator)
+            async def remove_first_chunk(generator):
+                first = False
+                async for chunk in generator:
+                    if first:
+                        continue
+                    yield chunk
+            response = StreamingResponse(content=iter(generator_p, remove_first_chunk(generator)))
             return response
         except Exception:
             exc_info = sys.exc_info()
