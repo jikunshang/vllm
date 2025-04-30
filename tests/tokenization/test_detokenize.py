@@ -38,26 +38,45 @@ TOKENIZERS = [
 ]
 
 
-def _run_incremental_decode(tokenizer, all_input_ids,
-                            skip_special_tokens: bool, starting_index: int):
-    decoded_text = ""
-    offset = 0
-    token_offset = 0
-    prev_tokens = None
-    for i in range(starting_index, len(all_input_ids)):
-        new_tokens, text, offset, token_offset = detokenize_incrementally(
-            tokenizer,
-            all_input_ids[:i + 1],
-            prev_tokens,
-            offset,
-            token_offset,
-            skip_special_tokens=skip_special_tokens)
-        decoded_text += text
-        if prev_tokens is None:
-            prev_tokens = new_tokens
-        else:
-            prev_tokens += new_tokens
-    return decoded_text
+def _run_incremental_decode(tokenizer,
+                            all_input_ids,
+                            skip_special_tokens: bool,
+                            starting_index: int,
+                            spaces_between_special_tokens: bool = True,
+                            fast: Optional[bool] = None):
+
+    prompt_token_ids = all_input_ids[:starting_index]
+
+    params = SamplingParams(
+        skip_special_tokens=skip_special_tokens,
+        spaces_between_special_tokens=spaces_between_special_tokens,
+    )
+    request = EngineCoreRequest("",
+                                prompt_token_ids,
+                                None,
+                                None,
+                                None,
+                                params,
+                                None,
+                                0.0,
+                                None,
+                                cache_salt=None)
+
+    if fast is None:
+        detokenizer = IncrementalDetokenizer.from_new_request(
+            tokenizer, request)
+    elif fast:
+        detokenizer = FastIncrementalDetokenizer(tokenizer, request)
+    else:
+        detokenizer = SlowIncrementalDetokenizer(tokenizer, request)
+
+    output_text = ""
+    for i, token_id in enumerate(all_input_ids[starting_index:]):
+        detokenizer.update([token_id], False)
+        finished = i == len(all_input_ids) - 1
+        output_text += detokenizer.get_next_output_text(finished, delta=True)
+
+    return output_text, detokenizer.output_token_ids
 
 
 @pytest.fixture
