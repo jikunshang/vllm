@@ -1136,6 +1136,9 @@ class IntermediateTensors:
     def __setitem__(self, key: str, value: torch.Tensor):
         self.tensors[key] = value
 
+    def items(self):
+        return self.tensors.items()
+
     def __len__(self):
         return len(self.tensors)
 
@@ -1144,6 +1147,9 @@ class IntermediateTensors:
 
     def __repr__(self) -> str:
         return f"IntermediateTensors(tensors={self.tensors})"
+
+    def __iter__(self):
+        return iter(self.tensors)
 
 
 class PoolerOutput(
