@@ -6,6 +6,7 @@ set -x
 # Defaults: LEN_RATIO=1.0, HOST=127.0.0.1, PORT=8688, MODEL_PATH=${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-dynamic-no-ste-G2}, EVALS=""
 
 test_benchmark_client_serving() {
+  export PT_HPU_LAZY_MODE=1
   INPUT_LEN=$1
   OUTPUT_LEN=$2
   MAX_CONCURRENCY=$3
@@ -44,6 +45,7 @@ test_benchmark_client_serving() {
 }
 
 test_benchmark_client_accuracy() {
+  export PT_HPU_LAZY_MODE=1
   MAX_CONCURRENCY=$1
   HOST=${2:-127.0.0.1}
   PORT=${3:-8688}

@@ -22,6 +22,7 @@ MODEL_PATH=${12:-${MODEL_PATH:-/root/.cache/huggingface/DeepSeek-R1-BF16-w8afp8-
 
 # Environment settings
 export HABANA_VISIBLE_DEVICES="ALL"
+export PT_HPU_LAZY_MODE=1
 export PT_HPU_ENABLE_LAZY_COLLECTIVES="true"
 export VLLM_RAY_DISABLE_LOG_TO_DRIVER="1"
 export RAY_IGNORE_UNHANDLED_ERRORS="1"
