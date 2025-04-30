@@ -250,25 +250,44 @@ class Proxy:
                 kv_prepare_request["max_tokens"] = 1
 
                 prefill_instance = self.schedule(self.prefill_cycler)
+                value = b''
                 try:
-                    async for _ in self.forward_request(
+                    async for chunk in self.forward_request(
                             f"http://{prefill_instance}/v1/completions",
                             kv_prepare_request):
-                        continue
+                        value += chunk
                 except HTTPException as http_exc:
                     self.remove_instance_endpoint("prefill", prefill_instance)
                     raise http_exc
 
             # Perform kv recv and decoding stage
             decode_instance = self.schedule(self.decode_cycler)
-
+            value = value.strip().decode("utf-8").removesuffix("data: [DONE]").encode("utf-8")
+            async def streaming_response(value):
+                if value:
+                    yield value
+                else:
+                    yield b""
+            generator_p = streaming_response(value)
             try:
-                generator = self.forward_request(
+                generator_d = self.forward_request(
                     f"http://{decode_instance}/v1/completions", request)
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("decode", decode_instance)
                 raise http_exc
-            response = StreamingResponse(generator)
+            async def merge_generator(streaming_1, generator_2):
+                first_decode = True
+                async for chunk in streaming_1:
+                    print(f"first token on P instance: {chunk}")
+                    yield chunk
+                async for chunk in generator_2:
+                    if first_decode:
+                        print(f"first token on D instance: {chunk}")
+                        first_decode = False
+                        continue
+                    yield chunk
+            final_generator = merge_generator(generator_p, generator_d)    
+            response = StreamingResponse(final_generator)
             return response
         except Exception:
             import sys
@@ -287,30 +306,44 @@ class Proxy:
 
             # prefill stage
             prefill_instance = self.schedule(self.prefill_cycler)
+            value = b''
             try:
-                generator_p = self.forward_request(
+                async for chunk in self.forward_request(
                         f"http://{prefill_instance}/v1/chat/completions",
-                        kv_prepare_request)
+                        kv_prepare_request):
+                    value += chunk
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("prefill", prefill_instance)
                 raise http_exc
             # Perform kv recv and decoding stage
             decode_instance = self.schedule(self.decode_cycler)
-            await generator_p
+            value = value.strip().decode("utf-8").removesuffix("data: [DONE]").encode("utf-8")
+            async def streaming_response(value):
+                if value:
+                    yield value
+                else:
+                    yield b""
+            generator_p = streaming_response(value)
             try:
-                generator = self.forward_request(
+                generator_d = self.forward_request(
                     "http://" + decode_instance + "/v1/chat/completions",
                     request)
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("decode", decode_instance)
                 raise http_exc
-            async def remove_first_chunk(generator):
-                first = False
-                async for chunk in generator:
-                    if first:
+            async def merge_generator(streaming_1, generator_2):
+                first_decode = True
+                async for chunk in streaming_1:
+                    print(f"first token on P instance: {chunk}")
+                    yield chunk
+                async for chunk in generator_2:
+                    if first_decode:
+                        print(f"first token on D instance: {chunk}")
+                        first_decode = False
                         continue
                     yield chunk
-            response = StreamingResponse(content=iter(generator_p, remove_first_chunk(generator)))
+            final_generator = merge_generator(generator_p, generator_d)
+            response = StreamingResponse(final_generator)
             return response
         except Exception:
             exc_info = sys.exc_info()
