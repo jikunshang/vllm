@@ -22,6 +22,22 @@ logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO)
 
 
+
+async def P_first_token_generator(generator_p, generator_d):
+    first_decode = True
+    async for chunk in generator_p:
+        yield chunk
+    async for chunk in generator_d:
+        if first_decode:
+            first_decode = False
+            continue
+        yield chunk
+
+async def D_first_token_generator(generator_p, generator_d):
+    async for _ in generator_p:
+        continue
+    async for chunk in generator_d:
+        yield chunk
 class SchedulingPolicy(ABC):
 
     def __init__(self):
@@ -44,6 +60,7 @@ class Proxy:
                                                     StreamingResponse]] = None,
         custom_create_chat_completion: Optional[Callable[
             [Request], StreamingResponse]] = None,
+        generator_on_p_node:bool = False
     ):
         self.prefill_instances = prefill_instances
         self.decode_instances = decode_instances
@@ -55,6 +72,7 @@ class Proxy:
         self.custom_create_chat_completion = custom_create_chat_completion
         self.router = APIRouter()
         self.setup_routes()
+        self.generator = P_first_token_generator if generator_on_p_node else D_first_token_generator
 
     def setup_routes(self):
         self.router.post(
@@ -275,18 +293,7 @@ class Proxy:
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("decode", decode_instance)
                 raise http_exc
-            async def merge_generator(streaming_1, generator_2):
-                first_decode = True
-                async for chunk in streaming_1:
-                    print(f"first token on P instance: {chunk}")
-                    yield chunk
-                async for chunk in generator_2:
-                    if first_decode:
-                        print(f"first token on D instance: {chunk}")
-                        first_decode = False
-                        continue
-                    yield chunk
-            final_generator = merge_generator(generator_p, generator_d)    
+            final_generator = self.generator(generator_p, generator_d)    
             response = StreamingResponse(final_generator)
             return response
         except Exception:
@@ -331,18 +338,7 @@ class Proxy:
             except HTTPException as http_exc:
                 self.remove_instance_endpoint("decode", decode_instance)
                 raise http_exc
-            async def merge_generator(streaming_1, generator_2):
-                first_decode = True
-                async for chunk in streaming_1:
-                    print(f"first token on P instance: {chunk}")
-                    yield chunk
-                async for chunk in generator_2:
-                    if first_decode:
-                        print(f"first token on D instance: {chunk}")
-                        first_decode = False
-                        continue
-                    yield chunk
-            final_generator = merge_generator(generator_p, generator_d)
+            final_generator = self.generator(generator_p, generator_d)
             response = StreamingResponse(final_generator)
             return response
         except Exception:
@@ -388,6 +384,7 @@ class ProxyServer:
                                              StreamingResponse]] = None,
         create_chat_completion: Optional[Callable[[Request],
                                                   StreamingResponse]] = None,
+        generator_on_p_node: bool = False,
     ):
         self.validate_parsed_serve_args(args)
         self.port = args.port
@@ -399,6 +396,7 @@ class ProxyServer:
                                is not None else RoundRobinSchedulingPolicy()),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
+            generator_on_p_node=generator_on_p_node,
         )
 
     def validate_parsed_serve_args(self, args: argparse.Namespace):
@@ -482,6 +480,13 @@ if __name__ == "__main__":
         type=int,
         default=8000,
         help="Server port number",
+    )
+    
+    parser.add_argument(
+        "--generator_on_p_node",
+        type=bool,
+        default=False,
+        help="generate first token on P node or D node",
     )
     args = parser.parse_args()
     proxy_server = ProxyServer(args=args)
