@@ -647,8 +647,6 @@ class DeepseekV3Model(nn.Module):
         intermediate_tensors: Optional[IntermediateTensors],
         inputs_embeds: Optional[torch.Tensor] = None,
     ) -> Union[torch.Tensor, IntermediateTensors]:
-        if get_pp_group().world_size > 1:
-            assert intermediate_tensors is not None
         if get_pp_group().is_first_rank:
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
@@ -656,6 +654,7 @@ class DeepseekV3Model(nn.Module):
                 hidden_states = self.get_input_embeddings(input_ids)
             residual = None
         else:
+            assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
 
@@ -671,9 +670,10 @@ class DeepseekV3Model(nn.Module):
                 htorch.core.mark_step()
 
         if not get_pp_group().is_last_rank:
-            intermediate_tensors["hidden_states"].copy_(hidden_states)
-            intermediate_tensors["residual"].copy_(residual)
-            return intermediate_tensors
+            return IntermediateTensors({
+                "hidden_states": hidden_states,
+                "residual": residual
+            })
 
 
         hidden_states, _ = self.norm(hidden_states, residual)

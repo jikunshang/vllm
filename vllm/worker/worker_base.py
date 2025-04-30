@@ -316,10 +316,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         broadcast_data = broadcast_tensor_dict(src=0)
         if not broadcast_data:
             return None
-        hidden_states = broadcast_data.pop("hidden_states", None)
-        residual = broadcast_data.pop("residual", None)
-        self.model_runner.set_intermediate_tensors(IntermediateTensors({"hidden_states": hidden_states,
-            "residual": residual}))
 
         worker_input = WorkerInput.from_broadcasted_tensor_dict(broadcast_data)
         model_input = (
@@ -350,9 +346,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
             broadcast_data = worker_input.as_broadcastable_tensor_dict()
             broadcast_data.update(model_input.as_broadcastable_tensor_dict())
             broadcast_data.update(kwargs)
-            intermediate_tensors = self.model_runner.get_intermediate_tensors()
-            if intermediate_tensors is not None:
-                broadcast_data.update(self.model_runner.get_intermediate_tensors().tensors)
             broadcast_tensor_dict(broadcast_data, src=0)
 
         if execute_model_req.async_callback:
@@ -408,11 +401,12 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         if worker_input.num_seq_groups == 0:
             return []
 
-        intermediate_tensors = self.model_runner.get_intermediate_tensors()
+        intermediate_tensors = None
         orig_model_execute_time = 0.0
         if not get_pp_group().is_first_rank:
-            get_pp_group().recv_intermediate_tensors(intermediate_tensors.tensors,
-                all_gather_group=get_tp_group())
+            intermediate_tensors = IntermediateTensors(
+                get_pp_group().recv_tensor_dict(
+                    all_gather_group=get_tp_group()))
             if (self.observability_config is not None
                     and self.observability_config.collect_model_execute_time):
                 orig_model_execute_time = intermediate_tensors.tensors.get(
@@ -435,8 +429,8 @@ class LocalOrDistributedWorkerBase(WorkerBase):
                     and self.observability_config.collect_model_execute_time):
                 output.tensors["model_execute_time"] = torch.tensor(
                     model_execute_time + orig_model_execute_time)
-            get_pp_group().send_intermediate_tensors(output.tensors,
-                                                     all_gather_group=get_tp_group())
+            get_pp_group().send_tensor_dict(output.tensors,
+                                            all_gather_group=get_tp_group())
             return [None]
         if (self.observability_config is not None
                 and self.observability_config.collect_model_execute_time
