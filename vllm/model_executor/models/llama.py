@@ -402,6 +402,10 @@ class LlamaModel(nn.Module):
             if "scale" in name:
                 # Remapping the name of FP8 kv-scale.
                 name = maybe_remap_kv_scale_name(name, params_dict)
+                if "proj.scale" in name:
+                    name = name.replace("scale", "weight_scale")
+                elif "weight_scales" in name:
+                    name = name.replace("weight_scales", "weight_scale")
                 if name is None:
                     continue
             for param_name, weight_name, shard_id in stacked_params_mapping:
