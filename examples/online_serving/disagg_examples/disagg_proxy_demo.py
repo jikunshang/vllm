@@ -384,7 +384,6 @@ class ProxyServer:
                                              StreamingResponse]] = None,
         create_chat_completion: Optional[Callable[[Request],
                                                   StreamingResponse]] = None,
-        generator_on_p_node: bool = False,
     ):
         self.validate_parsed_serve_args(args)
         self.port = args.port
@@ -396,7 +395,7 @@ class ProxyServer:
                                is not None else RoundRobinSchedulingPolicy()),
             custom_create_completion=create_completion,
             custom_create_chat_completion=create_chat_completion,
-            generator_on_p_node=generator_on_p_node,
+            generator_on_p_node=args.generator_on_p_node,
         )
 
     def validate_parsed_serve_args(self, args: argparse.Namespace):
