@@ -483,8 +483,7 @@ if __name__ == "__main__":
     
     parser.add_argument(
         "--generator_on_p_node",
-        type=bool,
-        default=False,
+        action="store_true",
         help="generate first token on P node or D node",
     )
     args = parser.parse_args()
