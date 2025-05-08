@@ -6,13 +6,19 @@ from torch import fx as fx
 
 from vllm.config import CompilationConfig
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 
 from .fix_functionalization import FixFunctionalizationPass
-from .fusion import FusionPass
+# from .fusion import FusionPass
 from .inductor_pass import CustomGraphPass, InductorPass
 from .noop_elimination import NoOpEliminationPass
 
 logger = init_logger(__name__)
+
+try:
+    from .fusion import FusionPass
+except AttributeError:
+    logger.warning("import FusionPass error.")
 
 
 class PostGradPassManager(CustomGraphPass):
@@ -45,7 +51,7 @@ class PostGradPassManager(CustomGraphPass):
         if pass_config.enable_noop:
             self.passes += [NoOpEliminationPass(pass_config)]
 
-        if pass_config.enable_fusion:
+        if pass_config.enable_fusion and not current_platform.is_xpu():
             self.passes += [FusionPass.instance(pass_config)]
 
         self.fix_functionalization = FixFunctionalizationPass(pass_config)
