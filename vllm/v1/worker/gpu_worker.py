@@ -10,7 +10,6 @@ import torch.nn as nn
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
-# from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
                               set_custom_all_reduce)
@@ -31,6 +30,9 @@ logger = init_logger(__name__)
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
+
+if current_platform.is_cuda():
+    from vllm.device_allocator.cumem import CuMemAllocator
 
 
 class Worker(WorkerBase):
@@ -129,8 +131,8 @@ class Worker(WorkerBase):
             torch.cuda.empty_cache()
             self.init_gpu_memory = torch.cuda.mem_get_info()[0]
             backend = "nccl"
-        elif self.device_config.device.type == "xpu" and current_platform.is_xpu(
-        ):
+        elif self.device_config.device.type == "xpu" and \
+            current_platform.is_xpu():
             self.device = torch.device(f"xpu:{self.local_rank}")
             torch.xpu.set_device(self.device)
             torch.xpu.empty_cache()
@@ -332,7 +334,7 @@ def init_worker_distributed_environment(
     set_custom_all_reduce(not parallel_config.disable_custom_all_reduce)
 
     init_distributed_environment(parallel_config.world_size, rank,
-                                 distributed_init_method, local_rank,backend)
+                                 distributed_init_method, local_rank, backend)
 
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
