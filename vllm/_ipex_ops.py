@@ -3,6 +3,8 @@
 from typing import Optional
 
 import torch
+from torch.library import register_fake
+from vllm.utils import direct_register_custom_op
 
 from vllm.logger import init_logger
 
@@ -13,6 +15,44 @@ try:
 except ImportError as e:
     logger.warning("Import error msg: %s", e.msg)
 
+@register_fake("torch_ipex::silu_and_mul")
+def silu_and_mul_fake(out: torch.Tensor, x: torch.Tensor) -> None:
+    return None
+
+@register_fake("torch_ipex::rotary_embedding")
+def rotary_embedding_fake(
+    positions: torch.Tensor,  # [batch_size, seq_len]
+    query: torch.Tensor,  # [batch_size, seq_len, num_heads*head_size]
+    key: torch.Tensor,  # [batch_size, seq_len, num_kv_heads*head_size]
+    head_size: int,
+    cos_sin_cache: torch.Tensor,  # [cos_sin_dim, rot_dim]
+    is_neox: bool,
+    rot_dim: int,
+) -> None:
+    return None
+
+@register_fake("torch_ipex::add_rms_norm")
+def add_rms_norm_fake(residual: torch.Tensor, input: torch.Tensor,
+                      shape: list[int], weight: torch.Tensor,
+                      bias: torch.Tensor, epsilon: float,
+                      add_back: bool) -> torch.Tensor:
+    return torch.empty_like(input)
+
+
+def rms_norm_(input: torch.Tensor, weight: torch.Tensor,
+              epsilon: float) -> torch.Tensor:
+    return ipex.llm.functional.rms_norm(input, weight, epsilon)
+
+
+def rms_norm_fake_(input: torch.Tensor, weight: torch.Tensor,
+                   epsilon: float) -> torch.Tensor:
+    return torch.empty_like(input)
+
+
+direct_register_custom_op("rms_norm",
+                          rms_norm_, [],
+                          rms_norm_fake_,
+                          dispatch_key="XPU")
 
 class ipex_ops:
 
@@ -160,7 +200,8 @@ class ipex_ops:
     @staticmethod
     def rms_norm(input: torch.Tensor, weight: torch.Tensor,
                  epsilon: float) -> torch.Tensor:
-        return ipex.llm.functional.rms_norm(input, weight, epsilon)
+        return torch.ops.vllm.rms_norm(input, weight, epsilon)
+        # return ipex.llm.functional.rms_norm(input, weight, epsilon)
 
     @staticmethod
     def fused_add_rms_norm(input: torch.Tensor, residual: torch.Tensor,

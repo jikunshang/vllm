@@ -29,8 +29,8 @@ def empty_fp32(*args, **kwargs):
     return torch.empty(*args, **kwargs, dtype=torch.float32, device="cuda")
 
 
-RMS_OP = torch.ops._C.rms_norm.default
-RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
+# RMS_OP = torch.ops._C.rms_norm.default
+# RMS_ADD_OP = torch.ops._C.fused_add_rms_norm.default
 
 
 class QuantKey(NamedTuple):

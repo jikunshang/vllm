@@ -3880,6 +3880,8 @@ class CompilationConfig:
 
         from torch._dynamo.backends.registry import list_backends
         torch_backends = list_backends(exclude_tags=tuple())
+        print(f"backend: {self.backend}, torch backend: {torch_backends}")
+        print(f"level: {self.level}")
         if self.level in [
                 CompilationLevel.DYNAMO_AS_IS, CompilationLevel.DYNAMO_ONCE
         ]:

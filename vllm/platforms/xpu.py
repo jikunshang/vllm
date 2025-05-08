@@ -87,11 +87,11 @@ class XPUPlatform(Platform):
                     " which is not supported. will fallback to float16",
                     cls.get_device_name())
                 model_config.dtype = torch.float16
-        if not model_config.enforce_eager:
-            logger.warning(
-                "CUDA graph is not supported on XPU, fallback to the eager "
-                "mode.")
-            model_config.enforce_eager = True
+        # if not model_config.enforce_eager:
+        #     logger.warning(
+        #         "CUDA graph is not supported on XPU, fallback to the eager "
+        #         "mode.")
+        #     model_config.enforce_eager = True
 
         if vllm_config.speculative_config is not None:
             raise NotImplementedError(
@@ -99,6 +99,9 @@ class XPUPlatform(Platform):
 
         if vllm_config.device_config is not None:
             assert vllm_config.device_config.device_type == "xpu"
+        compilation_config = vllm_config.compilation_config
+        if compilation_config.backend == "":
+            compilation_config.backend = "inductor"
 
         # check and update parallel config
         parallel_config = vllm_config.parallel_config

@@ -9,13 +9,18 @@ from vllm.logger import init_logger
 
 from .activation_quant_fusion import ActivationQuantFusionPass
 from .fix_functionalization import FixFunctionalizationPass
-from .fusion import FusionPass
+# from .fusion import FusionPass
 from .inductor_pass import CustomGraphPass, InductorPass, get_pass_context
 from .noop_elimination import NoOpEliminationPass
 from .sequence_parallelism import SequenceParallelismPass
 from .vllm_inductor_pass import VllmInductorPass
 
 logger = init_logger(__name__)
+
+try:
+    from .fusion import FusionPass
+except AttributeError:
+    logger.warning("import FusionPass error.")
 
 
 class PostGradPassManager(CustomGraphPass):
