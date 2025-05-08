@@ -90,25 +90,13 @@ class XPUPlatform(Platform):
             else:
                 cache_config.block_size = 16
 
-        # Instances created using VllmConfig() typically have model_config as
-        # None by default. The modification involves adding a check to prevent
-        # potential null exceptions check and update model config.
-        if vllm_config.model_config is not None:
-            model_config = vllm_config.model_config
-            if model_config.dtype == torch.bfloat16:
-                bf16_supported = cls.device_support_bf16()
-                if not bf16_supported:
-                    logger.warning(
-                        "bfloat16 is only supported on Intel Data Center GPU, "
-                        "Intel Arc GPU is not supported yet. Your device is %s,"
-                        " which is not supported. will fallback to float16",
-                        cls.get_device_name())
-                    model_config.dtype = torch.float16
-            if not model_config.enforce_eager:
-                logger.warning(
-                    "CUDA graph is not supported on XPU, fallback to the eager "
-                    "mode.")
-                model_config.enforce_eager = True
+        # check and update model config
+        model_config = vllm_config.model_config
+        if not model_config.enforce_eager:
+            logger.warning(
+                "CUDA graph is not supported on XPU, fallback to the eager "
+                "mode.")
+            model_config.enforce_eager = True
 
         if vllm_config.device_config is not None:
             assert vllm_config.device_config.device_type == "xpu"
@@ -170,26 +158,9 @@ class XPUPlatform(Platform):
         return torch.xpu.max_memory_allocated(device)
 
     @classmethod
-    def device_support_bf16(cls) -> bool:
-        device_name = cls.get_device_name().lower()
-        if cls.is_client_gpu():
-            return False
-        elif cls.is_data_center_gpu():
-            return True
-        else:
-            logger.warning("Unknown device name %s, always use float16",
-                           device_name)
-            return False
-
-    @classmethod
     def is_data_center_gpu(cls) -> bool:
         device_name = cls.get_device_name().lower()
         return device_name.count("data center gpu") > 0
-
-    @classmethod
-    def is_client_gpu(cls) -> bool:
-        device_name = cls.get_device_name().lower()
-        return device_name.count("arc") > 0
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
