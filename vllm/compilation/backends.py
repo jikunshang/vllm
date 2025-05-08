@@ -15,6 +15,7 @@ import torch.fx as fx
 import vllm.envs as envs
 from vllm.config import CompilationConfig, VllmConfig
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 from vllm.utils import weak_ref_tensors
 
 from .compiler_interface import (CompilerInterface, EagerAdaptor,
@@ -339,7 +340,7 @@ class VllmBackend:
         vllm_config: VllmConfig,
     ):
         global global_graph_pool
-        if global_graph_pool is None:
+        if global_graph_pool is None and not current_platform.is_xpu():
             global_graph_pool = torch.cuda.graph_pool_handle()
 
         # TODO: in the future, if we want to use multiple
@@ -676,7 +677,8 @@ class PiecewiseBackend:
             if self.is_last_graph and not self.to_be_compiled_sizes:
                 self.check_for_ending_compilation()
 
-        if not entry.use_cudagraph:
+        # XPU not support cudagraph yet. so just return runnable here.
+        if not entry.use_cudagraph or current_platform.is_xpu():
             return entry.runnable(*args)
 
         if entry.cudagraph is None:
