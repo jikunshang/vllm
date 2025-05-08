@@ -48,6 +48,7 @@ class _Backend(enum.Enum):
     PALLAS = enum.auto()
     PALLAS_VLLM_V1 = enum.auto()
     IPEX = enum.auto()
+    IPEX_V1 = enum.auto()
     BLOCK_SPARSE_FLASH_ATTN = enum.auto()
     NO_ATTENTION = enum.auto()
 
@@ -116,6 +117,9 @@ class Platform:
     # NOTE: for the forward part of the model, vLLM has another separate
     # compilation strategy.
     simple_compile_backend: str = "inductor"
+
+    # The backend used for distributed communication.
+    dist_backend: str = ""
 
     supported_quantization: list[str] = []
 
