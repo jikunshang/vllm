@@ -112,7 +112,8 @@ class Worker(WorkerBase):
             self._sleep_saved_buffers = {}
 
     def init_device(self):
-        if self.device_config.device.type == "cuda":
+        if self.device_config.device.type == "cuda" or \
+            self.device_config.device.type == "xpu":
             # torch.distributed.all_reduce does not free the input tensor until
             # the synchronization point. This causes the memory usage to grow
             # as the number of all_reduce calls increases. This env var disables
@@ -123,22 +124,15 @@ class Worker(WorkerBase):
 
             # This env var set by Ray causes exceptions with graph building.
             os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-            self.device = torch.device(f"cuda:{self.local_rank}")
+            self.device = torch.device(
+                f"{current_platform.device_name}:{self.local_rank}")
             torch.cuda.set_device(self.device)
 
             _check_if_gpu_supports_dtype(self.model_config.dtype)
             gc.collect()
             torch.cuda.empty_cache()
             self.init_gpu_memory = torch.cuda.mem_get_info()[0]
-            backend = "nccl"
-        elif self.device_config.device.type == "xpu" and \
-            current_platform.is_xpu():
-            self.device = torch.device(f"xpu:{self.local_rank}")
-            torch.xpu.set_device(self.device)
-            torch.xpu.empty_cache()
-            self.init_gpu_memory = torch.xpu.get_device_properties(
-                self.local_rank).total_memory
-            backend = "ccl"
+            backend = current_platform.dist_backend
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
