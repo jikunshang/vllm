@@ -24,7 +24,6 @@ from vllm.model_executor.model_loader import get_model
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.multimodal.inputs import MultiModalKwargs, PlaceholderRange
 from vllm.multimodal.utils import group_mm_inputs_by_modality
-from vllm.platforms import current_platform
 from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, DeviceMemoryProfiler,
@@ -207,11 +206,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Cache the device properties.
         self.device_properties = torch.cuda.get_device_properties(self.device)
-        if current_platform.is_cuda():
-            self.num_sms = self.device_properties.multi_processor_count
-        else:
-            self.num_sms = 0
-        # Persistent buffers for CUDA graphs.
+        self.num_sms = self.device_properties.multi_processor_count
         self.input_ids = torch.zeros(self.max_num_tokens,
                                      dtype=torch.int32,
                                      device=self.device)

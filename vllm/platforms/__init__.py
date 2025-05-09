@@ -146,7 +146,9 @@ def xpu_platform_plugin() -> Optional[str]:
         if hasattr(torch, 'xpu') and torch.xpu.is_available():
             is_xpu = True
             logger.debug("Confirmed XPU platform is available.")
-            torch.cuda = torch.xpu
+            torch.set_default_device("xpu")
+            intel_extension_for_pytorch.compatible_mode()
+
     except Exception as e:
         logger.debug("XPU platform is not available because: %s", str(e))
         pass
