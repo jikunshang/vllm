@@ -151,10 +151,11 @@ class MooncakeStore(KVLookupBufferBase):
         data_ptr = value.data_ptr()
         element_size = value.element_size()
         numel = value.numel()
-        value_bytes = bytes((ctypes.c_byte * (numel * element_size)).from_address(data_ptr))
+        total_size = element_size * numel
+        # value_bytes = bytes((ctypes.c_byte * (numel * element_size)).from_address(data_ptr))
         end_serde = time.time()
         try:
-            self.store.put(key, value_bytes)
+            self.store.put_unsafe(key, data_ptr, total_size)
         except TypeError as err:
             logger.error("Failed to put value into Mooncake Store: %s", err)
             raise TypeError("Mooncake Store Put Type Error.") from err

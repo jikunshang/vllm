@@ -280,7 +280,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                 # values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
             keys = torch.cat(keys, dim=0) #[num_layer, seq_lens, num_kv_heads, kv_head_size]
-            keys = keys[..., self.last_dim_start_idx:self.last_dim_end_idx]
+            # keys = keys[..., self.last_dim_start_idx:self.last_dim_end_idx]
             keys = keys.contiguous()
             # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
@@ -288,8 +288,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             torch.hpu.synchronize()
             kvcache_to_sent = keys
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
-            self.kv_store.put_unsafe(store_kvcache_key, kvcache_to_sent)
-            # self.kv_store.put(store_kvcache_key, kvcache_to_sent)
+            # self.kv_store.put_unsafe(store_kvcache_key, kvcache_to_sent)
+            self.kv_store.put(store_kvcache_key, kvcache_to_sent)
             
             logger.debug(f"put kv cache key: {store_kvcache_key}")
             
@@ -366,10 +366,11 @@ class MooncakeStoreConnector(KVConnectorBase):
             load_key_prefix = self.tensor_hash(current_tokens)
             # For deepseek, we only need recv first rank
             load_kvcache_key = f"{load_key_prefix}"
-            shape = (num_layers, num_blocks * 128, self.k_v_head_size // 8) #num_layers, seq_len, num_kv_heads, k/v_head_size
-            ranks = range(8)
-            remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape, ranks)
-            # remote_kv = self.kv_store.get(load_kvcache_key)
+            shape = (num_layers, num_blocks * 128, self.k_v_head_size) #num_layers, seq_len, num_kv_heads, k/v_head_size
+            # shape = (num_layers, num_blocks * 128, self.k_v_head_size // 8) #num_layers, seq_len, num_kv_heads, k/v_head_size
+            ranks = range(1)
+            # remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape, ranks)
+            remote_kv = self.kv_store.get(load_kvcache_key)
             hidden_key = f"{load_key_prefix}_hidden_0"
             hidden = self.kv_store.get(hidden_key)
             
