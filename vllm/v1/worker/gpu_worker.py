@@ -10,7 +10,6 @@ import torch.nn as nn
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
-from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
                               set_custom_all_reduce)
@@ -32,6 +31,9 @@ logger = init_logger(__name__)
 
 if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
+
+if current_platform.is_cuda():
+    from vllm.device_allocator.cumem import CuMemAllocator
 
 
 class Worker(WorkerBase):
@@ -111,7 +113,8 @@ class Worker(WorkerBase):
             self._sleep_saved_buffers = {}
 
     def init_device(self):
-        if self.device_config.device.type == "cuda":
+        if self.device_config.device.type == "cuda" or \
+            self.device_config.device.type == "xpu":
             # torch.distributed.all_reduce does not free the input tensor until
             # the synchronization point. This causes the memory usage to grow
             # as the number of all_reduce calls increases. This env var disables
@@ -122,7 +125,8 @@ class Worker(WorkerBase):
 
             # This env var set by Ray causes exceptions with graph building.
             os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
-            self.device = torch.device(f"cuda:{self.local_rank}")
+            self.device = torch.device(
+                f"{current_platform.device_name}:{self.local_rank}")
             torch.cuda.set_device(self.device)
 
             _check_if_gpu_supports_dtype(self.model_config.dtype)

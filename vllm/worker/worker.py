@@ -9,7 +9,6 @@ import torch.distributed
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
-from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
                               set_custom_all_reduce)
@@ -33,6 +32,9 @@ from vllm.worker.worker_base import (LocalOrDistributedWorkerBase, WorkerBase,
                                      WorkerInput)
 
 logger = init_logger(__name__)
+
+if current_platform.is_cuda():
+    from vllm.device_allocator.cumem import CuMemAllocator
 
 
 class Worker(LocalOrDistributedWorkerBase):
