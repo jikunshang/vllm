@@ -21,6 +21,7 @@ class XPUPlatform(Platform):
     device_name: str = "xpu"
     device_type: str = "xpu"
     dispatch_key: str = "XPU"
+    dist_backend: str = "ccl"
     # Intel XPU's device key is "GPU" for Ray.
     # see https://github.com/ray-project/ray/blob/6a5eb5865eeb9ccf058a79b44f107e327e360673/python/ray/_private/accelerators/intel_gpu.py#L20 # noqa: E501
     ray_device_key: str = "GPU"
@@ -96,17 +97,18 @@ class XPUPlatform(Platform):
             parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
 
         if parallel_config.distributed_executor_backend is None:
-            parallel_config.distributed_executor_backend = "ray"
+            if parallel_config.world_size > 1:
+                parallel_config.distributed_executor_backend = "ray"
+            else:
+                parallel_config.distributed_executor_backend = "uni"
         elif parallel_config.distributed_executor_backend == "mp":
             # FIXME(kunshang):
             # spawn needs calling `if __name__ == '__main__':``
             # fork is not supported for xpu start new process.
-            logger.error(
-                "Both start methods (spawn and fork) have issue "
-                "on XPU if you use mp backend, setting it to ray instead.")
-            parallel_config.distributed_executor_backend = "ray"
-
-        elif parallel_config.distributed_executor_backend != "ray":
+            logger.warning(
+                "Please use spawn as start method if you want to use mp.")
+        elif parallel_config.distributed_executor_backend != "ray" and \
+                parallel_config.distributed_executor_backend != "uni":
             logger.warning(
                 "%s is not supported on XPU, fallback to ray distributed"
                 " executor backend.",
@@ -128,14 +130,24 @@ class XPUPlatform(Platform):
     @classmethod
     def device_support_bf16(cls) -> bool:
         device_name = cls.get_device_name().lower()
-        if device_name.count("arc") > 0:
+        if cls.is_client_gpu():
             return False
-        elif device_name.count("data center gpu") > 0:
+        elif cls.is_data_center_gpu():
             return True
         else:
             logger.warning("Unknown device name %s, always use float16",
                            device_name)
             return False
+
+    @classmethod
+    def is_data_center_gpu(cls) -> bool:
+        device_name = cls.get_device_name().lower()
+        return device_name.count("data center gpu") > 0
+
+    @classmethod
+    def is_client_gpu(cls) -> bool:
+        device_name = cls.get_device_name().lower()
+        return device_name.count("arc") > 0
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:
