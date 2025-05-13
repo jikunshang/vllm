@@ -1441,7 +1441,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         with DeviceMemoryProfiler() as m:  # noqa: SIM117
             time_before_load = time.perf_counter()
             self.model = get_model(vllm_config=self.vllm_config)
-            print(f"aaaaaaaaaaa")
             if self.lora_config:
                 self.model = self.load_lora_model(self.model,
                                                   self.model_config,

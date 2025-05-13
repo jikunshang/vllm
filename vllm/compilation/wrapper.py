@@ -40,11 +40,11 @@ class TorchCompileWrapperWithCustomDispatcher:
             # compiling the forward method
 
             backend = vllm_config.compilation_config.init_backend(vllm_config)
-
             compiled_callable = torch.compile(
                 self.forward,
-                fullgraph=envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
+                fullgraph=False,#envs.VLLM_TEST_DYNAMO_FULLGRAPH_CAPTURE,
                 backend=backend)
+            print(f"compiled callable: {compiled_callable}")
 
         self.compiled_callable = compiled_callable
         self.original_code_object = self.__class__.forward.__code__

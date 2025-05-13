@@ -100,8 +100,8 @@ class XPUPlatform(Platform):
         if vllm_config.device_config is not None:
             assert vllm_config.device_config.device_type == "xpu"
         compilation_config = vllm_config.compilation_config
-        if compilation_config.backend == "":
-            compilation_config.backend = "inductor"
+        # if compilation_config.backend == "":
+        #     compilation_config.backend = "inductor"
 
         # check and update parallel config
         parallel_config = vllm_config.parallel_config

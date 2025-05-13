@@ -169,6 +169,7 @@ class CompilerManager:
             "Directly load the %s-th graph for shape %s from %s via "
             "handle %s", graph_index, str(runtime_shape), self.compiler.name,
             handle)
+        print(f"compile comgraph: {compiled_graph}")
         return compiled_graph
 
     def compile(self,
@@ -179,6 +180,7 @@ class CompilerManager:
                 graph_index: int = 0,
                 num_graphs: int = 1,
                 runtime_shape: Optional[int] = None) -> Any:
+        print(f"compiling!!!!")
         if graph_index == 0:
             # before compiling the first graph, record the start time
             global compilation_start_time
@@ -437,6 +439,7 @@ class VllmBackend:
         # hook. If a pass for that hook exists, add it to the pass manager.
         inductor_config = config.inductor_compile_config
         PASS_KEY = "post_grad_custom_post_pass"
+        print(f"configure post pass: {inductor_config}")
         if PASS_KEY in inductor_config:
             # Config should automatically wrap all inductor passes
             if isinstance(inductor_config[PASS_KEY], PostGradPassManager):

@@ -3894,6 +3894,7 @@ class CompilationConfig:
         # TODO: pass user-specified backend to piecewise compilation
         # merge with the config use_inductor
         assert self.level == CompilationLevel.PIECEWISE
+        print(f"compile level: {self.level}")
 
         from vllm.compilation.backends import VllmBackend
         return VllmBackend(vllm_config)

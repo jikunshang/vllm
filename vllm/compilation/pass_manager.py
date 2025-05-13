@@ -42,6 +42,7 @@ class PostGradPassManager(CustomGraphPass):
         self.passes: List[VllmInductorPass] = []
 
     def __call__(self, graph: fx.Graph):
+        print(f"postgradPassManager: call!!!!")
         shape = get_pass_context().runtime_shape
         for pass_ in self.passes:
             if pass_.is_applicable_for_shape(shape):
@@ -51,6 +52,8 @@ class PostGradPassManager(CustomGraphPass):
         self.fix_functionalization(graph)
 
     def configure(self, config: VllmConfig):
+        print(f"postgradPassManager: configure!!!!")
+        
         self.pass_config = config.compilation_config.pass_config
         if self.pass_config.enable_noop:
             self.passes += [NoOpEliminationPass(config)]

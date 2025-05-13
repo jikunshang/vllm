@@ -158,6 +158,7 @@ def _support_torch_compile(
         ] or not supports_dynamo()
         if self.do_not_compile:
             return
+        print(f"will compile!")
         compilation_counter.num_models_seen += 1
         TorchCompileWrapperWithCustomDispatcher.__init__(
             self, compilation_level=vllm_config.compilation_config.level)
