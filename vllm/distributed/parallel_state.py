@@ -305,7 +305,7 @@ class GroupCoordinator:
     def graph_capture(
             self, graph_capture_context: Optional[GraphCaptureContext] = None):
         if graph_capture_context is None:
-            stream = torch.cuda.Stream()
+            stream = torch.xpu.Stream()
             graph_capture_context = GraphCaptureContext(stream)
         else:
             stream = graph_capture_context.stream
@@ -313,21 +313,21 @@ class GroupCoordinator:
         # only cuda uses this function,
         # so we don't abstract it into the base class
         maybe_ca_context = nullcontext()
-        from vllm.distributed.device_communicators.cuda_communicator import (
-            CudaCommunicator)
-        if self.device_communicator is not None:
-            assert isinstance(self.device_communicator, CudaCommunicator)
-            ca_comm = self.device_communicator.ca_comm
-            if ca_comm is not None:
-                maybe_ca_context = ca_comm.capture()  # type: ignore
+        from vllm.distributed.device_communicators.xpu_communicator import (
+            XpuCommunicator)
+        # if self.device_communicator is not None:
+        #     assert isinstance(self.device_communicator, XpuCommunicator)
+        #     ca_comm = self.device_communicator.ca_comm
+        #     if ca_comm is not None:
+        #         maybe_ca_context = ca_comm.capture()  # type: ignore
 
         # ensure all initialization operations complete before attempting to
         # capture the graph on another stream
-        curr_stream = torch.cuda.current_stream()
+        curr_stream = torch.xpu.current_stream()
         if curr_stream != stream:
             stream.wait_stream(curr_stream)
 
-        with torch.cuda.stream(stream), maybe_ca_context:
+        with torch.xpu.stream(stream), maybe_ca_context:
             yield graph_capture_context
 
     def all_reduce(self, input_: torch.Tensor) -> torch.Tensor:
@@ -841,7 +841,7 @@ def graph_capture(device: torch.device):
     in order to explicitly distinguish the kernels to capture
     from other kernels possibly launched on background in the default stream.
     """
-    context = GraphCaptureContext(torch.cuda.Stream(device=device))
+    context = GraphCaptureContext(torch.xpu.Stream(device=device))
     with get_tp_group().graph_capture(context), get_pp_group().graph_capture(
             context):
         yield context
