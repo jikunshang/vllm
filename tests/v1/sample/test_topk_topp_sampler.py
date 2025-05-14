@@ -3,8 +3,9 @@ import torch
 from torch import Generator
 
 from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p
+from vllm.platforms import current_platform
 
-DEVICE = "cuda"
+DEVICE = current_platform.device_name
 
 BATCH_SIZE = 1024
 VOCAB_SIZE = 128 * 1024

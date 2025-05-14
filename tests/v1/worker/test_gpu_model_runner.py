@@ -7,6 +7,7 @@ from vllm.v1.core.sched.output import (CachedRequestData, NewRequestData,
                                        SchedulerOutput)
 from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+from vllm.platforms import current_platform
 
 
 @pytest.fixture
@@ -36,8 +37,7 @@ def model_runner():
         cache_config=cache_config,
         scheduler_config=scheduler_config,
     )
-
-    device = "cuda"
+    device = current_platform.device_name
     return GPUModelRunner(vllm_config, device)
 
 

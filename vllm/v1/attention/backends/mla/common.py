@@ -213,7 +213,8 @@ try:
     is_vllm_fa = True
 except ImportError:
     # For rocm use upstream flash attention
-    from flash_attn import flash_attn_varlen_func
+    if not current_platform.is_xpu():
+        from flash_attn import flash_attn_varlen_func
     is_vllm_fa = False
 
 if TYPE_CHECKING:

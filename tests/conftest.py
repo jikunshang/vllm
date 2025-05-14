@@ -1056,8 +1056,12 @@ def caplog_vllm(temporary_enable_log_propagate, caplog):
 def num_gpus_available():
     """Get number of GPUs without initializing the CUDA context
     in current process."""
+    from vllm.platforms import current_platform
 
-    return cuda_device_count_stateless()
+    if current_platform.is_xpu():
+        return current_platform.device_count()
+    else:
+        return cuda_device_count_stateless()
 
 
 temp_dir = tempfile.gettempdir()
