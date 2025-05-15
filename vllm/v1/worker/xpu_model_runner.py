@@ -242,6 +242,14 @@ class XPUModelRunner(GPUModelRunner):
         req_ids = self.input_batch.req_ids
         tokens = [scheduler_output.num_scheduled_tokens[i] for i in req_ids]
         num_scheduled_tokens = np.array(tokens, dtype=np.int32)
+        decode_num = 0
+        have_prompt = False
+        for token in tokens:
+            if token == 1:
+                decode_num += 1
+            else:
+                have_prompt = True
+                break
         max_num_scheduled_tokens = max(tokens)
 
         # Get request indices.
@@ -368,7 +376,7 @@ class XPUModelRunner(GPUModelRunner):
             query_start_loc=query_start_loc,
             max_seq_len=max_seq_len,
             seq_start_loc=seq_start_loc,
-            seq_lens=torch.empty(0, dtype=torch.int32, device=self.device),
+            seq_lens=seq_lens,
             block_table=block_table,
             slot_mapping=slot_mapping,
             use_cascade=use_cascade,
@@ -376,6 +384,8 @@ class XPUModelRunner(GPUModelRunner):
             cu_prefix_query_lens=cu_prefix_query_lens,
             prefix_kv_lens=prefix_kv_lens,
             suffix_kv_lens=suffix_kv_lens,
+            decode_num=decode_num,
+            have_prompt=have_prompt,
         )
         use_spec_decode = len(
             scheduler_output.scheduled_spec_decode_tokens) > 0
