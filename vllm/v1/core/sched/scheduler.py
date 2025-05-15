@@ -315,6 +315,10 @@ class Scheduler(SchedulerInterface):
                     break
 
                 request = self.waiting[0]
+                # we don't want chunk (partial prefill) compute now.
+                # don't schedule such case.
+                if request.num_tokens > token_budget:
+                    break
 
                 # KVTransfer: skip request if still waiting for remote kvs.
                 if request.status == RequestStatus.WAITING_FOR_REMOTE_KVS:

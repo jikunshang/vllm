@@ -246,6 +246,8 @@ class XPUModelRunner(GPUModelRunner):
                                         device="cpu",
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
+        self.decode_num = 0
+        self.have_prompt = False
 
     # we can enable this if GPUModelRunner or parent class don't have
     # torch.cuda in the future
@@ -277,6 +279,14 @@ class XPUModelRunner(GPUModelRunner):
                     num_scheduled_tokens)
         self.seq_start_loc_np[0] = 0
         np.cumsum(seq_lens, out=self.seq_start_loc_np[1:num_reqs + 1])
+        self.decode_num = 0
+        self.have_prompt = False
+        for token in tokens:
+            if token == 1:
+                self.decode_num += 1
+            else:
+                self.have_prompt = True
+                break
         # ======== XPU end =========
         return super()._prepare_inputs(scheduler_output)
 
@@ -374,7 +384,6 @@ class XPUModelRunner(GPUModelRunner):
             torch.xpu.synchronize()
 
         return prompt_logprobs_dict
-
 
     def profile_run(self) -> None:
         # Trigger compilation for general shape.
