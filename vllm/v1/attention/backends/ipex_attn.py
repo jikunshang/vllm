@@ -156,7 +156,7 @@ class IPEXAttentionImpl(AttentionImpl):
         )
 
         # 1. process decode if any
-        if decode_num >= 0:
+        if decode_num > 0:
             ipex_ops.paged_attention_v1(
                 out=output[:decode_num],
                 query=query[:decode_num],
