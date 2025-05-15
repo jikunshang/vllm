@@ -269,6 +269,10 @@ class Scheduler(SchedulerInterface):
                     break
 
                 request = self.waiting[0]
+                # we don't want chunk (partial prefill) compute now.
+                # don't schedule such case.
+                if request.num_tokens > token_budget:
+                    break
 
                 # Skip request if the structured output request is still waiting
                 # for FSM compilation.
