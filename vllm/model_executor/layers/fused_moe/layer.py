@@ -521,7 +521,6 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             custom_routing_function: Optional[Callable] = None,
             **kwargs,
     ):
-        assert custom_routing_function is None
         return layer.ipex_fusion(
             x,
             use_grouped_topk,
@@ -530,6 +529,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             renormalize,
             topk_group,
             num_expert_group,
+            custom_routing_function=custom_routing_function
         )
 
     def forward_tpu(
