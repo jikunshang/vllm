@@ -6,7 +6,7 @@ import os
 import pprint
 import time
 from contextlib import ExitStack
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 from unittest.mock import patch
 
 import torch
@@ -15,7 +15,6 @@ import torch.fx as fx
 import vllm.envs as envs
 from vllm.config import CompilationConfig, VllmConfig
 from vllm.logger import init_logger
-from vllm.platforms import current_platform
 from vllm.utils import weak_ref_tensors
 
 from .compiler_interface import (CompilerInterface, EagerAdaptor,
@@ -27,72 +26,6 @@ from .pass_manager import PostGradPassManager
 
 logger = init_logger(__name__)
 
-def get_global_graph_pool():
-    if current_platform.is_cuda():
-        return torch.cuda.graph_pool_handle()
-    elif current_platform.is_xpu():
-        return torch.xpu.graph_pool_handle()
-    else:
-        raise RuntimeError("Unsupported platform")
-
-
-def get_graph():
-    if current_platform.is_cuda():
-        return torch.cuda.CUDAGraph()
-    elif current_platform.is_xpu():
-        return torch.xpu.XPUGraph()
-    else:
-        raise RuntimeError("Unsupported platform")
-
-
-def get_empty_cache():
-    if current_platform.is_cuda():
-        return "torch.cuda.empty_cache"
-    elif current_platform.is_xpu():
-        return "torch.xpu.empty_cache"
-    else:
-        raise RuntimeError("Unsupported platform")
-
-
-def execute_cuda_graph(cudagraph, entry, graph_pool, is_last_graph, *args):
-    with torch.cuda.graph(cudagraph, pool=graph_pool):
-        # `output` is managed by pytorch's cudagraph pool
-        output = entry.runnable(*args)
-        if is_last_graph:
-            # by converting it to weak ref,
-            # the original `output` will immediately be released
-            # to save memory. It is only safe to do this for
-            # the last graph, because the output of the last graph
-            # will not be used by any other cuda graph.
-            output = weak_ref_tensors(output)
-    return output
-
-
-def execute_xpu_graph(xpugraph, entry, graph_pool, is_last_graph, *args):
-    with torch.xpu.graph(xpugraph, pool=graph_pool):
-        # `output` is managed by pytorch's graph pool
-        output = entry.runnable(*args)
-        # this is feature for CUDA, but it should also help on XPU, but we lack
-        # weak_ref_tensor kernel currently. will enable when we have it.
-        # if is_last_graph:
-        #     # by converting it to weak ref,
-        #     # the original `output` will immediately be released
-        #     # to save memory. It is only safe to do this for
-        #     # the last graph, because the output of the last graph
-        #     # will not be used by any other cuda graph.
-        #     output = weak_ref_tensors(output)
-    return output
-
-
-def execute_graph(graph, entry, graph_pool, is_last_graph, *args):
-    if current_platform.is_cuda():
-        return execute_cuda_graph(graph, entry, graph_pool, is_last_graph,
-                                  *args)
-    elif current_platform.is_xpu():
-        return execute_xpu_graph(graph, entry, graph_pool, is_last_graph,
-                                 *args)
-    else:
-        raise RuntimeError("Unsupported platform")
 
 def make_compiler(compilation_config: CompilationConfig) -> CompilerInterface:
     if compilation_config.use_inductor:
@@ -169,7 +102,6 @@ class CompilerManager:
             "Directly load the %s-th graph for shape %s from %s via "
             "handle %s", graph_index, str(runtime_shape), self.compiler.name,
             handle)
-        print(f"compile comgraph: {compiled_graph}")
         return compiled_graph
 
     def compile(self,
@@ -180,7 +112,6 @@ class CompilerManager:
                 graph_index: int = 0,
                 num_graphs: int = 1,
                 runtime_shape: Optional[int] = None) -> Any:
-        print(f"compiling!!!!")
         if graph_index == 0:
             # before compiling the first graph, record the start time
             global compilation_start_time
@@ -409,7 +340,7 @@ class VllmBackend:
     ):
         global global_graph_pool
         if global_graph_pool is None:
-            global_graph_pool = get_global_graph_pool()
+            global_graph_pool = torch.cuda.graph_pool_handle()
 
         # TODO: in the future, if we want to use multiple
         # streams, it might not be safe to share a global pool.
@@ -439,7 +370,6 @@ class VllmBackend:
         # hook. If a pass for that hook exists, add it to the pass manager.
         inductor_config = config.inductor_compile_config
         PASS_KEY = "post_grad_custom_post_pass"
-        print(f"configure post pass: {inductor_config}")
         if PASS_KEY in inductor_config:
             # Config should automatically wrap all inductor passes
             if isinstance(inductor_config[PASS_KEY], PostGradPassManager):
@@ -451,7 +381,7 @@ class VllmBackend:
         inductor_config[PASS_KEY] = self.post_grad_pass_manager
 
     def __call__(self, graph: fx.GraphModule, example_inputs) -> Callable:
-        print("calling vllm backend!")
+
         vllm_config = self.vllm_config
         if not self.compilation_config.cache_dir:
             # no provided cache dir, generate one based on the known factors
@@ -638,8 +568,7 @@ class ConcreteSizeEntry:
     compiled: bool = False
     runnable: Callable = None  # type: ignore
     num_finished_warmup: int = 0
-    graph: Optional[Union[torch.xpu.XPUGraph]] = None
-    empty_cache_method: str = None
+    cudagraph: Optional[torch.cuda.CUDAGraph] = None
     output: Optional[Any] = None
 
     # for cudagraph debugging, track the input addresses
@@ -750,7 +679,7 @@ class PiecewiseBackend:
         if not entry.use_cudagraph:
             return entry.runnable(*args)
 
-        if entry.graph is None:
+        if entry.cudagraph is None:
             if entry.num_finished_warmup < self.compilation_config.cudagraph_num_of_warmups:  # noqa
                 entry.num_finished_warmup += 1
                 if self.is_first_graph:
@@ -772,7 +701,7 @@ class PiecewiseBackend:
                 x.data_ptr() for x in args if isinstance(x, torch.Tensor)
             ]
             entry.input_addresses = input_addresses
-            graph = get_graph()
+            cudagraph = torch.cuda.CUDAGraph()
 
             with ExitStack() as stack:
                 if not self.is_first_graph:
@@ -784,16 +713,24 @@ class PiecewiseBackend:
                     # and disable gc for the rest of the graphs.
                     stack.enter_context(patch("gc.collect", lambda: None))
                     stack.enter_context(
-                        patch(get_empty_cache(), lambda: None))
+                        patch("torch.cuda.empty_cache", lambda: None))
 
                 # mind-exploding: carefully manage the reference and memory.
-                output = execute_graph(graph, entry, self.graph_pool,
-                                       self.is_last_graph, *args)
+                with torch.cuda.graph(cudagraph, pool=self.graph_pool):
+                    # `output` is managed by pytorch's cudagraph pool
+                    output = entry.runnable(*args)
+                    if self.is_last_graph:
+                        # by converting it to weak ref,
+                        # the original `output` will immediately be released
+                        # to save memory. It is only safe to do this for
+                        # the last graph, because the output of the last graph
+                        # will not be used by any other cuda graph.
+                        output = weak_ref_tensors(output)
 
             # here we always use weak ref for the output
             # to save memory
             entry.output = weak_ref_tensors(output)
-            entry.graph = graph
+            entry.cudagraph = cudagraph
 
             compilation_counter.num_cudagraph_caputured += 1
 
@@ -812,5 +749,5 @@ class PiecewiseBackend:
                 f" Expected {entry.input_addresses}, got {new_input_addresses}"
             )
 
-        entry.graph.replay()
+        entry.cudagraph.replay()
         return entry.output
