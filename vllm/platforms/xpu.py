@@ -89,6 +89,7 @@ class XPUPlatform(Platform):
 
         # check and update model config
         model_config = vllm_config.model_config
+        '''
         if model_config.dtype == torch.bfloat16:
             bf16_supported = cls.device_support_bf16()
             if not bf16_supported:
@@ -98,6 +99,7 @@ class XPUPlatform(Platform):
                     " which is not supported. will fallback to float16",
                     cls.get_device_name())
                 model_config.dtype = torch.float16
+        '''
         if not model_config.enforce_eager:
             logger.warning(
                 "CUDA graph is not supported on XPU, fallback to the eager "
@@ -151,6 +153,10 @@ class XPUPlatform(Platform):
                                  ) -> float:
         torch.xpu.reset_peak_memory_stats(device)
         return torch.xpu.max_memory_allocated(device)
+
+    @classmethod
+    def fp8_dtype(cls) -> torch.dtype:
+        return torch.float8_e5m2
 
     @classmethod
     def device_support_bf16(cls) -> bool:
