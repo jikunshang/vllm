@@ -312,6 +312,8 @@ class CudaPlatformBase(Platform):
     def use_custom_allreduce(cls) -> bool:
         return True
 
+    def synchronize(cls) -> None:
+        return torch.cuda.synchronize()
 
 # NVML utils
 # Note that NVML is not affected by `CUDA_VISIBLE_DEVICES`,

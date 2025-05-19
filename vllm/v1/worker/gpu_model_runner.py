@@ -1447,7 +1447,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Must synchronize the non-blocking GPU->CPU transfers.
         if prompt_logprobs_dict:
-            torch.cuda.synchronize()
+            current_platform.synchronize()
 
         return prompt_logprobs_dict
 
