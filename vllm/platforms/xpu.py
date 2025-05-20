@@ -184,7 +184,10 @@ class XPUPlatform(Platform):
 
     @classmethod
     def fp8_dtype(cls) -> torch.dtype:
-        return torch.float8_e5m2
+        if envs.VLLM_XPU_FP8_DTYPE == "e4m3":
+            return torch.float8_e4m3fn
+        else:
+            return torch.float8_e5m2
 
     @classmethod
     def is_data_center_gpu(cls) -> bool:
