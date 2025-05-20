@@ -7,6 +7,7 @@ The MooncakeStoreConnector transfers KV caches between prefill vLLM workers
 database-style KVStore.
 """
 import hashlib
+import os
 from typing import TYPE_CHECKING, List, Tuple, Union
 import time
 import torch
@@ -16,6 +17,7 @@ from vllm.config import VllmConfig
 from vllm.distributed.kv_transfer.kv_connector.base import KVConnectorBase
 from vllm.logger import init_logger
 from vllm.sequence import IntermediateTensors
+from vllm.distributed import tensor_model_parallel_all_gather
 
 if TYPE_CHECKING:
     from vllm.worker.model_runner import ModelInputForGPUWithSamplingMetadata
@@ -67,14 +69,23 @@ class MooncakeStoreConnector(KVConnectorBase):
                 self.kv_store = MooncakeStore(config)
         else:
             logger.error("Can not find %s", self.config.kv_connector)
+        ENV_VLLM_HPU_DECODE_INSTANCE_TP_SIZE = os.environ.get('VLLM_HPU_DECODE_INSTANCE_TP_SIZE', 1)
+        # only send on rank [0, VLLM_HPU_DECODE_INSTANCE_TP_SIZE)
+        self.VLLM_HPU_DECODE_INSTANCE_TP_SIZE = int(ENV_VLLM_HPU_DECODE_INSTANCE_TP_SIZE)
+        logger.info(f"deocde instance use TP size  {self.VLLM_HPU_DECODE_INSTANCE_TP_SIZE}")
 
+        self.size_per_rank = self.k_v_head_size // self.VLLM_HPU_DECODE_INSTANCE_TP_SIZE
+        # used on rank [0, VLLM_HPU_DECODE_INSTANCE_TP_SIZE)
+        self.last_dim_start_idx = self.local_tp_rank * self.size_per_rank
+        self.last_dim_end_idx = (self.local_tp_rank + 1) * self.size_per_rank
+        
         assert self.kv_store is not None
         if config.cache_config.cache_dtype == "fp8_inc":
             dtype = torch.float8_e4m3fn
         else:
             dtype = torch.bfloat16
         self.dtype = dtype
-        self.padding_k_tensor = torch.zeros((self.block_size, self.k_v_head_size), dtype=dtype, device="hpu")
+        self.padding_k_tensor = torch.zeros((self.block_size, self.size_per_rank), dtype=dtype, device="hpu")
         self.padding_v_tensor = torch.zeros((self.block_size, self.v_head_size), dtype=dtype, device="hpu")
         self.cache_k = VLLMKVCache()
         self.cache_v = VLLMKVCache()
@@ -238,7 +249,8 @@ class MooncakeStoreConnector(KVConnectorBase):
         hidden_or_intermediate_states: Union[torch.Tensor,
                                              IntermediateTensors],
     ) -> None:
-        if self.rank != 0:
+
+        if self.rank >= self.VLLM_HPU_DECODE_INSTANCE_TP_SIZE:
             # only the first rank will send kv cache
             return
         start_time = time.time()
@@ -280,6 +292,7 @@ class MooncakeStoreConnector(KVConnectorBase):
                 # values.append(value_cache[current_slot_mapping].unsqueeze(0))
 
             keys = torch.cat(keys, dim=0)
+            keys = keys[..., self.last_dim_start_idx:self.last_dim_end_idx]
             # values = torch.cat(values, dim=0)
             # we pack kv together, only need send one tensor
             kvcache_to_sent = keys.cpu()
@@ -362,11 +375,11 @@ class MooncakeStoreConnector(KVConnectorBase):
             # get roi for current seq
             load_key_prefix = self.tensor_hash(current_tokens)
             # For deepseek, we only need recv first rank
-            load_kvcache_key = f"{load_key_prefix}_0"
-            shape = (61, num_blocks * 128, self.k_v_head_size)
+            load_kvcache_key = f"{load_key_prefix}_{self.local_tp_rank}"
+            shape = (61, num_blocks * 128, self.size_per_rank)
             # remote_kv = self.kv_store.get(load_kvcache_key)
             remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape, self.dtype)
-            hidden_key = f"{load_key_prefix}_hidden_0"
+            hidden_key = f"{load_key_prefix}_hidden_{self.local_tp_rank}"
             hidden = self.kv_store.get(hidden_key)
             
             if remote_kv is None or hidden is None:
@@ -382,6 +395,9 @@ class MooncakeStoreConnector(KVConnectorBase):
             
             # it's padded to block size now.
             key_values = remote_kv.to("hpu")
+            htorch.core.mark_step()
+            torch.hpu.synchronize()
+            key_values =  tensor_model_parallel_all_gather(key_values, -1)
             keys = key_values
             # values = key_values[..., self.k_head_size:]
 
