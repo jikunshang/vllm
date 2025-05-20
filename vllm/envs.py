@@ -141,6 +141,7 @@ if TYPE_CHECKING:
     VLLM_NIXL_ABORT_REQUEST_TIMEOUT: int = 120
     VLLM_USE_CUDNN_PREFILL: bool = False
     VLLM_LOOPBACK_IP: str = ""
+    VLLM_XPU_FP8_DTYPE: str = "e5m2"
 
 
 def get_default_cache_root():
@@ -970,6 +971,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Used to force set up loopback IP
     "VLLM_LOOPBACK_IP":
     lambda: os.getenv("VLLM_LOOPBACK_IP", ""),
+
+    # fp8 dtype for XPU platform
+    "VLLM_XPU_FP8_DTYPE":
+    lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2"),
 }
 
 # --8<-- [end:env-vars-definition]
