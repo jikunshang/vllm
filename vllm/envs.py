@@ -110,6 +110,7 @@ if TYPE_CHECKING:
     VLLM_V0_USE_OUTLINES_CACHE: bool = False
     VLLM_TPU_BUCKET_PADDING_GAP: int = 0
     VLLM_USE_DEEP_GEMM: bool = False
+    VLLM_XPU_FP8_DTYPE: str = "e5m2"
     VLLM_XGRAMMAR_CACHE_MB: int = 0
     VLLM_MSGPACK_ZERO_COPY_THRESHOLD: int = 256
     VLLM_ALLOW_INSECURE_SERIALIZATION: bool = False
@@ -734,6 +735,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Allow use of DeepGemm kernels for fused moe ops.
     "VLLM_USE_DEEP_GEMM":
     lambda: bool(int(os.getenv("VLLM_USE_DEEP_GEMM", "0"))),
+
+    # fp8 dtype for XPU platform
+    "VLLM_XPU_FP8_DTYPE":
+    lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2")
 
     # Control the cache sized used by the xgrammar compiler. The default
     # of 512 MB should be enough for roughly 1000 JSON schemas.
