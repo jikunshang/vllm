@@ -118,6 +118,7 @@ if TYPE_CHECKING:
     VLLM_NIXL_SIDE_CHANNEL_PORT: int = 5557
     VLLM_ALL2ALL_BACKEND: str = "naive"
     VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE: int = 163840
+    VLLM_XPU_FP8_DTYPE: str = "e5m2"
 
 
 def get_default_cache_root():
@@ -822,6 +823,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # This is used to prevent the kernel from running out of memory.
     "VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE":
     lambda: int(os.getenv("VLLM_MAX_TOKENS_PER_EXPERT_FP4_MOE", "163840")),
+
+    # fp8 dtype for XPU platform
+    "VLLM_XPU_FP8_DTYPE":
+    lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2"),
 }
 
 # --8<-- [end:env-vars-definition]
