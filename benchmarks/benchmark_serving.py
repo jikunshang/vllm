@@ -267,10 +267,10 @@ async def benchmark(
         raise ValueError(f"Unknown backend: {backend}")
 
     print("Starting initial single prompt test run...")
+    # set test_output_len=10 to avoid long prompt test run
     test_prompt, test_prompt_len, test_output_len, test_mm_content = \
         input_requests[0].prompt, input_requests[0].prompt_len, \
-        input_requests[0].expected_output_len, \
-            input_requests[0].multi_modal_data
+        10, input_requests[0].multi_modal_data
 
     if backend != "openai-chat" and test_mm_content is not None:
         # multi-modal benchmark is only available on OpenAI Chat backend.
