@@ -212,7 +212,7 @@ class IPEXAutoRoundLinearMethod(LinearMethodBase):
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         weight = layer.weight.data
         scale = layer.weight_scale.data
-        output = torch.empty(1, device="xpu", dtype=weight.dtype)
+        output = torch.zeros((x.size(0), weight.size(0)), device="xpu", dtype=torch.half)
         torch.ops.vllm.fp8_gemm(output, x, False, weight, True, None, x.dtype, torch.ones(1, device='xpu'), scale, bias, False)
         return output
 
