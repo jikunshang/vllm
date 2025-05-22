@@ -179,7 +179,7 @@ class Fp8LinearMethod(LinearMethodBase):
         self.use_marlin = (not current_platform.has_device_capability(89)
                            or envs.VLLM_TEST_FORCE_FP8_MARLIN)
         # Disable marlin for rocm
-        if current_platform.is_rocm():
+        if current_platform.is_rocm() or current_platform.is_xpu():
             self.use_marlin = False
 
         self.block_quant = self.quant_config.weight_block_size is not None
