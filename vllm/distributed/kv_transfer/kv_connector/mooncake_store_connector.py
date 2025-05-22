@@ -338,9 +338,9 @@ class MooncakeStoreConnector(KVConnectorBase):
             block_indices_tensor = torch.tensor(block_indices_list[start_block_idx:end_block_idx], device="hpu", dtype=torch.int32 )
             # we think this is a padding sequence, so we skip it. but we still need write kv cache
             if slen == 1:
-                for i in range(model_executable.model.model.start_layer,
-                               model_executable.model.model.end_layer):
-                    current_layer_idx = i - model_executable.model.model.start_layer
+                for i in range(model_executable.model.start_layer,
+                               model_executable.model.end_layer):
+                    current_layer_idx = i - model_executable.model.start_layer
                     kv_cache = kv_caches[current_layer_idx]
                     # key_cache, value_cache = kv_cache[0], kv_cache[1]
                     key_cache = kv_cache[0]
