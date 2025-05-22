@@ -205,7 +205,7 @@ class MooncakeStore(KVLookupBufferBase):
             logger.error("Failed to put value into Mooncake Store: %s", err)
             raise TypeError("Mooncake Store Put Type Error.") from err
         end_put = time.time()
-        logger.info(f"contiguous time: {end_serde - start_serde}, put time: {end_put - end_serde}")
+        logger.debug(f"contiguous time: {end_serde - start_serde}, put time: {end_put - end_serde}")
 
 
     def get_unsafe(self, key: str, shape, dtype) -> Optional[torch.Tensor]:
@@ -217,6 +217,6 @@ class MooncakeStore(KVLookupBufferBase):
             tensor = torch.frombuffer(data, dtype=dtype)
             tensor = tensor.reshape(shape)
             end_from_buffer = time.time()
-            logger.info(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
+            logger.debug(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
             return tensor
         return None

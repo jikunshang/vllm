@@ -244,7 +244,7 @@ class MooncakeStoreConnector(KVConnectorBase):
         start_time = time.time()
         input_tokens_tensor_cpu = model_input.input_tokens.to("cpu") # shape: [batch_size, seq_len_padding_to_128]
         torch.hpu.synchronize()
-        logger.info(f"input tokens tensor cpu time: {time.time() - start_time}")
+        logger.debug(f"input tokens tensor cpu time: {time.time() - start_time}")
         seq_lens = model_input.attn_metadata.seq_lens # 2D list
         start_layer = model_executable.model.start_layer
         end_layer = model_executable.model.end_layer
