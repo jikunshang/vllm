@@ -293,3 +293,44 @@ class ipex_ops:
     def swap_blocks(src: torch.Tensor, dst: torch.Tensor,
                     block_mapping: torch.Tensor) -> None:
         torch.xpu.swap_blocks(src, dst, block_mapping)  # type: ignore
+
+from torch.library import register_fake
+from vllm.utils import direct_register_custom_op
+
+def ipex_fp8_gemm(
+    output: torch.Tensor,
+    a: torch.Tensor,
+    trans_a: bool,
+    b: torch.Tensor,
+    trans_b: bool,
+    d: Optional[torch.Tensor],
+    dtype: torch.dtype,
+    a_scale_inv: Optional[torch.Tensor],
+    b_scale_inv: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor],
+    acc: bool,
+) -> None:
+    output = torch.ops.torch_ipex.fp8_gemm2(a, trans_a, b, trans_b, d, dtype,
+                                   a_scale_inv, b_scale_inv, bias, acc)
+
+def ipex_fp8_gemm_fake_(
+    output: torch.Tensor,
+    a: torch.Tensor,
+    trans_a: bool,
+    b: torch.Tensor,
+    trans_b: bool,
+    d: Optional[torch.Tensor],
+    dtype: torch.dtype,
+    a_scale_inv: Optional[torch.Tensor],
+    b_scale_inv: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor],
+    acc: bool,
+) -> None:
+    return
+
+direct_register_custom_op(
+    op_name="fp8_gemm",
+    op_func=ipex_fp8_gemm,
+    mutates_args=["output"],
+    fake_impl=ipex_fp8_gemm_fake_,
+    dispatch_key="XPU")

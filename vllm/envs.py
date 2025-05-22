@@ -738,7 +738,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
 
     # fp8 dtype for XPU platform
     "VLLM_XPU_FP8_DTYPE":
-    lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2")
+    lambda: os.environ.get("VLLM_XPU_FP8_DTYPE", "e5m2"),
 
     # Control the cache sized used by the xgrammar compiler. The default
     # of 512 MB should be enough for roughly 1000 JSON schemas.
