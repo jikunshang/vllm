@@ -229,7 +229,27 @@ class MooncakeStoreConnector(KVConnectorBase):
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
 
-
+    def send_kv_caches_and_hidden_states_cpu(
+        self,
+        input_tokens_list: List[torch.Tensor],
+        kv_caches_send_list: List[torch.Tensor],
+        hidden_states_list: List[torch.Tensor],
+    ) -> None:
+        start_time = time.time()
+        if self.rank != 0:
+            # only the first rank will send kv cache
+            return
+        assert len(input_tokens_list) == len(kv_caches_send_list)
+        assert len(input_tokens_list) == len(hidden_states_list)
+        for idx, input_tokens in enumerate(input_tokens_list):
+            store_key_prefix = self.tensor_hash(input_tokens)
+            store_kvcache_key = f"{store_key_prefix}_{self.rank}"
+            store_hidden_key = f"{store_key_prefix}_hidden_{self.rank}"
+            
+            self.kv_store.put_unsafe(store_kvcache_key, kv_caches_send_list[idx])
+            self.kv_store.put(store_hidden_key, hidden_states_list[idx])
+        logger.info(f"[rank{self.rank}]: KV send DONE. send {len(input_tokens_list)}, takes {time.time() - start_time} s")
+    
     def send_kv_caches_and_hidden_states_hpu(
         self,
         model_executable: torch.nn.Module,
@@ -364,6 +384,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             # For deepseek, we only need recv first rank
             load_kvcache_key = f"{load_key_prefix}_0"
             shape = (61, num_blocks * 128, self.k_v_head_size)
+            while self.kv_store.is_exist(load_kvcache_key) is False:
+                time.sleep(0.1)
             # remote_kv = self.kv_store.get(load_kvcache_key)
             remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape, self.dtype)
             hidden_key = f"{load_key_prefix}_hidden_0"
