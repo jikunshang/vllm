@@ -25,7 +25,7 @@ def test_reject_unsupported_models(monkeypatch, model):
         m.setenv("VLLM_USE_V1", "1")
         args = AsyncEngineArgs(model=model)
 
-        with pytest.raises(NotImplementedError):
+        with pytest.raises((NotImplementedError, ValueError)):
             _ = args.create_engine_config()
         m.delenv("VLLM_USE_V1")
 
