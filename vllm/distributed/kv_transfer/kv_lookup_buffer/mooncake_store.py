@@ -73,7 +73,7 @@ class MooncakeStore(KVLookupBufferBase):
     ):
 
         try:
-            from mooncake import MooncakeDistributedStore
+            from mooncake.store import MooncakeDistributedStore
         except ImportError as e:
             raise ImportError(
                 "Please install mooncake by following the instructions at "
@@ -220,3 +220,7 @@ class MooncakeStore(KVLookupBufferBase):
             logger.debug(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
             return tensor
         return None
+    
+    def is_exist(self, key: str) -> bool:
+        """Check if the key exists in the Mooncake Store"""
+        return self.store.is_exist(key)

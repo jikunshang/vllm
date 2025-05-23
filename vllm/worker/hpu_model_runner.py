@@ -13,6 +13,7 @@ import itertools
 import math
 import os
 import time
+import concurrent.futures
 from array import array
 from enum import Enum, IntEnum
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
@@ -785,6 +786,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         # For delayed sampling
         self.cached_step_inputs: List[
             ModelInputForHPUWithSamplingMetadata] = []
+        
+        self.pd_executor_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def _set_gc_threshold(self) -> None:
         """
@@ -2865,19 +2868,57 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 # torch.hpu.synchronize()
                 # Sending KV cache in distributed KV cache transfer setting
                 # NOTE: the send operation is non-blocking
-                cur_time = time.time()
+                
                 if self.need_send_kv(model_input, kv_caches, warmup_mode):
-                    get_kv_transfer_group().send_kv_caches_and_hidden_states_hpu(
-                        # model_executable is used to know which layer the current
-                        # worker is working on, so that we can send KV for only those
-                        # layers.
-                        self.get_model(),
-                        model_input,
-                        kv_caches,
-                        hidden_states,
-                    )
-                    now = time.time()
-                    logger.info(f"KV transfer send time: {now - cur_time}")
+                    def fetch_kv_to_host(model, model_input, kv_caches, hidden_states):
+                        input_tokens_tensor_cpu = model_input.input_tokens.to("cpu")# shape: [batch_size, seq_len_padding_to_128]
+                        torch.hpu.synchronize() # sync here may hurt performance.
+                        seq_lens = model_input.attn_metadata.seq_lens
+                        start_layer = model.model.start_layer
+                        end_layer = model.model.end_layer
+                        num_kv_heads = 1
+                        k_v_head_size = 576
+                        kv_caches_send_list = []
+                        hidden_states_list = []
+                        input_tokens_list = []
+                        for idx, slen in enumerate(seq_lens):
+                            if slen == 1:
+                                continue
+                            current_tokens_cpu = input_tokens_tensor_cpu[idx][:slen]
+                            keys, values = [], []
+                            start = 0
+                            padded_total_size = (slen + self.block_size - 1) // self.block_size * self.block_size
+                            current_slot_mapping = model_input.attn_metadata.slot_mapping[idx][start:padded_total_size]
+                            # ==== graph should start here ======
+                            for layer_id in range(start_layer, end_layer):
+                                kv_cache = kv_caches[layer_id - start_layer]
+                                key_cache = kv_cache[0].reshape(-1, num_kv_heads, k_v_head_size)
+                                # value_cache = kv_cache[1].reshape(-1, num_kv_heads, v_head_size)
+
+                                keys.append(key_cache.index_select(0, current_slot_mapping).unsqueeze(0))
+                            keys = torch.cat(keys, dim=0)
+                            kv_cache_to_sent = keys.cpu()
+                            current_hidden_states = hidden_states[idx].unsqueeze(0).cpu()
+                            # ==== graph should end here ======
+                            htorch.core.mark_step()
+                            torch.hpu.synchronize()
+                            kv_caches_send_list.append(kv_cache_to_sent)
+                            hidden_states_list.append(current_hidden_states)
+                            input_tokens_list.append(current_tokens_cpu)
+                        
+                        return input_tokens_list, kv_caches_send_list, hidden_states_list
+                    
+                    def send_kv(input_tokens_list, kv_caches_send_list, hidden_states_list):
+                        cur_time = time.time()
+                        get_kv_transfer_group().send_kv_caches_and_hidden_states_cpu(
+                            input_tokens_list, kv_caches_send_list, hidden_states_list)
+                        now = time.time()
+                        logger.info(f"KV transfer send time: {now - cur_time}")
+                        
+                    
+                    input_tokens_list, kv_caches_send_list, hidden_states_list = fetch_kv_to_host(self.get_model(), model_input, kv_caches, hidden_states)
+                    # TODO: we can make each request as a standalone send task 
+                    self.pd_executor_pool.submit(send_kv, input_tokens_list, kv_caches_send_list, hidden_states_list)
 
                 if self.lora_config:
                     LoraMask.setLoraMask(
