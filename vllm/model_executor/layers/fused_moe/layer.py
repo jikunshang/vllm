@@ -36,7 +36,7 @@ from vllm.platforms.interface import CpuArchEnum
 from vllm.utils import direct_register_custom_op, has_deep_ep, has_pplx
 from vllm.utils.flashinfer import has_flashinfer
 
-if current_platform.is_cuda_alike():
+if current_platform.is_cuda_alike() or current_platform.is_xpu():
     from .fused_batched_moe import BatchedTritonExperts
     from .fused_moe import TritonExperts, fused_experts
     if has_pplx():
