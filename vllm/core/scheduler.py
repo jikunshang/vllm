@@ -21,7 +21,8 @@ from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceGroupMetadata, SequenceGroupMetadataDelta,
                            SequenceStatus)
-from vllm.utils import Device, PyObjectCache
+from vllm.utils import Device, PyObjectCache, SharedDict
+from vllm.distributed import get_kv_transfer_group
 
 logger = init_logger(__name__)
 
@@ -421,6 +422,7 @@ class Scheduler:
         lora_config: Optional[LoRAConfig],
         pipeline_parallel_size: int = 1,
         output_proc_callback: Optional[Callable] = None,
+        kv_cache_shared_dict: Optional[SharedDict] = None
     ) -> None:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
@@ -428,6 +430,7 @@ class Scheduler:
         # simple and NOT fair. It can lead to starvation of some
         # LoRAs. This should be improved in the future.
         self.lora_config = lora_config
+        self.kv_cache_shared_dict = kv_cache_shared_dict
 
         version = "selfattn"
         if (self.scheduler_config.runner_type == "pooling"
@@ -520,6 +523,7 @@ class Scheduler:
         self._async_stopped: List[SequenceGroup] = []
 
     def _fetch_kv_thread(self):
+        assert self.kv_cache_shared_dict is not None
         def hash_list(input):
             import numpy as np
             import hashlib
@@ -530,10 +534,16 @@ class Scheduler:
         
         def get_kv_and_hidden_states(prefix):
             import torch
-            kv_cache = torch.zeros((10,10), dtype=torch.float32, device="cpu")
-            hidden_states = torch.zeros((10,10), dtype=torch.float32, device="cpu")
+            kv_cache, hidden_states = get_kv_transfer_group().recv_kv_caches_and_hidden_states_cpu(prefix)
+            # kv_cache = torch.zeros((10,10), dtype=torch.float32, device="cpu")
+            # hidden_states = torch.zeros((10,10), dtype=torch.float32, device="cpu")
             
             return prefix, kv_cache, hidden_states
+        
+        def put_to_shared_dict(prefix, kv_cache, hidden_states):
+            # Store the kv_cache and hidden_states in the shared dict.
+            # TODO: need to check whether have memory copy!!!
+            self.kv_cache_shared_dict.add_item(prefix, [kv_cache, hidden_states])
 
         while True:
             if self.fetching_thread_should_shutdown:
@@ -544,10 +554,12 @@ class Scheduler:
                 seq_group = self.fetching_kv.get()
                 hash_prefix = hash_list(seq_group.prompt_token_ids)
                 print(f"seq group is {hash_prefix}")
+                prefix, kv_cache, hidden_states = get_kv_and_hidden_states(hash_prefix)
+                put_to_shared_dict(prefix, kv_cache, hidden_states)
                 if seq_group is not None:
                     self.waiting.append(seq_group)
                 self.fetching_kv.task_done()
-            time.sleep(0.1)
+            # time.sleep(0.1)
 
     def shutdown(self):
         self.fetching_thread_should_shutdown = True

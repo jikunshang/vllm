@@ -95,7 +95,12 @@ class KVTransferAgent:
     ) -> None:
         self.connector.send_kv_caches_and_hidden_states_cpu(
             input_tokens_list, kv_caches_send_list, hidden_states_list)
-        
+
+
+    def send_kv_caches_and_hidden_states_cpu(self, prefix:str) -> Tuple[
+        torch.Tensor, torch.Tensor]:
+        return self.connector.send_kv_caches_and_hidden_states_cpu(prefix)
+
     def recv_kv_caches_and_hidden_states_hpu(
         self, model_executable: torch.nn.Module,
         model_input: "ModelInputForHPUWithSamplingMetadata",

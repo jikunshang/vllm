@@ -246,7 +246,7 @@ class MooncakeStoreConnector(KVConnectorBase):
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
             store_hidden_key = f"{store_key_prefix}_hidden_{self.rank}"
             
-            self.kv_store.put_unsafe(store_kvcache_key, kv_caches_send_list[idx])
+            self.kv_store.put(store_kvcache_key, kv_caches_send_list[idx])
             self.kv_store.put(store_hidden_key, hidden_states_list[idx])
         logger.info(f"[rank{self.rank}]: KV send DONE. send {len(input_tokens_list)}, takes {time.time() - start_time} s")
     
@@ -453,6 +453,24 @@ class MooncakeStoreConnector(KVConnectorBase):
 
         return hidden_or_intermediate_states, bypass_model_exec, model_input
 
+    def recv_kv_caches_and_hidden_states_cpu(self, prefix:str) ->Tuple[
+        torch.Tensor, torch.Tensor]:
+        """Receive KV caches and hidden states from the KV store."""
+        if prefix is None:
+            raise ValueError("Prefix cannot be None.")
+
+        load_kvcache_key = f"{prefix}_0"
+        load_hidden_key = f"{prefix}_hidden_0"
+
+        remote_kv = self.kv_store.get(load_kvcache_key)
+        hidden = self.kv_store.get(load_hidden_key)
+
+        if remote_kv is None or hidden is None:
+            # didn't find any match.
+            logger.warning(f"Didn't find any match, load_key_prefix: {load_kvcache_key}")
+            return None, None
+
+        return remote_kv, hidden
 
 
     @staticmethod
