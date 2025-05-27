@@ -314,14 +314,8 @@ class Fp8LinearMethod(LinearMethodBase):
 
         # If checkpoint not serialized fp8, quantize the weights.
         if not self.quant_config.is_checkpoint_fp8_serialized:
-            if current_platform.is_xpu():
-                fp8_dtype = current_platform.fp8_dtype()
-                qweight  = torch.empty(layer.weight.data.shape,device="xpu", dtype=fp8_dtype)
-                weight_scale = torch.zeros(1, device=qweight.device, dtype=torch.float32)
-                torch.ops.torch_ipex.dynamic_scaled_fp8_quant(qweight, layer.weight, weight_scale)
-            else:
-                qweight, weight_scale = ops.scaled_fp8_quant(layer.weight,
-                                                             scale=None)
+            qweight, weight_scale = ops.scaled_fp8_quant(layer.weight,
+                                                         scale=None)
 
             # If using marlin (w8a16), kernel uses channelwise weights,
             # so extend the weight scales to be channelwise.
@@ -397,7 +391,7 @@ class Fp8LinearMethod(LinearMethodBase):
         if current_platform.is_xpu():
             weight = layer.weight.data
             scale = layer.weight_scale.data
-            output = torch.ops.torch_ipex.fp8_gemm2(x, False, weight, True, None, x.dtype, torch.ones(1, device='xpu'), scale, bias, False)
+            output = torch.ops.torch_ipex.fp8_gemm2(x, False, weight, True, None, x.dtype, None, scale, bias, False)
             return output
 
         if self.use_marlin:
