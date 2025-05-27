@@ -30,6 +30,7 @@ from vllm_hpu_extension.ops import LoraMask as LoraMask
 from vllm_hpu_extension.ops import batch2block, block2batch
 from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
                                          HabanaMemoryProfiler, format_bytes)
+from vllm_hpu_extension.utils import VLLMKVCache
 
 from vllm.attention import AttentionMetadata, get_attn_backend
 from vllm.attention.backends.abstract import AttentionType
@@ -60,7 +61,8 @@ from vllm.sequence import (CompletionSequenceGroupOutput, IntermediateTensors,
                            Logprob, SequenceData, SequenceGroupMetadata,
                            SequenceOutput)
 from vllm.utils import (bind_kv_cache, is_fake_hpu, is_pin_memory_available,
-                        make_tensor_with_pad)
+                        make_tensor_with_pad, SharedDict)
+
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase,
     _add_attn_metadata_broadcastable_dict,
@@ -721,6 +723,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
         self.pin_memory = is_pin_memory_available()
         self.kv_cache_dtype = self.cache_config.cache_dtype
+        self.cache_k = VLLMKVCache()
 
         if self.model_config.is_deepseek_mla and not self.model_config.use_mla:
              raise NotImplementedError(
@@ -2653,6 +2656,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         warmup_mode = kwargs.get('warmup_mode', False)
         previous_hidden_states = kwargs.get('previous_hidden_states')
+        shared_kv_cache_dict: Optional[SharedDict] = kwargs.get('shared_kv_cache_dict', None)
 
         self.has_patched_prev_output = False
         use_delayed_sampling = VLLM_DELAYED_SAMPLING and not warmup_mode
@@ -2829,21 +2833,66 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 # NOTE: The receive operation is blocking
                 bypass_model_exec = False
                 if self.need_recv_kv(model_input, kv_caches, warmup_mode):
+                    # we assume kv cache is recved and put into the dict!
+                    assert shared_kv_cache_dict is not None
+                    
                     cur_time = time.time()
                     attn_metadata = self.model.forward_update_meta_only(
                         **execute_model_kwargs,
                         selected_token_indices=sampling_metadata.
                         selected_token_indices)
-                    hidden_states, bypass_model_exec, model_input = \
-                    get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
-                        # model is used to know which layer the current worker
-                        # is working on, so that we can receive KV for only those
-                        # layers.
-                        self.get_model(),
-                        model_input,
-                        attn_metadata,
-                        kv_caches=kv_caches
-                    )
+                    
+                    input_tokens_tensor_cpu = model_input.input_tokens.to("cpu")
+                    block_indices_list = attn_metadata.block_indices.tolist() 
+                    torch.hpu.synchronize()
+                    seq_lens_tensor = model_input.attn_metadata.seq_lens_tensor
+                    seq_lens = seq_lens_tensor.tolist() #2D list
+                    hidden_states_list = []
+                    start_block_idx = 0
+                    k_v_head_size = 576
+                    
+                    for idx, slen in enumerate(seq_lens):
+                        num_blocks = (slen + 127) // 128
+                        end_block_idx = start_block_idx + num_blocks
+                        current_tokens = input_tokens_tensor_cpu[idx][:slen]
+                        prefix = hash(current_tokens)
+                        # get kv cache from shared kv cache dict
+                        kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
+                        
+                        # host to device
+                        kv_cache_for_cur_seq = kv_cache_for_cur_seq.to("hpu")
+                        hidden_states = hidden_states.to("hpu")
+                        hidden_states_list.append(hidden_states.unsqueeze(0))
+                        
+                        block_indices_tensor = torch.tensor(block_indices_list[start_block_idx:end_block_idx], device="hpu", dtype=torch.int32 )
+                        # write to kv cache
+                        for i in range(61):
+                            kv_cache_current_layer = kv_caches[i]
+                            key_cache_current_layer, value_cache_current_layer = kv_cache_current_layer[0], kv_cache_current_layer[1]
+                            
+                            key = kv_cache_for_cur_seq[i].squeeze(-2).view(-1, self.block_size, k_v_head_size)
+                            self.cache_k(key, key_cache_current_layer, block_indices_tensor, None)
+                        
+                        
+                        start_block_idx = end_block_idx
+                        
+                    hidden_states = torch.cat(hidden_states_list, dim=0)
+                    bypass_model_exec = True
+                        
+                    
+                    # hidden_states, bypass_model_exec, model_input = \
+                    # get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
+                    #     # model is used to know which layer the current worker
+                    #     # is working on, so that we can receive KV for only those
+                    #     # layers.
+                    #     self.get_model(),
+                    #     model_input,
+                    #     attn_metadata,
+                    #     kv_caches=kv_caches
+                    # )
+                    
+                    
+                    
                     now = time.time()
                     logger.info(f"KV transfer recv time: {now - cur_time}")
 
