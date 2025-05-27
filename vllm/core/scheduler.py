@@ -4,6 +4,8 @@ import enum
 import os
 import random
 import time
+import threading
+from queue import Queue
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, Deque, Dict, Iterable, List, Optional
@@ -451,6 +453,13 @@ class Scheduler:
             sliding_window=self.cache_config.sliding_window,
             enable_caching=self.cache_config.enable_prefix_caching)
 
+        # TODO: set via config.
+        self.need_fetch_kv = True
+        self.fetching_thread_should_shutdown = False
+        # Sequence groups in FETCHING_KV state, before becoming waiting,
+        self.fetching_kv: Queue[SequenceGroup] = Queue()
+        self.fetching_thread = threading.Thread(target=self._fetch_kv_thread,)
+        self.fetching_thread.start()
         # Sequence groups in the WAITING state.
         # Contain new prefill or preempted requests.
         self.waiting: Deque[SequenceGroup] = deque()
@@ -510,6 +519,46 @@ class Scheduler:
         # for processing and deallocation by the free_finished_seq_groups()
         self._async_stopped: List[SequenceGroup] = []
 
+    def _fetch_kv_thread(self):
+        def hash_list(input):
+            import numpy as np
+            import hashlib
+            input_bytes = np.array(input).tobytes()
+            hash_object = hashlib.blake2b(input_bytes)
+            hash_hex = hash_object.hexdigest()
+            return int(hash_hex[:16], 16)
+        
+        def get_kv_and_hidden_states(prefix):
+            import torch
+            kv_cache = torch.zeros((10,10), dtype=torch.float32, device="cpu")
+            hidden_states = torch.zeros((10,10), dtype=torch.float32, device="cpu")
+            
+            return prefix, kv_cache, hidden_states
+
+        while True:
+            if self.fetching_thread_should_shutdown:
+                logger.info("The fetching thread is shutting down.")
+                return
+            # print(f"fetcing key queue len: {self.fetching_kv.qsize()}")
+            if not self.fetching_kv.empty():
+                seq_group = self.fetching_kv.get()
+                hash_prefix = hash_list(seq_group.prompt_token_ids)
+                print(f"seq group is {hash_prefix}")
+                if seq_group is not None:
+                    self.waiting.append(seq_group)
+                self.fetching_kv.task_done()
+            time.sleep(0.1)
+
+    def shutdown(self):
+        self.fetching_thread_should_shutdown = True
+        """Shutdown the scheduler."""
+        if self.fetching_thread.is_alive():
+            print(f"trying to join thread!")
+            self.fetching_thread.join(timeout=1.0)
+        else:
+            logger.warning("The fetching thread is not alive, "
+                           "but it should be.")
+
     @property
     def next_cache_id(self):
         return (self.cache_id + 1) % self.num_cache_iters
@@ -524,8 +573,11 @@ class Scheduler:
         return 1
 
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
+        if self.need_fetch_kv:
+            self.fetching_kv.put(seq_group)
         # Add sequence groups to the waiting queue.
-        self.waiting.append(seq_group)
+        else:
+            self.waiting.append(seq_group)
 
     def _add_seq_group_to_running(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the running queue.
@@ -590,7 +642,7 @@ class Scheduler:
 
     def has_unfinished_seqs(self) -> bool:
         return len(self.waiting) != 0 or len(self.running) != 0 or len(
-            self.swapped) != 0
+            self.swapped) != 0 or not self.fetching_kv.empty()
 
     def get_prefix_cache_hit_rate(self, device: Device) -> float:
         return self.block_manager.get_prefix_cache_hit_rate(device)
@@ -599,7 +651,7 @@ class Scheduler:
         return self.block_manager.reset_prefix_cache()
 
     def get_num_unfinished_seq_groups(self) -> int:
-        return len(self.waiting) + len(self.running) + len(self.swapped)
+        return len(self.waiting) + len(self.running) + len(self.swapped) + self.fetching_kv.qsize()
 
     def get_and_reset_finished_requests_ids(self) -> List[str]:
         """Flushes the list of request ids of previously finished seq_groups."""
