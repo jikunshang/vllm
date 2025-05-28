@@ -9,7 +9,7 @@ logger = init_logger(__name__)
 
 HAS_TRITON = (
     find_spec("triton") is not None
-    and not current_platform.is_xpu()  # Not compatible
+    or find_spec("pytorch-triton-xpu") is not None  # Not compatible
 )
 
 if not HAS_TRITON:
