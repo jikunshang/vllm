@@ -340,7 +340,7 @@ class VllmBackend:
         vllm_config: VllmConfig,
     ):
         global global_graph_pool
-        if global_graph_pool is None:
+        if global_graph_pool is None and not current_platform.is_xpu():
             global_graph_pool = current_platform.graph_pool_handle()
 
         # TODO: in the future, if we want to use multiple
