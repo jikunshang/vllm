@@ -173,14 +173,11 @@ def init_worker_distributed_environment(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
-        # oneapi 2025 will use pidfd as default
         default_backend = "xccl" if supports_xccl() else "ccl"
         XPU_CCL_BACKEND = os.getenv("XPU_CCL_BACKEND", default_backend)
-        ENV_CCL_ZE_IPC_EXCHANGE = os.getenv("CCL_ZE_IPC_EXCHANGE", "drmfd")
         ENV_CCL_ATL_TRANSPORT = os.getenv("CCL_ATL_TRANSPORT", "ofi")
         ENV_LOCAL_WORLD_SIZE = os.getenv("LOCAL_WORLD_SIZE",
                                          str(parallel_config.world_size))
-        os.environ["CCL_ZE_IPC_EXCHANGE"] = ENV_CCL_ZE_IPC_EXCHANGE
         os.environ["CCL_ATL_TRANSPORT"] = ENV_CCL_ATL_TRANSPORT
         os.environ["LOCAL_WORLD_SIZE"] = ENV_LOCAL_WORLD_SIZE
         os.environ["LOCAL_RANK"] = str(local_rank)
