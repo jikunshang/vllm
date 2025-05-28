@@ -68,13 +68,6 @@ def load_general_plugins():
         return
     plugins_loaded = True
 
-    # some platform-specific configurations
-    from vllm.platforms import current_platform
-
-    if current_platform.is_xpu():
-        # see https://github.com/pytorch/pytorch/blob/43c5f59/torch/_dynamo/config.py#L158
-        torch._dynamo.config.disable = True
-
     plugins = load_plugins_by_group(group=DEFAULT_PLUGINS_GROUP)
     # general plugins, we only need to execute the loaded functions
     for func in plugins.values():

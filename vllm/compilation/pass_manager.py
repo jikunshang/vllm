@@ -5,6 +5,7 @@ from torch import fx as fx
 
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 
 from .activation_quant_fusion import ActivationQuantFusionPass
 from .collective_fusion import AllReduceFusionPass, AsyncTPPass
@@ -17,6 +18,11 @@ from .sequence_parallelism import SequenceParallelismPass
 from .vllm_inductor_pass import VllmInductorPass
 
 logger = init_logger(__name__)
+
+try:
+    from .fusion import FusionPass
+except AttributeError:
+    logger.warning("import FusionPass error.")
 
 
 class PostGradPassManager(CustomGraphPass):
@@ -56,7 +62,7 @@ class PostGradPassManager(CustomGraphPass):
             if self.pass_config.enable_async_tp:
                 self.passes += [AsyncTPPass(config)]
 
-        if self.pass_config.enable_fusion:
+        if self.pass_config.enable_fusion and not current_platform.is_xpu():
             self.passes += [FusionPass.instance(config)]
             self.passes += [ActivationQuantFusionPass(config)]
 
