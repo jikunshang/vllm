@@ -125,7 +125,7 @@ class IPEXAttentionImpl(AttentionImpl):
         assert output is not None, "Output tensor must be provided."
         if attn_metadata is None:
             # Profiling run.
-            return output
+            return output.random_(0, 10)
 
         num_actual_tokens = attn_metadata.num_actual_tokens
         num_heads = self.num_heads
