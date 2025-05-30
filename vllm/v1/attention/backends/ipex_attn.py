@@ -178,7 +178,7 @@ class IPEXAttentionImpl(AttentionImpl):
         assert output is not None, "Output tensor must be provided."
         if attn_metadata is None:
             # Profiling run.
-            return output
+            return output.random_(0, 10)
 
         # NOTE(woosuk): IPEXAttention does not support FP8 KV cache.
         assert layer._k_scale_float == 1.0 and layer._v_scale_float == 1.0, (
