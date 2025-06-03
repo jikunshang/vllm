@@ -2,7 +2,7 @@
 # BMG: require 24.10 + specific version driver
 # torch 2.8: require 2025.1.x(actually this is not a hard requirements)
 # PVC: no specific version required I suppose.
-FROM intel/deep-learning-essentials:2025.1.3-0-devel-ubuntu22.04 AS vllm-base
+FROM intel/deep-learning-essentials:2025.1.1-0-devel-ubuntu22.04 AS vllm-base
 
 RUN rm /etc/apt/sources.list.d/intel-graphics.list
 
