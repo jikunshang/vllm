@@ -1,6 +1,14 @@
-# oneapi 2025.0.2 docker base image use rolling 2448 package. https://dgpu-docs.intel.com/releases/packages.html?release=Rolling+2448.13&os=Ubuntu+22.04, and we don't need install driver manually.
-FROM intel/deep-learning-essentials:2025.0.2-0-client-driver-libze1.20.2.0-devel-ubuntu24.10 AS vllm-base
+FROM intel/deep-learning-essentials:2025.0.2-0-devel-ubuntu24.04 AS vllm-base
+
+RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list && \
+    add-apt-repository -y ppa:kobuk-team/intel-graphics-testing
+
 RUN apt-get update -y && \
+    apt-get install -y software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get install -y python3.10 python3.10-distutils && \
+    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10 && \
     apt-get install -y --no-install-recommends --fix-missing \
     curl \
     ffmpeg \
@@ -13,14 +21,19 @@ RUN apt-get update -y && \
     numactl \
     wget
 
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+
+RUN apt install -y intel-level-zero-gpu-raytracing=1.0.0-0ubuntu1~24.04~ppa4  && \
+    apt install -y libze-intel-gpu1=25.18.33578.8-1~24.04~ppa1  && \
+    apt install -y libze1=1.21.9-1~24.04~ppa1  && \
+    apt install -y libze-dev=1.21.9-1~24.04~ppa1  && \
+    apt install -y intel-opencl-icd=25.18.33578.8-1~24.04~ppa1
+
 WORKDIR /workspace/vllm
 COPY requirements/xpu.txt /workspace/vllm/requirements/xpu.txt
 COPY requirements/common.txt /workspace/vllm/requirements/common.txt
 
-ENV PATH="/miniforge3/bin:$PATH"
-
-RUN --mount=type=cache,target=/miniforge3/pkgs \
-    conda run --no-capture-output -n py310 \
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir \
     -r requirements/xpu.txt
 
@@ -34,24 +47,20 @@ RUN --mount=type=bind,source=.git,target=.git \
 ENV VLLM_TARGET_DEVICE=xpu
 ENV VLLM_WORKER_MULTIPROC_METHOD=spawn
 
-RUN --mount=type=cache,target=/miniforge3/pkgs \
+RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=.git,target=.git \
-    conda run --no-capture-output -n py310 \
     python3 setup.py install
 
-RUN echo "cd /workspace/vllm" >> ~/.bashrc
 CMD ["/bin/bash"]
 
 FROM vllm-base AS vllm-openai
 
 # install additional dependencies for openai api server
-RUN --mount=type=cache,target=/miniforge3/pkgs \
-    conda run --no-capture-output -n py310 \
+RUN --mount=type=cache,target=/root/.cache/pip \
     pip install accelerate hf_transfer 'modelscope!=1.15.0'
 
 ENV VLLM_USAGE_SOURCE production-docker-image \
     TRITON_XPU_PROFILE 1
 # install development dependencies (for testing)
-RUN conda run --no-capture-output -n py310 \
-    python3 -m pip install -e tests/vllm_test_utils
+RUN python3 -m pip install -e tests/vllm_test_utils
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
