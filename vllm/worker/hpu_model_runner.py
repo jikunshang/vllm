@@ -62,6 +62,9 @@ from vllm.sequence import (CompletionSequenceGroupOutput, IntermediateTensors,
                            SequenceOutput)
 from vllm.utils import (bind_kv_cache, is_fake_hpu, is_pin_memory_available,
                         make_tensor_with_pad, SharedDict)
+from vllm.distributed import (divide, get_tensor_model_parallel_rank,
+                              get_tensor_model_parallel_world_size,
+                              tensor_model_parallel_all_reduce)
 
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase,
@@ -2834,8 +2837,13 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                 bypass_model_exec = False
                 if self.need_recv_kv(model_input, kv_caches, warmup_mode):
                     # we assume kv cache is recved and put into the dict!
-                    assert shared_kv_cache_dict is not None
-                    
+                    def tensor_hash(tensor: torch.Tensor) -> int:
+                        """Calculate the hash value of the tensor."""
+                        import hashlib
+                        tensor_bytes = tensor.clone().detach().cpu().numpy().tobytes()
+                        hash_object = hashlib.blake2b(tensor_bytes)
+                        hash_hex = hash_object.hexdigest()
+                        return int(hash_hex[:16], 16)
                     cur_time = time.time()
                     attn_metadata = self.model.forward_update_meta_only(
                         **execute_model_kwargs,
@@ -2852,17 +2860,37 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     k_v_head_size = 576
                     
                     for idx, slen in enumerate(seq_lens):
+                        if slen == 1:
+                            hidden_states_list.append(hidden_states_list[0])
+                            # skip the seq with only one token
+                            continue
                         num_blocks = (slen + 127) // 128
                         end_block_idx = start_block_idx + num_blocks
                         current_tokens = input_tokens_tensor_cpu[idx][:slen]
-                        prefix = hash(current_tokens)
+                        prefix = tensor_hash(current_tokens)
                         # get kv cache from shared kv cache dict
-                        kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
                         
-                        # host to device
-                        kv_cache_for_cur_seq = kv_cache_for_cur_seq.to("hpu")
-                        hidden_states = hidden_states.to("hpu")
-                        hidden_states_list.append(hidden_states.unsqueeze(0))
+                        kv_cache_shape = (61, num_blocks * self.block_size, 1, k_v_head_size)
+                        if torch.distributed.get_rank() == 0:
+                            print(f"getting item len: {slen},  {prefix}")
+                            assert shared_kv_cache_dict is not None
+                            kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
+
+                            # host to device
+                            kv_cache_for_cur_seq = kv_cache_for_cur_seq.to("hpu")
+                            hidden_states = hidden_states.to("hpu")
+                            print(f"kv_cache_for_cur_seq shape: {kv_cache_for_cur_seq.shape}")
+                            print(f"hidden_states shape: {hidden_states.shape}")
+                            kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
+                            hidden_states = tensor_model_parallel_all_reduce(hidden_states)
+                            shared_kv_cache_dict.remove_item(prefix)
+                        else:
+                            kv_cache_for_cur_seq = torch.zeros(kv_cache_shape, dtype=torch.bfloat16, device="hpu")
+                            hidden_states = torch.zeros((1, 7168), dtype=torch.bfloat16, device="hpu")
+                            kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
+                            hidden_states = tensor_model_parallel_all_reduce(hidden_states)
+                        
+                        hidden_states_list.append(hidden_states)
                         
                         block_indices_tensor = torch.tensor(block_indices_list[start_block_idx:end_block_idx], device="hpu", dtype=torch.int32 )
                         # write to kv cache
@@ -2877,8 +2905,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         start_block_idx = end_block_idx
                         
                     hidden_states = torch.cat(hidden_states_list, dim=0)
+                    print(f"final hidden_states shape: {hidden_states.shape}")
                     bypass_model_exec = True
-                        
                     
                     # hidden_states, bypass_model_exec, model_input = \
                     # get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
@@ -2890,8 +2918,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     #     attn_metadata,
                     #     kv_caches=kv_caches
                     # )
-                    
-                    
                     
                     now = time.time()
                     logger.info(f"KV transfer recv time: {now - cur_time}")
