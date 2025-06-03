@@ -357,7 +357,9 @@ class LLMEngine:
                 self.scheduler_config, self.cache_config, self.lora_config,
                 self.parallel_config.pipeline_parallel_size,
                 self.async_callbacks[v_id]
-                if self.model_config.use_async_output_proc else None)
+                if self.model_config.use_async_output_proc else None,
+                self.kv_cache_shared_dict,
+                self.vllm_config.kv_transfer_config.is_kv_consumer)
             for v_id in range(self.parallel_config.pipeline_parallel_size)
         ]
 
@@ -1420,7 +1422,8 @@ class LLMEngine:
                 finished_requests_ids=finished_requests_ids,
                 # We use ExecuteModelRequest to pass the last sampled_token_ids
                 # to each of the non-last PP stages for in-place prepare_input.
-                last_sampled_token_ids=last_sampled_token_ids)
+                last_sampled_token_ids=last_sampled_token_ids,
+                shared_kv_cache_dict=self.kv_cache_shared_dict)
 
             if allow_async_output_proc:
                 execute_model_req.async_callback = self.async_callbacks[

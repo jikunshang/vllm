@@ -208,14 +208,15 @@ class MooncakeStore(KVLookupBufferBase):
         logger.debug(f"contiguous time: {end_serde - start_serde}, put time: {end_put - end_serde}")
 
 
-    def get_unsafe(self, key: str, shape, dtype) -> Optional[torch.Tensor]:
+    def get_unsafe(self, key: str, shape, dtype=torch.bfloat16 ) -> Optional[torch.Tensor]:
         """Get KVCache from Mooncake Store without type checking"""
         start_get = time.time()
         data = self.store.get(key)
         end_get = time.time()
         if data:
             tensor = torch.frombuffer(data, dtype=dtype)
-            tensor = tensor.reshape(shape)
+            shape = (61, -1, 1, 576) if shape is None else shape
+            tensor = tensor.view(shape)
             end_from_buffer = time.time()
             logger.debug(f"from buffer time: {end_from_buffer - end_get}, get time: {end_get - start_get}")
             return tensor
@@ -223,4 +224,4 @@ class MooncakeStore(KVLookupBufferBase):
     
     def is_exist(self, key: str) -> bool:
         """Check if the key exists in the Mooncake Store"""
-        return self.store.is_exist(key)
+        return self.store.is_exist(key) == 1
