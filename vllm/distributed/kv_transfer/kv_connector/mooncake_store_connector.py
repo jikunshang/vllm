@@ -246,8 +246,8 @@ class MooncakeStoreConnector(KVConnectorBase):
             store_kvcache_key = f"{store_key_prefix}_{self.rank}"
             store_hidden_key = f"{store_key_prefix}_hidden_{self.rank}"
             
-            self.kv_store.put(store_kvcache_key, kv_caches_send_list[idx])
-            self.kv_store.put(store_hidden_key, hidden_states_list[idx])
+            self.kv_store.put_unsafe(store_kvcache_key, kv_caches_send_list[idx])
+            self.kv_store.put_unsafe(store_hidden_key, hidden_states_list[idx])
         logger.info(f"[rank{self.rank}]: KV send DONE. send {len(input_tokens_list)}, takes {time.time() - start_time} s")
     
     def send_kv_caches_and_hidden_states_hpu(
@@ -461,9 +461,10 @@ class MooncakeStoreConnector(KVConnectorBase):
 
         load_kvcache_key = f"{prefix}_0"
         load_hidden_key = f"{prefix}_hidden_0"
-
-        remote_kv = self.kv_store.get(load_kvcache_key)
-        hidden = self.kv_store.get(load_hidden_key)
+        while self.kv_store.is_exist(load_kvcache_key) is False:
+            time.sleep(0.01)
+        remote_kv = self.kv_store.get_unsafe(load_kvcache_key, shape = None, dtype=self.dtype)
+        hidden = self.kv_store.get_unsafe(load_hidden_key, shape=(1,7168),dtype=self.dtype)
 
         if remote_kv is None or hidden is None:
             # didn't find any match.

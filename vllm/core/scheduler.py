@@ -422,7 +422,8 @@ class Scheduler:
         lora_config: Optional[LoRAConfig],
         pipeline_parallel_size: int = 1,
         output_proc_callback: Optional[Callable] = None,
-        kv_cache_shared_dict: Optional[SharedDict] = None
+        kv_cache_shared_dict: Optional[SharedDict] = None,
+        need_fetch_kv: bool = False,
     ) -> None:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
@@ -457,7 +458,7 @@ class Scheduler:
             enable_caching=self.cache_config.enable_prefix_caching)
 
         # TODO: set via config.
-        self.need_fetch_kv = True
+        self.need_fetch_kv = need_fetch_kv
         self.fetching_thread_should_shutdown = False
         # Sequence groups in FETCHING_KV state, before becoming waiting,
         self.fetching_kv: Queue[SequenceGroup] = Queue()
@@ -533,11 +534,12 @@ class Scheduler:
             return int(hash_hex[:16], 16)
         
         def get_kv_and_hidden_states(prefix):
-            import torch
+            start = time.time()
             kv_cache, hidden_states = get_kv_transfer_group().recv_kv_caches_and_hidden_states_cpu(prefix)
             # kv_cache = torch.zeros((10,10), dtype=torch.float32, device="cpu")
             # hidden_states = torch.zeros((10,10), dtype=torch.float32, device="cpu")
             
+            print(f"kv cache shape: {kv_cache.shape}, takes: {time.time() - start:.3f} seconds")
             return prefix, kv_cache, hidden_states
         
         def put_to_shared_dict(prefix, kv_cache, hidden_states):
@@ -557,9 +559,10 @@ class Scheduler:
                 prefix, kv_cache, hidden_states = get_kv_and_hidden_states(hash_prefix)
                 put_to_shared_dict(prefix, kv_cache, hidden_states)
                 if seq_group is not None:
-                    self.waiting.append(seq_group)
+                    self.waiting.append(self.fetching_kv.get())
                 self.fetching_kv.task_done()
-            # time.sleep(0.1)
+            else:
+                time.sleep(0.1)
 
     def shutdown(self):
         self.fetching_thread_should_shutdown = True
@@ -586,6 +589,8 @@ class Scheduler:
 
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         if self.need_fetch_kv:
+            self.fetching_kv.put(seq_group)
+            # we put twice to avoid fetching kv empty status
             self.fetching_kv.put(seq_group)
         # Add sequence groups to the waiting queue.
         else:
@@ -1081,6 +1086,7 @@ class Scheduler:
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
             seq_group = waiting_queue[0]
+            print(f"!!!!!trying to schedule seq_group: {seq_group}")
 
             waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
             assert len(waiting_seqs) == 1, (
