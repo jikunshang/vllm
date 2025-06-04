@@ -64,7 +64,9 @@ from vllm.utils import (bind_kv_cache, is_fake_hpu, is_pin_memory_available,
                         make_tensor_with_pad, SharedDict)
 from vllm.distributed import (divide, get_tensor_model_parallel_rank,
                               get_tensor_model_parallel_world_size,
-                              tensor_model_parallel_all_reduce)
+                              tensor_model_parallel_all_reduce,
+                              get_tensor_model_parallel_world_size,
+                              get_tensor_model_parallel_rank)
 
 from vllm.worker.model_runner_base import (
     ModelRunnerBase, ModelRunnerInputBase,
@@ -2871,7 +2873,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         # get kv cache from shared kv cache dict
                         
                         kv_cache_shape = (61, num_blocks * self.block_size, 1, k_v_head_size)
-                        if torch.distributed.get_rank() == 0:
+                        if get_tensor_model_parallel_rank() == 0:
                             print(f"getting item len: {slen},  {prefix}")
                             assert shared_kv_cache_dict is not None
                             kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
@@ -2881,8 +2883,9 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             hidden_states = hidden_states.to("hpu")
                             print(f"kv_cache_for_cur_seq shape: {kv_cache_for_cur_seq.shape}")
                             print(f"hidden_states shape: {hidden_states.shape}")
-                            kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
-                            hidden_states = tensor_model_parallel_all_reduce(hidden_states)
+                            if get_tensor_model_parallel_world_size() > 1:
+                                kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
+                                hidden_states = tensor_model_parallel_all_reduce(hidden_states)
                             shared_kv_cache_dict.remove_item(prefix)
                         else:
                             kv_cache_for_cur_seq = torch.zeros(kv_cache_shape, dtype=torch.bfloat16, device="hpu")
