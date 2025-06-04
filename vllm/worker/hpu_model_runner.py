@@ -2858,7 +2858,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     hidden_states_list = []
                     start_block_idx = 0
                     k_v_head_size = 576
-                    
+                    htorch.core.mark_step()
                     for idx, slen in enumerate(seq_lens):
                         if slen == 1:
                             hidden_states_list.append(hidden_states_list[0])
@@ -2903,11 +2903,11 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         
                         
                         start_block_idx = end_block_idx
-                        
+                        htorch.core.mark_step()
                     hidden_states = torch.cat(hidden_states_list, dim=0)
                     print(f"final hidden_states shape: {hidden_states.shape}")
                     bypass_model_exec = True
-                    
+                    htorch.core.mark_step()
                     # hidden_states, bypass_model_exec, model_input = \
                     # get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
                     #     # model is used to know which layer the current worker
@@ -2956,6 +2956,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         kv_caches_send_list = []
                         hidden_states_list = []
                         input_tokens_list = []
+                        htorch.core.mark_step()
                         for idx, slen in enumerate(seq_lens):
                             if slen == 1:
                                 continue
