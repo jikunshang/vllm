@@ -260,7 +260,7 @@ class ipex_ops:
         zero_tensors: bool,
         window_size_left: int,
         window_size_right: int,
-        is_casual: bool,
+        is_causal: bool,
         return_softmax: bool,
         gen_: Optional[torch.Generator],
         kv_cache_dtype: str,
@@ -275,7 +275,7 @@ class ipex_ops:
             max_seqlen_q,
             max_seqlen_k,
             softmax_scale,
-            is_casual,
+            is_causal,
             block_table,
             alibi_slopes,
             kv_cache_dtype=kv_cache_dtype,  # "fp8"
