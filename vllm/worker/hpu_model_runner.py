@@ -2877,9 +2877,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             assert shared_kv_cache_dict is not None
                             kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
 
-                            # host to device
-                            kv_cache_for_cur_seq = kv_cache_for_cur_seq.to("hpu")
-                            hidden_states = hidden_states.to("hpu")
                             if get_tensor_model_parallel_world_size() > 1:
                                 kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
                                 hidden_states = tensor_model_parallel_all_reduce(hidden_states)

@@ -545,7 +545,7 @@ class Scheduler:
         def put_to_shared_dict(prefix, kv_cache, hidden_states):
             # Store the kv_cache and hidden_states in the shared dict.
             # TODO: need to check whether have memory copy!!!
-            self.kv_cache_shared_dict.add_item(prefix, [kv_cache, hidden_states])
+            self.kv_cache_shared_dict.add_item(prefix, [kv_cache.to("hpu"), hidden_states.to("hpu")])
 
         while True:
             if self.fetching_thread_should_shutdown:
