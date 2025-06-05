@@ -124,6 +124,16 @@ function (get_torch_gpu_compiler_flags OUT_GPU_FLAGS GPU_LANG)
       "-U__HIP_NO_HALF_OPERATORS__"
       "-fno-gpu-rdc")
 
+  elseif(${GPU_LANG} STREQUAL "SYCL")
+    #
+    # Get common SYCL flags from torch.
+    #
+    run_python(GPU_FLAGS
+      "import torch.utils.cpp_extension as t; print(';'.join(t._COMMON_SYCL_FLAGS))"
+      "Failed to determine torch SYCL compiler flags")
+
+  else()
+    message(FATAL_ERROR "Unsupported GPU language: ${GPU_LANG}")
   endif()
   set(${OUT_GPU_FLAGS} ${GPU_FLAGS} PARENT_SCOPE)
 endfunction()
@@ -439,6 +449,7 @@ endmacro()
 # COMPILE_FLAGS <flags>      - Extra compiler flags passed to NVCC/hip.
 # INCLUDE_DIRECTORIES <dirs> - Extra include directories.
 # LIBRARIES <libraries>      - Extra link libraries.
+# LINK_FLAGS <flags>         - Extra link flags.
 # WITH_SOABI                 - Generate library with python SOABI suffix name.
 # USE_SABI <version>         - Use python stable api <version>
 #
@@ -449,7 +460,7 @@ function (define_gpu_extension_target GPU_MOD_NAME)
     GPU
     "WITH_SOABI"
     "DESTINATION;LANGUAGE;USE_SABI"
-    "SOURCES;ARCHITECTURES;COMPILE_FLAGS;INCLUDE_DIRECTORIES;LIBRARIES")
+    "SOURCES;ARCHITECTURES;COMPILE_FLAGS;INCLUDE_DIRECTORIES;LIBRARIES;LINK_FLAGS")
 
   # Add hipify preprocessing step when building with HIP/ROCm.
   if (GPU_LANGUAGE STREQUAL "HIP")
@@ -480,6 +491,7 @@ function (define_gpu_extension_target GPU_MOD_NAME)
 
   set_property(TARGET ${GPU_MOD_NAME} PROPERTY CXX_STANDARD 17)
 
+  message(STATUS "${GPU_MOD_NAME} , ${GPU_COMPILE_FLAGS}")
   target_compile_options(${GPU_MOD_NAME} PRIVATE
     $<$<COMPILE_LANGUAGE:${GPU_LANGUAGE}>:${GPU_COMPILE_FLAGS}>)
 
@@ -490,6 +502,10 @@ function (define_gpu_extension_target GPU_MOD_NAME)
     ${GPU_INCLUDE_DIRECTORIES})
 
   target_link_libraries(${GPU_MOD_NAME} PRIVATE torch ${GPU_LIBRARIES})
+
+  if (GPU_LANGUAGE STREQUAL "SYCL")
+    target_link_options(${GPU_MOD_NAME} PRIVATE ${GPU_LINK_FLAGS})
+  endif()
 
   # Don't use `TORCH_LIBRARIES` for CUDA since it pulls in a bunch of
   # dependencies that are not necessary and may not be installed.

@@ -20,14 +20,22 @@ message(STATUS "Target device: ${VLLM_TARGET_DEVICE}")
 
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/utils.cmake)
 
+message(STATUS "111111111111111111111")
+
 # Suppress potential warnings about unused manually-specified variables
 set(ignoreMe "${VLLM_PYTHON_PATH}")
+message(STATUS "2222222222222222222")
+
+# Prevent installation of dependencies (cutlass) by default.
+install(CODE "set(CMAKE_INSTALL_LOCAL_ONLY TRUE)" ALL_COMPONENTS)
+message(STATUS "333333333333333333333")
 
 #
 # Supported python versions.  These versions will be searched in order, the
 # first match will be selected.  These should be kept in sync with setup.py.
 #
 set(PYTHON_SUPPORTED_VERSIONS "3.9" "3.10" "3.11" "3.12")
+message(STATUS "44444444444444444444")
 
 # Supported AMD GPU architectures.
 set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201")
@@ -89,7 +97,8 @@ endif()
 # Forward the non-CUDA device extensions to external CMake scripts.
 #
 if (NOT VLLM_TARGET_DEVICE STREQUAL "cuda" AND
-    NOT VLLM_TARGET_DEVICE STREQUAL "rocm")
+    NOT VLLM_TARGET_DEVICE STREQUAL "rocm" AND
+    NOT VLLM_TARGET_DEVICE STREQUAL "xpu")
     if (VLLM_TARGET_DEVICE STREQUAL "cpu")
         include(${CMAKE_CURRENT_LIST_DIR}/cmake/cpu_extension.cmake)
     else()
@@ -97,6 +106,7 @@ if (NOT VLLM_TARGET_DEVICE STREQUAL "cuda" AND
     endif()
     return()
 endif()
+
 
 #
 # Set up GPU language and check the torch version and warn if it isn't
@@ -123,6 +133,9 @@ elseif(HIP_FOUND)
     message(WARNING "Pytorch version >= ${TORCH_SUPPORTED_VERSION_ROCM} "
       "expected for ROCm build, saw ${Torch_VERSION} instead.")
   endif()
+elseif(VLLM_TARGET_DEVICE STREQUAL "xpu")
+  message(STATUS "Building XPU")
+  set(VLLM_GPU_LANG "SYCL")
 else()
   message(FATAL_ERROR "Can't find CUDA or HIP installation.")
 endif()
@@ -149,6 +162,8 @@ else()
   # and filter them by the supported versions for the current language.
   # The final set of arches is stored in `VLLM_GPU_ARCHES`.
   #
+
+  # TODO: add sycl architectures
   override_gpu_arches(VLLM_GPU_ARCHES
     ${VLLM_GPU_LANG}
     "${${VLLM_GPU_LANG}_SUPPORTED_ARCHS}")
@@ -159,7 +174,10 @@ endif()
 # `VLLM_GPU_LANG`.
 # The final set of arches is stored in `VLLM_GPU_FLAGS`.
 #
+
+message(STATUS "Querying torch for GPU compiler flags for ${VLLM_GPU_LANG}...")
 get_torch_gpu_compiler_flags(VLLM_GPU_FLAGS ${VLLM_GPU_LANG})
+message(STATUS "Torch GPU compiler flags: ${VLLM_GPU_FLAGS}")
 
 #
 # Set nvcc parallelism.
@@ -196,6 +214,14 @@ if(VLLM_GPU_LANG STREQUAL "HIP")
   #
   set(CMAKE_${VLLM_GPU_LANG}_FLAGS "${CMAKE_${VLLM_GPU_LANG}_FLAGS} -Wno-unused-result")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
+elseif(VLLM_GPU_LANG STREQUAL "SYCL")
+  #
+  # For SYCL we want to use the same flags as CUDA, so we set them here.
+  # Note that SYCL does not support all CUDA flags, so some of them will be ignored.
+  #
+  # TODO: check SYCL flags
+  set(CMAKE_${VLLM_GPU_LANG}_FLAGS "${CMAKE_${VLLM_GPU_LANG}_FLAGS}")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
 #
@@ -636,6 +662,22 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
     endif()
   endif()
 # if CUDA endif
+elseif(VLLM_GPU_LANG STREQUAL "SYCL")
+  set(VLLM_EXT_SRC
+    "csrc/xpu/hello_vllm.cpp"
+    "csrc/xpu/torch_bindings.cpp"
+  )
+  # append_cmake_prefix_path("intel_extension_for_pytorch" "intel_extension_for_pytorch.cmake_prefix_path")
+  # find_package(IPEX REQUIRED)
+  # IPEX will overwrite TORCH_LIBRARIES, so re-add torch_python lib.
+  # append_torchlib_if_found(torch_python)
+  # include_directories(${IPEX_INCLUDE_DIRS})
+  set(CMPLR_ROOT $ENV{CMPLR_ROOT})
+  set(CMAKE_CXX_COMPILER icpx)
+  set(VLLM_EXTRA_INCLUDE_DIRECTORIES ${CMPLR_ROOT}/include/sycl)
+  list(APPEND VLLM_GPU_FLAGS "-DVLLM_BUILD_XPU_OPS" )
+  list(APPEND VLLM_GPU_LINK_FLAGS "-fsycl" "-fsycl-targets=spir64")
+  list(APPEND VLLM_LINK_LIBRARIES "sycl" "OpenCL" "pthread" "m" "dl" )
 endif()
 
 message(STATUS "Enabling C extension.")
@@ -645,6 +687,7 @@ define_gpu_extension_target(
   LANGUAGE ${VLLM_GPU_LANG}
   SOURCES ${VLLM_EXT_SRC}
   COMPILE_FLAGS ${VLLM_GPU_FLAGS}
+  LINK_FLAGS ${VLLM_GPU_LINK_FLAGS}
   ARCHITECTURES ${VLLM_GPU_ARCHES}
   INCLUDE_DIRECTORIES ${CUTLASS_INCLUDE_DIR}
   INCLUDE_DIRECTORIES ${CUTLASS_TOOLS_UTIL_INCLUDE_DIR}
@@ -749,18 +792,20 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
 
   list(APPEND VLLM_MOE_EXT_SRC "${MOE_PERMUTE_SRC}")
 endif()
-message(STATUS "Enabling moe extension.")
-define_gpu_extension_target(
-  _moe_C
-  DESTINATION vllm
-  LANGUAGE ${VLLM_GPU_LANG}
-  SOURCES ${VLLM_MOE_EXT_SRC}
-  COMPILE_FLAGS ${VLLM_GPU_FLAGS}
-  ARCHITECTURES ${VLLM_GPU_ARCHES}
-  INCLUDE_DIRECTORIES ${CUTLASS_INCLUDE_DIR}
-  INCLUDE_DIRECTORIES ${CUTLASS_TOOLS_UTIL_INCLUDE_DIR}
-  USE_SABI 3
-  WITH_SOABI)
+if(NOT VLLM_GPU_LANG STREQUAL "SYCL")
+  message(STATUS "Enabling moe extension.")
+  define_gpu_extension_target(
+    _moe_C
+    DESTINATION vllm
+    LANGUAGE ${VLLM_GPU_LANG}
+    SOURCES ${VLLM_MOE_EXT_SRC}
+    COMPILE_FLAGS ${VLLM_GPU_FLAGS}
+    ARCHITECTURES ${VLLM_GPU_ARCHES}
+    INCLUDE_DIRECTORIES ${CUTLASS_INCLUDE_DIR}
+    INCLUDE_DIRECTORIES ${CUTLASS_TOOLS_UTIL_INCLUDE_DIR}
+    USE_SABI 3
+    WITH_SOABI)
+endif()
 
 if(VLLM_GPU_LANG STREQUAL "HIP")
   #
