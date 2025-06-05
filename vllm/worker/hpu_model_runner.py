@@ -2874,15 +2874,12 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         
                         kv_cache_shape = (61, num_blocks * self.block_size, 1, k_v_head_size)
                         if get_tensor_model_parallel_rank() == 0:
-                            print(f"getting item len: {slen},  {prefix}")
                             assert shared_kv_cache_dict is not None
                             kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
 
                             # host to device
                             kv_cache_for_cur_seq = kv_cache_for_cur_seq.to("hpu")
                             hidden_states = hidden_states.to("hpu")
-                            print(f"kv_cache_for_cur_seq shape: {kv_cache_for_cur_seq.shape}")
-                            print(f"hidden_states shape: {hidden_states.shape}")
                             if get_tensor_model_parallel_world_size() > 1:
                                 kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
                                 hidden_states = tensor_model_parallel_all_reduce(hidden_states)
@@ -2896,6 +2893,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         hidden_states_list.append(hidden_states)
                         
                         block_indices_tensor = torch.tensor(block_indices_list[start_block_idx:end_block_idx], device="hpu", dtype=torch.int32 )
+                        htorch.core.mark_step()
                         # write to kv cache
                         for i in range(61):
                             kv_cache_current_layer = kv_caches[i]
@@ -2903,8 +2901,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             
                             key = kv_cache_for_cur_seq[i].squeeze(-2).view(-1, self.block_size, k_v_head_size)
                             self.cache_k(key, key_cache_current_layer, block_indices_tensor, None)
-                        
-                        
+
                         start_block_idx = end_block_idx
                         htorch.core.mark_step()
                     hidden_states = torch.cat(hidden_states_list, dim=0)
