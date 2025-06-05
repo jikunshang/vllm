@@ -37,6 +37,10 @@ else:
         from torch.library import impl_abstract as register_fake
 
 
+def hello_vllm(a: torch.Tensor) -> None:
+    torch.ops._C.hello_vllm(a)
+
+
 # page attention ops
 def paged_attention_v1(
     out: torch.Tensor,
@@ -864,17 +868,17 @@ def cutlass_fp4_moe_mm(a_tensors: torch.Tensor, b_tensors: torch.Tensor,
                        expert_offsets: torch.Tensor, sf_offsets: torch.Tensor,
                        out_dtype: torch.dtype, device: torch.device):
     """
-    An FP4 Blockscaled Group Gemm that takes in  a_tensors, b_tensors and runs 
+    An FP4 Blockscaled Group Gemm that takes in  a_tensors, b_tensors and runs
     the gemms for each combination based on the specified problem sizes.
 
     This is used as the MoE gemm during NVFP4 Quantized FusedMoE forward.
     - a/b_tensors: the NVFP4 a_ptrs and b_ptrs tensors which are quantized
                      input and expert weights.
     - a_/b_scales: The blockscales in FP8-E4M3 precision
-    - expert_offsets/sf_offsets: Indices that mark at which token index 
-                    each expert begins its computation. The number of tokens 
-                    computed with expert E is expert_offsets[E + 1] - 
-                    expert_offsets[E] And the sf_size per expert is 
+    - expert_offsets/sf_offsets: Indices that mark at which token index
+                    each expert begins its computation. The number of tokens
+                    computed with expert E is expert_offsets[E + 1] -
+                    expert_offsets[E] And the sf_size per expert is
                     sf_offset[E+1] - sf_offset[E]
     - problem_sizes: MxNxK sizes of each expert's multiplication in two grouped
                      MMs used in the fused MoE operation.
@@ -1186,7 +1190,8 @@ def scaled_fp8_quant(
         else:
             scale = torch.zeros(1, device=input.device, dtype=torch.float32)
             if current_platform.is_xpu():
-                torch.ops.torch_ipex.dynamic_scaled_fp8_quant(output, input, scale)
+                torch.ops.torch_ipex.dynamic_scaled_fp8_quant(
+                    output, input, scale)
             else:
                 torch.ops._C.dynamic_scaled_fp8_quant(output, input, scale)
     else:
