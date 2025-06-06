@@ -28,8 +28,9 @@ logger = init_logger(__name__)
 
 def make_compiler(compilation_config: CompilationConfig) -> CompilerInterface:
     if compilation_config.use_inductor:
+        # For XPU 2.8.0.dev wheel, it's lower than 2.8.0 so we change to 2.7.9 here
         if envs.VLLM_USE_STANDALONE_COMPILE and is_torch_equal_or_newer(
-                "2.8.0"):
+                "2.7.9"):
             logger.info("Using InductorStandaloneAdaptor")
             return InductorStandaloneAdaptor()
         else:
