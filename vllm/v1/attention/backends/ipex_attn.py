@@ -23,19 +23,20 @@ if TYPE_CHECKING:
 
 @dataclass
 class IPEXAttentionMetadata(FlashAttentionMetadata):
-    seq_start_loc: torch.Tensor = torch.tensor([0], dtype=torch.int32)
+    seq_start_loc: torch.Tensor = None  # torch.tensor([0], dtype=torch.int32)
 
     def __init__(self,
                  flash_attn_metadata: FlashAttentionMetadata,
                  seq_start_loc: torch.Tensor = None,
                  **kwargs) -> None:
         super().__init__(**flash_attn_metadata.__dict__, **kwargs)
-        if seq_start_loc is not None:
-            self.seq_start_loc = seq_start_loc
-        else:
-            self.seq_start_loc = torch.tensor([0],
-                                              dtype=torch.int32,
-                                              device=self.block_table.device)
+        self.seq_start_loc = seq_start_loc
+        # if seq_start_loc is not None:
+        #     self.seq_start_loc = seq_start_loc
+        # else:
+        #     self.seq_start_loc = torch.tensor([0],
+        #                                       dtype=torch.int32,
+        #                                       device=self.block_table.device)
 
 
 class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
@@ -57,11 +58,10 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
         attn_metadata = super().build(num_reqs, num_actual_tokens,
                                       max_query_len, common_prefix_len,
                                       common_attn_metadata)
-        seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
-        seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
-                                             non_blocking=True)
-        return IPEXAttentionMetadata(attn_metadata,
-                                     seq_start_loc=seq_start_loc)
+        # seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
+        # seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
+        #                                      non_blocking=True)
+        return IPEXAttentionMetadata(attn_metadata, seq_start_loc=None)
 
 
 class IPEXAttentionBackend(AttentionBackend):
@@ -152,7 +152,6 @@ class IPEXAttentionImpl(AttentionImpl):
                                       "encoder/decoder cross-attention "
                                       "are not implemented for "
                                       "IpexAttnBackendImpl")
-        self.use_irope = use_irope
         self.vllm_flash_attn_version = get_flash_attn_version()
 
     def forward(
@@ -223,14 +222,18 @@ class IPEXAttentionImpl(AttentionImpl):
             max_seqlen_k = attn_metadata.max_seq_len
             block_table = attn_metadata.block_table
 
-        if not hasattr(attn_metadata, "seq_start_loc"):
+        if not hasattr(attn_metadata,
+                       "seq_start_loc") or attn_metadata.seq_start_loc is None:
             cumsum = torch.cumsum(sequesd_k, dim=0)
+            print(f"no seq_start_loc in attn_metadata, cumsum is {cumsum}")
             cu_seqlens_k = torch.cat([
                 torch.tensor([0], device=sequesd_k.device, dtype=torch.int32),
                 cumsum
             ]).to(torch.int32)
         else:
             cu_seqlens_k = attn_metadata.seq_start_loc
+
+        print(f"cu_seqlens_k is {cu_seqlens_k}")
 
         ipex_ops.flash_attn_varlen_func(
             output[:num_actual_tokens],

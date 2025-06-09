@@ -11,7 +11,6 @@ import torch.nn as nn
 
 import vllm.envs as envs
 from vllm.config import VllmConfig
-from vllm.device_allocator.cumem import CuMemAllocator
 from vllm.distributed import (ensure_model_parallel_initialized,
                               init_distributed_environment,
                               set_custom_all_reduce)
@@ -34,6 +33,9 @@ logger = init_logger(__name__)
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
     from vllm.v1.core.sched.output import SchedulerOutput
+
+if current_platform.is_cuda():
+    from vllm.device_allocator.cumem import CuMemAllocator
 
 
 class Worker(WorkerBase):
@@ -143,14 +145,22 @@ class Worker(WorkerBase):
                     f"{GiB(requested_memory)} GiB). Decrease GPU memory "
                     f"utilization or reduce GPU memory used by other processes."
                 )
-
+            backend = "nccl"
+        elif self.device_config.device.type == "xpu" and \
+            current_platform.is_xpu():
+            self.device = torch.device(f"xpu:{self.local_rank}")
+            torch.xpu.set_device(self.device)
+            torch.xpu.empty_cache()
+            self.init_gpu_memory = torch.xpu.get_device_properties(
+                self.local_rank).total_memory
+            backend = "ccl"
         else:
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
         init_worker_distributed_environment(self.vllm_config, self.rank,
                                             self.distributed_init_method,
-                                            self.local_rank)
+                                            self.local_rank, backend)
         # Set random seed.
         set_random_seed(self.model_config.seed)
 

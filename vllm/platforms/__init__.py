@@ -146,6 +146,8 @@ def xpu_platform_plugin() -> Optional[str]:
             logger.debug("Confirmed XPU platform is available.")
     except Exception as e:
         logger.debug("XPU platform is not available because: %s", str(e))
+    torch.set_default_device("xpu")
+    intel_extension_for_pytorch.compatible_mode()
 
     return "vllm.platforms.xpu.XPUPlatform" if is_xpu else None
 
