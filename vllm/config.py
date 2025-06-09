@@ -1769,7 +1769,7 @@ class ParallelConfig:
     def stateless_init_dp_group(self) -> "ProcessGroup":
         from vllm.distributed.utils import (
             stateless_init_torch_distributed_process_group)
-
+        print("init dp group!!!")
         # use gloo since the engine process might not have cuda device
         dp_group = stateless_init_torch_distributed_process_group(
             self.data_parallel_master_ip,

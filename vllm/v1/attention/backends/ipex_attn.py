@@ -23,19 +23,20 @@ if TYPE_CHECKING:
 
 @dataclass
 class IPEXAttentionMetadata(FlashAttentionMetadata):
-    seq_start_loc: torch.Tensor = torch.tensor([0], dtype=torch.int64)
+    seq_start_loc: torch.Tensor = None  # torch.tensor([0], dtype=torch.int32)
 
     def __init__(self,
                  flash_attn_metadata: FlashAttentionMetadata,
                  seq_start_loc: torch.Tensor = None,
                  **kwargs) -> None:
         super().__init__(**flash_attn_metadata.__dict__, **kwargs)
-        if seq_start_loc is not None:
-            self.seq_start_loc = seq_start_loc
-        else:
-            self.seq_start_loc = torch.tensor([0],
-                                              dtype=torch.int64,
-                                              device=self.block_table.device)
+        self.seq_start_loc = seq_start_loc
+        # if seq_start_loc is not None:
+        #     self.seq_start_loc = seq_start_loc
+        # else:
+        #     self.seq_start_loc = torch.tensor([0],
+        #                                       dtype=torch.int32,
+        #                                       device=self.block_table.device)
 
 
 class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
@@ -43,7 +44,7 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
     def __init__(self, runner: "XPUModelRunner", kv_cache_spec: AttentionSpec,
                  block_table: BlockTable):
         super().__init__(runner, kv_cache_spec, block_table)
-        # avoid “GPUModelerunner” has no attribute
+        # avoid “GPUModelerunner”, has no attribute
         self.runner: XPUModelRunner = runner
         self.aot_schedule = (get_flash_attn_version() == 3)
 
@@ -57,11 +58,10 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
         attn_metadata = super().build(num_reqs, num_actual_tokens,
                                       max_query_len, common_prefix_len,
                                       common_attn_metadata)
-        seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
-        seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
-                                             non_blocking=True)
-        return IPEXAttentionMetadata(attn_metadata,
-                                     seq_start_loc=seq_start_loc)
+        # seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
+        # seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
+        #                                      non_blocking=True)
+        return IPEXAttentionMetadata(attn_metadata, seq_start_loc=None)
 
 
 class IPEXAttentionBackend(AttentionBackend):
@@ -99,10 +99,6 @@ class IPEXAttentionBackend(AttentionBackend):
     def get_builder_cls() -> type["IPEXAttentionMetadataBuilder"]:
         return IPEXAttentionMetadataBuilder
 
-    def use_cascade_attention(*args, **kwargs) -> bool:
-        # TODO: support cascade attention
-        return False
-
 
 class IPEXAttentionImpl(AttentionImpl):
 
@@ -118,6 +114,7 @@ class IPEXAttentionImpl(AttentionImpl):
         blocksparse_params: Optional[dict[str, Any]] = None,
         logits_soft_cap: Optional[float] = None,
         attn_type: str = AttentionType.DECODER,
+        kv_sharing_target_layer_name: Optional[str] = None,
         use_irope: bool = False,
     ) -> None:
         if blocksparse_params is not None:
@@ -140,6 +137,7 @@ class IPEXAttentionImpl(AttentionImpl):
             # In flash-attn, setting logits_soft_cap as 0 means no soft cap.
             logits_soft_cap = 0
         self.logits_soft_cap = logits_soft_cap
+        self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
 
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
@@ -154,6 +152,7 @@ class IPEXAttentionImpl(AttentionImpl):
                                       "encoder/decoder cross-attention "
                                       "are not implemented for "
                                       "IpexAttnBackendImpl")
+        self.vllm_flash_attn_version = get_flash_attn_version()
 
     def forward(
         self,
@@ -162,7 +161,7 @@ class IPEXAttentionImpl(AttentionImpl):
         key: torch.Tensor,
         value: torch.Tensor,
         kv_cache: torch.Tensor,
-        attn_metadata: IPEXAttentionBackend,
+        attn_metadata: IPEXAttentionMetadata,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass with IPEXAttention.
@@ -202,10 +201,9 @@ class IPEXAttentionImpl(AttentionImpl):
             value_cache,
             attn_metadata.slot_mapping,
             self.kv_cache_dtype,
-            layer._k_scale,
-            layer._v_scale,
+            layer._k_scale_float,
+            layer._v_scale_float,
         )
-
         use_local_attn = \
             (self.use_irope and attn_metadata.local_attn_metadata is not None)
 
@@ -224,27 +222,29 @@ class IPEXAttentionImpl(AttentionImpl):
             max_seqlen_k = attn_metadata.max_seq_len
             block_table = attn_metadata.block_table
 
-        ipex_ops.chunked_prefill(
+        if not hasattr(attn_metadata,
+                       "seq_start_loc") or attn_metadata.seq_start_loc is None:
+            cumsum = torch.cumsum(sequesd_k, dim=0)
+            cu_seqlens_k = torch.cat([
+                torch.tensor([0], device=sequesd_k.device, dtype=torch.int32),
+                cumsum
+            ]).to(torch.int32)
+        else:
+            cu_seqlens_k = attn_metadata.seq_start_loc
+
+
+        ipex_ops.flash_attn_varlen_func(
+            output[:num_actual_tokens],
             query[:num_actual_tokens],
             key_cache,
             value_cache,
-            output[:num_actual_tokens],
             cu_seqlens_q,
-            attn_metadata.seq_start_loc,
-            None,
-            block_table,
-            self.alibi_slopes,
+            cu_seqlens_k,
             max_seqlen_q,
             max_seqlen_k,
-            0.0,
             self.scale,
-            False,
-            self.sliding_window[0],
-            self.sliding_window[1],
-            True,
-            False,
-            None,
-            self.kv_cache_dtype,
+            is_casual=True,
+            block_table=block_table,
+            alibi_slopes=self.alibi_slopes,
         )
         return output
-

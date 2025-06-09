@@ -538,4 +538,5 @@ class MessageQueue:
                 handle = pg.broadcast_obj(None, writer_rank)
             buffer_io = MessageQueue.create_from_handle(handle, group_rank)
         buffer_io.wait_until_ready()
+        print(f"msg queue ready!!!!")
         return buffer_io

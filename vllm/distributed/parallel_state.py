@@ -1021,6 +1021,7 @@ def initialize_model_parallel(
     group_ranks = all_ranks.view(-1, tensor_model_parallel_size).unbind(0)
     group_ranks = [x.tolist() for x in group_ranks]
 
+    print(f"444444  backend is: {backend}")
     # message queue broadcaster is only used in tensor model parallel group
     _TP = init_model_parallel_group(group_ranks,
                                     get_world_group().local_rank,
@@ -1079,6 +1080,7 @@ def ensure_model_parallel_initialized(
     """
     backend = backend or torch.distributed.get_backend(
         get_world_group().device_group)
+    print(f"ensure_model_parallel_initialized backend is: {backend}")
     if not model_parallel_is_initialized():
         initialize_model_parallel(tensor_model_parallel_size,
                                   pipeline_model_parallel_size, backend)
@@ -1245,24 +1247,29 @@ def in_the_same_node_as(pg: Union[ProcessGroup, StatelessProcessGroup],
                 shm.buf[:len(magic_message)] = magic_message
                 if isinstance(pg, ProcessGroup):
                     torch.distributed.broadcast_object_list(
-                        [shm.name], src=ranks[source_rank], group=pg)
+                        [shm.name], src=ranks[source_rank], group=pg,
+                        device="cpu")
                 else:
                     pg.broadcast_obj(shm.name, src=source_rank)
                 is_in_the_same_node[rank] = 1
             else:
                 # try to open the shared memory segment
                 if isinstance(pg, ProcessGroup):
+                    print(f"111111, src: {ranks[source_rank]}")
                     recv = [None]
                     torch.distributed.broadcast_object_list(
-                        recv, src=ranks[source_rank], group=pg)
+                        recv, src=ranks[source_rank], group=pg, device="cpu")
                     name = recv[0]
                 else:
+                    print(f"22222, src: {source_rank}")
+                    
                     name = pg.broadcast_obj(None, src=source_rank)
                 # fix to https://stackoverflow.com/q/62748654/9191338
                 # Python incorrectly tracks shared memory even if it is not
                 # created by the process. The following patch is a workaround.
                 with patch("multiprocessing.resource_tracker.register",
                            lambda *args, **kwargs: None):
+                    print(f"33333, name: {name}")
                     shm = shared_memory.SharedMemory(name=name)
                 if shm.buf[:len(magic_message)] == magic_message:
                     is_in_the_same_node[rank] = 1

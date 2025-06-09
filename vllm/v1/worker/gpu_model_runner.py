@@ -118,7 +118,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.hidden_size = model_config.get_hidden_size()
         self.attention_chunk_size = model_config.attention_chunk_size
 
-        self.cascade_attn_enabled = not self.model_config.disable_cascade_attn
+        self.cascade_attn_enabled = False #not self.model_config.disable_cascade_attn
 
         # Multi-modal data support
         self.mm_registry = MULTIMODAL_REGISTRY
