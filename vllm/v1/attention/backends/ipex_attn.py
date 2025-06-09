@@ -30,12 +30,6 @@ class IPEXAttentionMetadata(FlashAttentionMetadata):
                  seq_start_loc: torch.Tensor = None,
                  **kwargs) -> None:
         super().__init__(**flash_attn_metadata.__dict__, **kwargs)
-        if seq_start_loc is not None:
-            self.seq_start_loc = seq_start_loc
-        else:
-            self.seq_start_loc = torch.tensor([0],
-                                              dtype=torch.int32,
-                                              device=self.block_table.device)
 
 
 class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
@@ -57,11 +51,7 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
         attn_metadata = super().build(num_reqs, num_actual_tokens,
                                       max_query_len, common_prefix_len,
                                       common_attn_metadata)
-        seq_start_loc_cpu = self.runner.seq_start_loc_cpu[:num_reqs + 1]
-        seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
-                                             non_blocking=True)
-        return IPEXAttentionMetadata(attn_metadata,
-                                     seq_start_loc=seq_start_loc)
+        return IPEXAttentionMetadata(attn_metadata)
 
 
 class IPEXAttentionBackend(AttentionBackend):
@@ -132,6 +122,7 @@ class IPEXAttentionImpl(AttentionImpl):
         else:
             self.sliding_window = (sliding_window - 1, 0)
         self.kv_cache_dtype = kv_cache_dtype
+        self.use_irope = use_irope
         if logits_soft_cap is None:
             # In flash-attn, setting logits_soft_cap as 0 means no soft cap.
             logits_soft_cap = 0
@@ -204,19 +195,42 @@ class IPEXAttentionImpl(AttentionImpl):
             layer._k_scale_float,
             layer._v_scale_float,
         )
+        use_local_attn = \
+            (self.use_irope and attn_metadata.local_attn_metadata is not None)
+
+        if use_local_attn:
+            assert attn_metadata.local_attn_metadata is not None
+            local_metadata = attn_metadata.local_attn_metadata
+            cu_seqlens_q = local_metadata.local_query_start_loc
+            sequesd_k = local_metadata.local_seqused_k
+            max_seqlen_q = local_metadata.local_max_query_len
+            max_seqlen_k = local_metadata.local_max_seq_len
+            block_table = local_metadata.local_block_table
+        else:
+            cu_seqlens_q = attn_metadata.query_start_loc
+            sequesd_k = attn_metadata.seq_lens
+            max_seqlen_q = attn_metadata.max_query_len
+            max_seqlen_k = attn_metadata.max_seq_len
+            block_table = attn_metadata.block_table
+
+        cumsum = torch.cumsum(sequesd_k, dim=0)
+        cu_seqlens_k = torch.cat([
+            torch.tensor([0], device=sequesd_k.device, dtype=torch.int32),
+            cumsum
+        ]).to(torch.int32)
 
         ipex_ops.flash_attn_varlen_func(
             output[:num_actual_tokens],
             query[:num_actual_tokens],
             key_cache,
             value_cache,
-            attn_metadata.query_start_loc,
-            attn_metadata.seq_start_loc,
-            attn_metadata.max_query_len,
-            attn_metadata.max_seq_len,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
             self.scale,
             is_casual=True,
-            block_table=attn_metadata.block_table,
+            block_table=block_table,
             alibi_slopes=self.alibi_slopes,
         )
         return output
