@@ -23,8 +23,7 @@ if TYPE_CHECKING:
 
 @dataclass
 class IPEXAttentionMetadata(FlashAttentionMetadata):
-    seq_start_loc: torch.Tensor = torch.tensor([0], dtype=torch.int64)
-
+    seq_start_loc: torch.Tensor = None
     def __init__(self,
                  flash_attn_metadata: FlashAttentionMetadata,
                  seq_start_loc: torch.Tensor = None,
@@ -34,7 +33,7 @@ class IPEXAttentionMetadata(FlashAttentionMetadata):
             self.seq_start_loc = seq_start_loc
         else:
             self.seq_start_loc = torch.tensor([0],
-                                              dtype=torch.int64,
+                                              dtype=torch.int32,
                                               device=self.block_table.device)
 
 
@@ -162,7 +161,7 @@ class IPEXAttentionImpl(AttentionImpl):
         key: torch.Tensor,
         value: torch.Tensor,
         kv_cache: torch.Tensor,
-        attn_metadata: IPEXAttentionBackend,
+        attn_metadata: IPEXAttentionMetadata,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Forward pass with IPEXAttention.
@@ -223,6 +222,11 @@ class IPEXAttentionImpl(AttentionImpl):
             max_seqlen_q = attn_metadata.max_query_len
             max_seqlen_k = attn_metadata.max_seq_len
             block_table = attn_metadata.block_table
+        if not hasattr(attn_metadata, "seq_start_loc"):
+            cumsum = torch.cumsum(sequesd_k, dim=0)
+            seq_start_loc = torch.cat([torch.tensor([0], device=sequesd_k.device, dtype=torch.int32), cumsum]).to(torch.int32)
+        else:
+            seq_start_loc = attn_metadata.seq_start_loc
 
         ipex_ops.chunked_prefill(
             query[:num_actual_tokens],
@@ -230,7 +234,7 @@ class IPEXAttentionImpl(AttentionImpl):
             value_cache,
             output[:num_actual_tokens],
             cu_seqlens_q,
-            attn_metadata.seq_start_loc,
+            seq_start_loc,
             None,
             block_table,
             self.alibi_slopes,
