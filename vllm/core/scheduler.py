@@ -5,6 +5,8 @@ import os
 import random
 import time
 import threading
+import torch 
+
 from queue import Queue
 from collections import deque
 from dataclasses import dataclass, field
@@ -545,9 +547,18 @@ class Scheduler:
         def put_to_shared_dict(prefix, kv_cache, hidden_states):
             # Store the kv_cache and hidden_states in the shared dict.
             # TODO: need to check whether have memory copy!!!
+            start_time_stamp = time.time()
+            kv_cache_hpu = kv_cache.to("hpu", non_blocking=True)
+            hidden_states_hpu = hidden_states.to("hpu", non_blocking=True)
+            end_time_stamp = time.time()
             self.kv_cache_shared_dict.add_item(prefix,
-                                               [kv_cache.to("hpu", non_blocking=True),
-                                                hidden_states.to("hpu", non_blocking=True)])
+                                               [kv_cache_hpu,
+                                                hidden_states_hpu])
+            if torch.distributed.get_rank() == 0:
+                logger.info(f"putting kv cache to shared dict, "
+                            f"takes: {end_time_stamp - start_time_stamp:.3f} seconds"
+                            f"start time: {start_time_stamp}, "
+                            f"end time: {end_time_stamp}")
 
         while True:
             if self.fetching_thread_should_shutdown:
