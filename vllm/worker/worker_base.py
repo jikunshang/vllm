@@ -425,7 +425,6 @@ class LocalOrDistributedWorkerBase(WorkerBase):
         if (execute_model_req is not None and execute_model_req.spec_step_idx):
             kwargs["spec_step_idx"] = execute_model_req.spec_step_idx
         if (execute_model_req is not None and execute_model_req.shared_kv_cache_dict):
-            print(f"setting kwargs['shared_kv_cache_dict'] ")
             kwargs["shared_kv_cache_dict"] = (
                 execute_model_req.shared_kv_cache_dict)
 

@@ -2659,6 +2659,8 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         is_dummy_run=False,
         **kwargs,
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
+        if torch.distributed.get_rank() == 0:
+            logger.info(f"model_fwd start time stamp:{time.time()}")
         warmup_mode = kwargs.get('warmup_mode', False)
         previous_hidden_states = kwargs.get('previous_hidden_states')
         shared_kv_cache_dict: Optional[SharedDict] = kwargs.get('shared_kv_cache_dict', None)
