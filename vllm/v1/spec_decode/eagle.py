@@ -132,6 +132,7 @@ class EagleProposer:
                 cu_prefix_query_lens=None,
                 prefix_kv_lens=None,
                 suffix_kv_lens=None,
+                seq_start_loc=None,
             )
         elif self.method == "deepseek_mtp":
             query_lens = cu_num_tokens[1:] - cu_num_tokens[:-1]
