@@ -246,32 +246,57 @@ class ipex_ops:
 
     @staticmethod
     def flash_attn_varlen_func(
-        output: torch.Tensor,
-        query: torch.Tensor,
-        key_cache: torch.Tensor,
-        value_cache: torch.Tensor,
+        out: torch.Tensor,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
         cu_seqlens_q: torch.Tensor,
-        cu_seqlens_kv: torch.Tensor,
+        cu_seqlens_k: Optional[torch.Tensor],
+        seqused_k: torch.Tensor,  # we don't support this in ipex kernel
         max_seqlen_q: int,
-        max_seqlen_kv: int,
-        scale: float,
-        is_casual: bool,
+        max_seqlen_k: int,
+        softmax_scale: float,
+        causal: bool,
         block_table: torch.Tensor,
         alibi_slopes: Optional[torch.Tensor],
+        window_size: Optional[list[int]] = None,
+        softcap: Optional[float] = 0.0,
+        scheduler_metadata=None,
+        fa_version: int = 2,
+        q_descale=None,
+        k_descale=None,
+        v_descale=None,
     ):
+        if cu_seqlens_k is None:
+            # cu_seqlens_k is not used in ipex kernel.
+            cu_seqlens_k = torch.cumsum(seqused_k, dim=0)
+            cu_seqlens_k = torch.cat([
+                torch.tensor([0], device=seqused_k.device, dtype=torch.int32),
+                cu_seqlens_k
+            ]).to(torch.int32)
+
+        real_window_size: tuple[int, int]
+        if window_size is None:
+            real_window_size = (-1, -1)
+        else:
+            assert len(window_size) == 2
+            real_window_size = (window_size[0], window_size[1])
         return ipex.llm.modules.PagedAttention.flash_attn_varlen_func(
-            output,
-            query.contiguous(),
-            key_cache,
-            value_cache,
+            out,
+            q.contiguous(),
+            k,
+            v,
             cu_seqlens_q,
-            cu_seqlens_kv,
+            cu_seqlens_k,
             max_seqlen_q,
-            max_seqlen_kv,
-            scale,
-            is_casual,
+            max_seqlen_k,
+            softmax_scale,
+            causal,
             block_table,
             alibi_slopes,
+            softcap=softcap,
+            window_size_left=real_window_size[0],
+            window_size_right=real_window_size[1],
             k_scale=1.0,
             v_scale=1.0,
         )

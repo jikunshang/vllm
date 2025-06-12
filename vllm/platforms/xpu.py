@@ -40,7 +40,7 @@ class XPUPlatform(Platform):
         use_v1 = envs.VLLM_USE_V1
         if use_v1:
             logger.info("Using IPEX_V1 attention backend.")
-            return "vllm.v1.attention.backends.ipex_attn.IPEXAttentionBackend"
+            return "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"
         else:
             logger.info("Using IPEX attention backend.")
             return "vllm.attention.backends.ipex_attn.IpexAttnBackend"
