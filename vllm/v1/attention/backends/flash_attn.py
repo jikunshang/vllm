@@ -22,6 +22,7 @@ from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.distributed.kv_transfer.kv_connector.utils import (
     get_kv_connector_cache_layout)
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 from vllm.utils import cdiv
 from vllm.v1.attention.backends.utils import CommonAttentionMetadata
 from vllm.v1.kv_cache_interface import AttentionSpec
@@ -31,10 +32,6 @@ if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
     from vllm.v1.worker.gpu_input_batch import InputBatch
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-# if current_platform.is_cuda():
-#     from vllm.vllm_flash_attn import (flash_attn_varlen_func,
-#                                       get_scheduler_metadata)
 
 logger = init_logger(__name__)
 
@@ -113,6 +110,9 @@ class FlashAttentionMetadata:
     cu_prefix_query_lens: Optional[torch.Tensor]
     prefix_kv_lens: Optional[torch.Tensor]
     suffix_kv_lens: Optional[torch.Tensor]
+
+    # For XPU.
+    seq_start_loc: Optional[torch.Tensor]
 
     # Optional aot scheduling
     scheduler_metadata: Optional[torch.Tensor] = None
@@ -347,6 +347,9 @@ class FlashAttentionMetadataBuilder:
               common_attn_metadata: CommonAttentionMetadata):
         max_seq_len = int(self.runner.seq_lens_np[:num_reqs].max())
         query_start_loc = common_attn_metadata.query_start_loc
+        seq_start_loc = None
+        if current_platform.is_xpu():
+            seq_start_loc = self.runner.seq_start_loc  # type: ignore
         seq_lens = common_attn_metadata.seq_lens
         block_table = self.block_table
         block_table_tensor = block_table.get_device_tensor()[:num_reqs]
@@ -483,6 +486,7 @@ class FlashAttentionMetadataBuilder:
             num_actual_tokens=num_actual_tokens,
             max_query_len=max_query_len,
             query_start_loc=query_start_loc,
+            seq_start_loc=seq_start_loc,
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
             block_table=block_table_tensor,
@@ -655,7 +659,8 @@ class FlashAttentionImpl(AttentionImpl):
                 block_table = attn_metadata.block_table
                 scheduler_metadata = attn_metadata.scheduler_metadata
 
-            cu_seqlens_k = None
+            cu_seqlens_k = attn_metadata.seq_start_loc if \
+                current_platform.is_xpu() else None
             descale_shape = (cu_seqlens_q.shape[0] - 1, key.shape[1])
 
             flash_attn_varlen_func(

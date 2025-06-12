@@ -268,6 +268,7 @@ class ipex_ops:
         v_descale=None,
     ):
         if cu_seqlens_k is None:
+            print("performance will not be optimal!")
             # cu_seqlens_k is not used in ipex kernel.
             cu_seqlens_k = torch.cumsum(seqused_k, dim=0)
             cu_seqlens_k = torch.cat([
