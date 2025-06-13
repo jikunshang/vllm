@@ -2907,16 +2907,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                     print(f"final hidden_states shape: {hidden_states.shape}")
                     bypass_model_exec = True
                     htorch.core.mark_step()
-                    # hidden_states, bypass_model_exec, model_input = \
-                    # get_kv_transfer_group().recv_kv_caches_and_hidden_states_hpu(
-                    #     # model is used to know which layer the current worker
-                    #     # is working on, so that we can receive KV for only those
-                    #     # layers.
-                    #     self.get_model(),
-                    #     model_input,
-                    #     attn_metadata,
-                    #     kv_caches=kv_caches
-                    # )
                     
                     now = time.time()
                     logger.info(f"KV transfer recv time: {now - cur_time}")
@@ -3260,6 +3250,9 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         assert len(
             ctx.output_queue) == 1, 'There should be exactly 1 output waiting!'
         output_data = ctx.output_queue[0]
+        if len(output_data.outputs) == 0:
+            logger.debug(f"[async PD], don't know why outputs is empty. just return")
+            return
         assert len(output_data.outputs) == 1
         for fake_out, real_out in zip(output_data.outputs[0], delayed_output):
             fake_out.samples[0].output_token = real_out
