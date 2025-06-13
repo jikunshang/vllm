@@ -94,6 +94,7 @@ class XPUWorker(Worker):
         # profiled peak memory.
         torch.xpu.synchronize()
         used_memory = torch.xpu.memory_allocated()
+        reserved_memory = torch.xpu.memory_reserved()
         total_gpu_memory = torch.xpu.get_device_properties(
             self.local_rank).total_memory
         free_gpu_memory = total_gpu_memory - used_memory
@@ -113,6 +114,7 @@ class XPUWorker(Worker):
             total_gpu_memory * self.cache_config.gpu_memory_utilization -
             peak_memory)
 
+        self.cache_config.threshold_mem = reserved_memory + available_kv_cache_memory
         return int(available_kv_cache_memory)
 
     def init_device(self):

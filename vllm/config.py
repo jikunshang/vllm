@@ -1454,6 +1454,8 @@ class CacheConfig:
     """The number of blocks to allocate for GPU memory."""
     num_cpu_blocks: Optional[int] = field(default=None, init=False)
     """The number of blocks to allocate for CPU memory."""
+    threshold_mem: Optional[int] = None
+
 
     def compute_hash(self) -> str:
         """
