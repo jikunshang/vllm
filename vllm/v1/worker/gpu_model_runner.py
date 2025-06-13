@@ -1213,6 +1213,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # in the next step.
             del draft_probs
 
+        torch.xpu.empty_cache()
+
         return ModelRunnerOutput(
             req_ids=self.input_batch.req_ids,
             req_id_to_index=self.input_batch.req_id_to_index,
