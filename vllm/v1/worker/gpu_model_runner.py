@@ -21,6 +21,7 @@ from vllm.model_executor.layers.rotary_embedding import MRotaryEmbedding
 from vllm.model_executor.model_loader import get_model
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalKwargs
 from vllm.multimodal.utils import group_mm_inputs_by_modality
+from vllm.platforms import current_platform
 from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
 from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, DeviceMemoryProfiler,
@@ -51,6 +52,9 @@ if TYPE_CHECKING:
     from vllm.v1.core.sched.output import SchedulerOutput
 else:
     xgr = LazyLoader("xgr", globals(), "xgrammar")
+
+if current_platform.is_xpu():
+    import intel_extension_for_pytorch
 
 logger = init_logger(__name__)
 
@@ -1213,7 +1217,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # in the next step.
             del draft_probs
 
-        torch.xpu.empty_cache()
+        if current_platform.is_xpu():
+            torch.xpu.empty_cache()
 
         return ModelRunnerOutput(
             req_ids=self.input_batch.req_ids,
