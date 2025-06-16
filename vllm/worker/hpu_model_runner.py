@@ -2904,7 +2904,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         start_block_idx = end_block_idx
                         htorch.core.mark_step()
                     hidden_states = torch.cat(hidden_states_list, dim=0)
-                    print(f"final hidden_states shape: {hidden_states.shape}")
                     bypass_model_exec = True
                     htorch.core.mark_step()
                     

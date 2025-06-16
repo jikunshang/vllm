@@ -538,10 +538,7 @@ class Scheduler:
         def get_kv_and_hidden_states(prefix):
             start = time.time()
             kv_cache, hidden_states = get_kv_transfer_group().recv_kv_caches_and_hidden_states_cpu(prefix)
-            # kv_cache = torch.zeros((10,10), dtype=torch.float32, device="cpu")
-            # hidden_states = torch.zeros((10,10), dtype=torch.float32, device="cpu")
             
-            print(f"kv cache shape: {kv_cache.shape}, takes: {time.time() - start:.3f} seconds")
             return prefix, kv_cache, hidden_states
         
         def put_to_shared_dict(prefix, kv_cache, hidden_states):
@@ -1099,7 +1096,6 @@ class Scheduler:
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
             seq_group = waiting_queue[0]
-            print(f"!!!!!trying to schedule seq_group: {seq_group}")
 
             waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
             assert len(waiting_seqs) == 1, (
