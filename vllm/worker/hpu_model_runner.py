@@ -3250,9 +3250,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         assert len(
             ctx.output_queue) == 1, 'There should be exactly 1 output waiting!'
         output_data = ctx.output_queue[0]
-        if len(output_data.outputs) == 0:
-            logger.debug(f"[async PD], don't know why outputs is empty. just return")
-            return
         assert len(output_data.outputs) == 1
         for fake_out, real_out in zip(output_data.outputs[0], delayed_output):
             fake_out.samples[0].output_token = real_out
