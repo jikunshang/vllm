@@ -1464,8 +1464,11 @@ class LLMEngine:
             is_first_step_output: bool = False if not seq_group_metadata_list \
                 else seq_group_metadata_list[0].state.num_steps == 1
 
-            # Add results to the output_queue
-            ctx.append_output(outputs=outputs,
+            # in async PD scenario, outputs here maybe empty, and still
+            # append to ctx. this may cause error
+            if len(outputs) > 0:
+                # Add results to the output_queue
+                ctx.append_output(outputs=outputs,
                               seq_group_metadata_list=seq_group_metadata_list,
                               scheduler_outputs=scheduler_outputs,
                               is_async=allow_async_output_proc,
