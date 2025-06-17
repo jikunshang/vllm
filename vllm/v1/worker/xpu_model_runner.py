@@ -16,7 +16,6 @@ from vllm.utils import (STR_DTYPE_TO_TORCH_DTYPE, LayerBlockType, cdiv,
                         check_use_alibi, is_pin_memory_available)
 from vllm.v1.core.encoder_cache_manager import compute_encoder_budget
 from vllm.v1.outputs import LogprobsTensors
-from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
 from vllm.v1.sample.rejection_sampler import RejectionSampler
 from vllm.v1.sample.sampler import Sampler
 from vllm.v1.spec_decode.eagle import EagleProposer
@@ -380,7 +379,11 @@ class XPUModelRunner(GPUModelRunner):
     def profile_run(self) -> None:
         # Trigger compilation for general shape.
         hidden_states = self._dummy_run(self.max_num_tokens)
-        logits = self.model.compute_logits(hidden_states, None)
-        logits = logits[:self.max_num_tokens]
+        if get_pp_group().is_last_rank:
+            sampler_output = self._dummy_sampler_run(hidden_states)
+        else:
+            sampler_output = None
         torch.xpu.synchronize()
+        del hidden_states, sampler_output
+        self.encoder_cache.clear()
         gc.collect()
