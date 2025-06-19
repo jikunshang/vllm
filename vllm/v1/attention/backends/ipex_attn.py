@@ -202,8 +202,8 @@ class IPEXAttentionImpl(AttentionImpl):
             value_cache,
             attn_metadata.slot_mapping,
             self.kv_cache_dtype,
-            layer._k_scale,
-            layer._v_scale,
+            layer._k_scale_float,
+            layer._v_scale_float,
         )
 
         use_local_attn = \
@@ -213,13 +213,13 @@ class IPEXAttentionImpl(AttentionImpl):
             assert attn_metadata.local_attn_metadata is not None
             local_metadata = attn_metadata.local_attn_metadata
             cu_seqlens_q = local_metadata.local_query_start_loc
-            sequesd_k = local_metadata.local_seqused_k
+            sequesd_k = local_metadata.local_seqused_k  # noqa: F841
             max_seqlen_q = local_metadata.local_max_query_len
             max_seqlen_k = local_metadata.local_max_seq_len
             block_table = local_metadata.local_block_table
         else:
             cu_seqlens_q = attn_metadata.query_start_loc
-            sequesd_k = attn_metadata.seq_lens
+            sequesd_k = attn_metadata.seq_lens  # noqa: F841
             max_seqlen_q = attn_metadata.max_query_len
             max_seqlen_k = attn_metadata.max_seq_len
             block_table = attn_metadata.block_table
@@ -247,4 +247,3 @@ class IPEXAttentionImpl(AttentionImpl):
             self.kv_cache_dtype,
         )
         return output
-
