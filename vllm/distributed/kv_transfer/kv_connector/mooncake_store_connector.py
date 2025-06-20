@@ -371,8 +371,9 @@ class MooncakeStoreConnector(KVConnectorBase):
             num_computed_tokens_list.append(num_computed_tokens)
             
             # it's padded to block size now.
-            key_values = remote_kv.to("hpu")
-            keys = key_values
+            # key_values = remote_kv.to("hpu")
+            # TEST: use CPU kv cache directly
+            keys = remote_kv
             # values = key_values[..., self.k_head_size:]
 
             htorch.core.mark_step()
