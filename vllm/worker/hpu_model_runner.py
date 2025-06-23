@@ -729,6 +729,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         self.pin_memory = is_pin_memory_available()
         self.kv_cache_dtype = self.cache_config.cache_dtype
         self.cache_k = VLLMKVCache()
+        self.input_tokens_tensor_cpu = None
 
         if self.model_config.is_deepseek_mla and not self.model_config.use_mla:
              raise NotImplementedError(
@@ -1240,6 +1241,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                                    pad=0,
                                                    dtype=torch.long,
                                                    device='cpu')
+        self.input_tokens_tensor_cpu = input_tokens_tensor
 
         input_positions = make_tensor_with_pad(input_positions,
                                                max_len=max_prompt_len,
@@ -2854,7 +2856,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         selected_token_indices=sampling_metadata.
                         selected_token_indices)
                     
-                    input_tokens_tensor_cpu = model_input.input_tokens.to("cpu")
+                    input_tokens_tensor_cpu = self.input_tokens_tensor_cpu
                     block_indices_list = attn_metadata.block_indices.tolist() 
                     torch.hpu.synchronize()
                     seq_lens_tensor = model_input.attn_metadata.seq_lens_tensor
