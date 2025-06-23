@@ -202,6 +202,7 @@ class IpexAttnBackendImpl(AttentionImpl[IpexAttnMetadata]):
         Returns:
             shape = [num_tokens, num_heads * head_size]
         """
+        torch.xpu.synchronize()
         assert layer._k_scale_float == 1.0 and layer._v_scale_float == 1.0
         num_tokens, hidden_size = query.shape
         # Reshape the query, key, and value tensors.
