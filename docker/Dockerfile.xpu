@@ -19,6 +19,7 @@ RUN apt-get update -y && \
     libgl1 \
     lsb-release \
     numactl \
+    python3.10-dev \
     wget
 
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
@@ -58,6 +59,12 @@ FROM vllm-base AS vllm-openai
 # install additional dependencies for openai api server
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install accelerate hf_transfer 'modelscope!=1.15.0'
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip uninstall pytorch-triton-xpu triton -y
+
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu-new/validation/IPEX/adhoc/vllm/triton-3.3.0+gitbd88137b-cp310-cp310-linux_x86_64.whl
 
 ENV VLLM_USAGE_SOURCE production-docker-image \
     TRITON_XPU_PROFILE 1
