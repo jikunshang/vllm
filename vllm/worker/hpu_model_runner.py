@@ -2661,8 +2661,6 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
         is_dummy_run=False,
         **kwargs,
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
-        if torch.distributed.get_rank() == 0:
-            logger.info(f"model_fwd start time stamp:{time.time()}")
         warmup_mode = kwargs.get('warmup_mode', False)
         previous_hidden_states = kwargs.get('previous_hidden_states')
         shared_kv_cache_dict: Optional[SharedDict] = kwargs.get('shared_kv_cache_dict', None)
@@ -2872,12 +2870,11 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             continue
                         num_blocks = (slen + 127) // 128
                         end_block_idx = start_block_idx + num_blocks
-                        current_tokens = input_tokens_tensor_cpu[idx][:slen]
-                        prefix = tensor_hash(current_tokens)
-                        # get kv cache from shared kv cache dict
                         
                         kv_cache_shape = (61, num_blocks * self.block_size, 1, k_v_head_size)
                         if get_tensor_model_parallel_rank() == 0:
+                            current_tokens = input_tokens_tensor_cpu[idx][:slen]
+                            prefix = tensor_hash(current_tokens)
                             assert shared_kv_cache_dict is not None
                             kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
 
