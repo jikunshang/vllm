@@ -286,7 +286,7 @@ class XPUModelRunner(GPUModelRunner):
                 self.decode_num += 1
             else:
                 self.have_prompt = True
-                break
+
         # ======== XPU end =========
         return super()._prepare_inputs(scheduler_output)
 

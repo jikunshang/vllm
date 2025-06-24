@@ -308,10 +308,10 @@ class IPEXAttentionImpl(AttentionImpl):
                 out=output[
                     decode_num:,
                 ],
-                seqlen_q=attn_metadata.seq_start_loc[
+                seqlen_q=attn_metadata.seq_lens[
                     decode_num:,
                 ],
-                seqlen_k=attn_metadata.seq_start_loc[
+                seqlen_k=attn_metadata.seq_lens[
                     decode_num:,
                 ],
                 alibi_slopes=self.alibi_slopes,
