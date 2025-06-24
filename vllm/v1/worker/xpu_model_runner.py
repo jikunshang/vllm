@@ -379,7 +379,7 @@ class XPUModelRunner(GPUModelRunner):
     def profile_run(self) -> None:
         # Trigger compilation for general shape.
         hidden_states = self._dummy_run(self.max_num_tokens)
-        if get_pp_group().is_last_rank:
+        if not self.use_spec_decode and get_pp_group().is_last_rank:
             sampler_output = self._dummy_sampler_run(hidden_states)
         else:
             sampler_output = None
