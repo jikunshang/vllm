@@ -236,6 +236,8 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
                 f"intel_extension_for_pytorch>={MIN_IPEX_VERSION} via "
                 f"`pip install intel_extension_for_pytorch>={MIN_IPEX_VERSION}`"
                 " to use IPEX-AWQ linear method.") from err
+        from intel_extension_for_pytorch.nn.utils._quantize_convert import (
+            WeightOnlyQuantizedLinear)
         # Using the compute dtype (lowp_mode) as INT8 to leverage instructions
         # with better performance.
         lowp_mode = ipex.quantization.WoqLowpMode.INT8
@@ -255,8 +257,7 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
         pack_factor = 1
         if layer.qweight.is_xpu and layer.qweight.dtype == torch.int32:
             pack_factor = 8
-        layer.ipex_qlinear = ipex.llm.quantization.woq_linear. \
-            IPEXWeightOnlyQuantizedLinear.from_weight(
+        layer.ipex_qlinear = WeightOnlyQuantizedLinear.from_weight(
             layer.qweight,
             layer.scales,
             layer.qzeros,
@@ -266,15 +267,27 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             g_idx=g_idx,
             bias=None,
             group_size=self.quant_config.group_size,
-            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"]
-        )
+            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"])
+        layer.qweight_new = layer.ipex_qlinear.qweight.transpose(
+            0, 1).contiguous().transpose(0, 1)
+        layer.scales_new = layer.ipex_qlinear.scales.transpose(0,
+                                                               1).contiguous()
 
     def apply(self,
               layer: torch.nn.Module,
               x: torch.Tensor,
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         reshaped_x = x.reshape(-1, x.shape[-1])
-        out = layer.ipex_qlinear(reshaped_x)
+        out = torch.ops.vllm.ipex_woq_linear(
+            reshaped_x,
+            layer.qweight_new,
+            bias,
+            layer.scales_new,
+            layer.ipex_qlinear.qzeros,
+            layer.ipex_qlinear.blocksize,
+            layer.ipex_qlinear.g_idx,
+            layer.ipex_qlinear.out_features,
+        )
         return out.reshape(x.shape[:-1] + (layer.ipex_output_size, ))
 
 
