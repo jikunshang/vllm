@@ -26,18 +26,18 @@ def ipex_woq_linear(
     g_idx: Optional[torch.Tensor] = None,
     output_features: int = 1,
 ) -> torch.Tensor:
-    print(
-        f"inputs are: input shape:{input.shape}, qweight: {qweight.shape}, "
-        f"bias: {bias.shape if bias is not None else None}, "
-        f"scales: {scales.shape}, qzeros: {qzeros.shape}, "
-        f"blocksize: {blocksize}, g_idx: {g_idx.shape if g_idx is not None else None}, "
-        f"output_features: {output_features}")
-    print(f"strides: input stride: {input.stride()}, "
-          f"qweight stride: {qweight.stride()}, "
-          f"bias stride: {bias.stride() if bias is not None else None}, "
-          f"scales stride: {scales.stride()}, "
-          f"qzeros stride: {qzeros.stride()}, "
-          f"g_idx stride: {g_idx.stride() if g_idx is not None else None}")
+    # print(
+    # f"inputs are: input shape:{input.shape}, qweight: {qweight.shape}, "
+    # f"bias: {bias.shape if bias is not None else None}, "
+    # f"scales: {scales.shape}, qzeros: {qzeros.shape}, "
+    # f"blocksize: {blocksize}, g_idx: {g_idx.shape if g_idx is not None else None}, "
+    # f"output_features: {output_features}")
+    # print(f"strides: input stride: {input.stride()}, "
+    #   f"qweight stride: {qweight.stride()}, "
+    #   f"bias stride: {bias.stride() if bias is not None else None}, "
+    #   f"scales stride: {scales.stride()}, "
+    #   f"qzeros stride: {qzeros.stride()}, "
+    #   f"g_idx stride: {g_idx.stride() if g_idx is not None else None}")
     if bias is not None:
         output = torch.ops.torch_ipex.mm_bias_int4(
             input,
@@ -57,7 +57,7 @@ def ipex_woq_linear(
             blocksize,
             g_idx,
         )
-        print(f"output shape: {output.shape}, dtype: {output.dtype}, ")
+    # print(f"output shape: {output.shape}, dtype: {output.dtype}, ")
     return output
 
 
@@ -72,7 +72,7 @@ def ipex_woq_linear_fake(
     output_features: int = 1,
 ) -> torch.Tensor:
     shape = (input.size(0), output_features)
-    return torch.empty(shape, input.dtype)
+    return torch.zeros(shape, dtype=input.dtype, device=input.device)
 
 
 direct_register_custom_op(
