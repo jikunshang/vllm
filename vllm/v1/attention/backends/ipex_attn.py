@@ -225,7 +225,7 @@ class IPEXAttentionImpl(AttentionImpl):
             block_table = attn_metadata.block_table
 
         ipex_ops.chunked_prefill(
-            query[:num_actual_tokens],
+            query[:num_actual_tokens],  # [tokens, num_heads, head_size]
             key_cache,
             value_cache,
             output[:num_actual_tokens],

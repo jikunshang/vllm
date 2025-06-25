@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, List
+from typing import Optional
 
 import torch
 
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
+from vllm.utils import direct_register_custom_op
 
 logger = init_logger(__name__)
 
@@ -12,6 +14,74 @@ try:
     import intel_extension_for_pytorch as ipex
 except ImportError as e:
     logger.warning("Import error msg: %s", e.msg)
+
+
+def ipex_woq_linear(
+    input: torch.Tensor,
+    qweight: torch.Tensor,
+    bias: torch.Tensor,
+    scales: torch.Tensor,
+    qzeros: torch.Tensor,
+    blocksize: int,
+    g_idx: Optional[torch.Tensor] = None,
+    output_features: int = 1,
+) -> torch.Tensor:
+    print(
+        f"inputs are: input shape:{input.shape}, qweight: {qweight.shape}, "
+        f"bias: {bias.shape if bias is not None else None}, "
+        f"scales: {scales.shape}, qzeros: {qzeros.shape}, "
+        f"blocksize: {blocksize}, g_idx: {g_idx.shape if g_idx is not None else None}, "
+        f"output_features: {output_features}")
+    print(f"strides: input stride: {input.stride()}, "
+          f"qweight stride: {qweight.stride()}, "
+          f"bias stride: {bias.stride() if bias is not None else None}, "
+          f"scales stride: {scales.stride()}, "
+          f"qzeros stride: {qzeros.stride()}, "
+          f"g_idx stride: {g_idx.stride() if g_idx is not None else None}")
+    if bias is not None:
+        output = torch.ops.torch_ipex.mm_bias_int4(
+            input,
+            qweight,
+            bias,
+            scales,
+            qzeros,
+            blocksize,
+            g_idx,
+        )
+    else:
+        output = torch.ops.torch_ipex.mm_int4(
+            input,
+            qweight,
+            scales,
+            qzeros,
+            blocksize,
+            g_idx,
+        )
+        print(f"output shape: {output.shape}, dtype: {output.dtype}, ")
+    return output
+
+
+def ipex_woq_linear_fake(
+    input: torch.Tensor,
+    qweight: torch.Tensor,
+    bias: torch.Tensor,
+    scales: torch.Tensor,
+    qzeros: torch.Tensor,
+    blocksize: int,
+    g_idx: Optional[torch.Tensor] = None,
+    output_features: int = 1,
+) -> torch.Tensor:
+    shape = (input.size(0), output_features)
+    return torch.empty(shape, input.dtype)
+
+
+direct_register_custom_op(
+    op_name="ipex_woq_linear",
+    op_func=ipex_woq_linear,
+    mutates_args=[],
+    fake_impl=ipex_woq_linear_fake,
+    dispatch_key=current_platform.dispatch_key,
+)
 
 
 class ipex_ops:

@@ -112,6 +112,8 @@ class CustomOp(nn.Module):
 
         enabled = f"+{cls.name}" in custom_ops
         disabled = f"-{cls.name}" in custom_ops
+        logger.info_once("Custom op %s: enabled=%s, disabled=%s", cls.name,
+                         enabled, disabled)
         assert not (enabled
                     and disabled), f"Cannot enable and disable {cls.name}"
 

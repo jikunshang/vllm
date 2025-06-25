@@ -4034,6 +4034,7 @@ class CompilationConfig:
                 "vllm.unified_attention",
                 "vllm.unified_attention_with_output",
             ]
+        # self.splitting_ops.append("ipex_woq_linear")
 
 
 @config
@@ -4304,6 +4305,7 @@ class VllmConfig:
                 True
         if self.compilation_config.pass_config.enable_sequence_parallelism:
             self.compilation_config.custom_ops.append("+rms_norm")
+        # self.compilation_config.custom_ops.append("+ipex_woq_linear")
         if envs.VLLM_USE_V1 and self.model_config is not None and \
             not self.model_config.enforce_eager:
             # NOTE(woosuk): Currently, we use inductor because the piecewise

@@ -88,6 +88,8 @@ class XPUPlatform(Platform):
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cache_config = vllm_config.cache_config
+        compilation_config = vllm_config.compilation_config
+        # compilation_config.custom_ops.append['+IPEXWoqLinear']
         if cache_config and cache_config.block_size is None:
             if envs.VLLM_USE_V1:
                 cache_config.block_size = 64
@@ -96,7 +98,7 @@ class XPUPlatform(Platform):
 
         # check and update model config
         model_config = vllm_config.model_config
-        if not model_config.enforce_eager:
+        if model_config is not None and not model_config.enforce_eager:
             logger.warning(
                 "CUDA graph is not supported on XPU, fallback to the eager "
                 "mode.")
