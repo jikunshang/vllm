@@ -30,6 +30,7 @@ class XPUPlatform(Platform):
     # see https://github.com/ray-project/ray/blob/6a5eb5865eeb9ccf058a79b44f107e327e360673/python/ray/_private/accelerators/intel_gpu.py#L20 # noqa: E501
     ray_device_key: str = "GPU"
     device_control_env_var: str = "ONEAPI_DEVICE_SELECTOR"
+    dist_backend: str = "ccl"
 
     @classmethod
     def get_attn_backend_cls(cls, selected_backend: _Backend, head_size: int,
@@ -108,7 +109,7 @@ class XPUPlatform(Platform):
         parallel_config = vllm_config.parallel_config
         if envs.VLLM_USE_V1:
             parallel_config.worker_cls =\
-                "vllm.v1.worker.xpu_worker.XPUWorker"
+                "vllm.v1.worker.gpu_worker.Worker"
         else:
             parallel_config.worker_cls = "vllm.worker.xpu_worker.XPUWorker"
 
@@ -190,3 +191,31 @@ class XPUPlatform(Platform):
     @classmethod
     def device_count(cls) -> int:
         return torch.xpu.device_count()
+
+    @classmethod
+    def empty_cache(cls, ):
+        torch.xpu.empty_cache()
+
+    @classmethod
+    def set_device(cls, device: torch.device):
+        torch.xpu.set_device(device)
+
+    @classmethod
+    def reset_peak_memory_stats(cls):
+        torch.xpu.reset_peak_memory_stats()
+
+    @classmethod
+    def mem_get_info(cls):
+        return torch.xpu.mem_get_info()
+
+    @classmethod
+    def memory_stats(cls):
+        return torch.xpu.memory_stats()
+
+    @classmethod
+    def memory_reserved(cls):
+        return torch.xpu.memory_reserved()
+
+    @classmethod
+    def synchronize(cls):
+        return torch.xpu.synchronize()
