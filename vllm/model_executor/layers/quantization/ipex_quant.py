@@ -249,12 +249,15 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
         )
         layer.ipex_output_size = layer.qweight.shape[-1]
         g_idx = layer.g_idx if self.quant_config.desc_act else None
+        pack_factor = 1
+        if layer.qweight.is_xpu and layer.qweight.dtype == torch.int32:
+            pack_factor = 8
         layer.ipex_qlinear = ipex.llm.quantization.woq_linear. \
             IPEXWeightOnlyQuantizedLinear.from_weight(
             layer.qweight,
             layer.scales,
             layer.qzeros,
-            layer.qweight.size(0),
+            layer.qweight.size(0) * pack_factor,
             layer.ipex_output_size,
             qconfig=qconfig,
             g_idx=g_idx,
