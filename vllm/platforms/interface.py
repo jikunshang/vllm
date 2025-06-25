@@ -111,6 +111,8 @@ class Platform:
     # use "CPU" as a fallback for platforms not registered in PyTorch
     dispatch_key: str = "CPU"
 
+    dist_backend: str = "gloo"
+
     # available ray device keys:
     # https://github.com/ray-project/ray/blob/10ba5adadcc49c60af2c358a33bb943fb491a171/python/ray/_private/ray_constants.py#L438 # noqa
     # empty string means the device does not support ray
@@ -547,6 +549,30 @@ class Platform:
         Init platform-specific torch distributed process group.
         """
         raise RuntimeError(f"Unsupported torch distributed backend: {backend}")
+
+    @classmethod
+    def empty_cache(cls, ):
+        raise NotImplementedError
+
+    @classmethod
+    def reset_peak_memory_stats(cls):
+        raise NotImplementedError
+
+    @classmethod
+    def mem_get_info(cls):
+        raise NotImplementedError
+
+    @classmethod
+    def memory_stats(cls):
+        raise NotImplementedError
+
+    @classmethod
+    def memory_reserved(cls):
+        raise NotImplementedError
+
+    @classmethod
+    def synchronize(cls):
+        torch.accelerator.synchronize()
 
 
 class UnspecifiedPlatform(Platform):
