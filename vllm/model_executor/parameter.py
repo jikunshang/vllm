@@ -174,6 +174,9 @@ class RowvLLMParameter(BasevLLMParameter):
     def load_row_parallel_weight(self, loaded_weight: torch.Tensor):
         tp_rank = get_tensor_model_parallel_rank()
         shard_size = self.data.shape[self.input_dim]
+        # When loading per-channel weight for row-parallel linear, duplicate scales and zp between ranks
+        if loaded_weight.size(self.input_dim)==1:
+            tp_rank = 0
         loaded_weight = loaded_weight.narrow(self.input_dim,
                                              tp_rank * shard_size, shard_size)
 
