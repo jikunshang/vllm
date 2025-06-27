@@ -268,10 +268,9 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             bias=None,
             group_size=self.quant_config.group_size,
             quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"])
-        layer.qweight_new = layer.ipex_qlinear.qweight.transpose(
-            0, 1).contiguous().transpose(0, 1)
-        layer.scales_new = layer.ipex_qlinear.scales.transpose(0,
-                                                               1).contiguous()
+        layer.qweight_new = layer.ipex_qlinear.qweight.data
+        layer.scales_new = layer.ipex_qlinear.scales.data
+        layer.gidx_new = layer.ipex_qlinear.g_idx.data if g_idx is not None else None
 
     def apply(self,
               layer: torch.nn.Module,
@@ -285,7 +284,7 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             layer.scales_new,
             layer.ipex_qlinear.qzeros,
             layer.ipex_qlinear.blocksize,
-            layer.ipex_qlinear.g_idx,
+            layer.gidx_new,
             layer.ipex_qlinear.out_features,
         )
         return out.reshape(x.shape[:-1] + (layer.ipex_output_size, ))
