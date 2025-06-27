@@ -238,6 +238,7 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
                 " to use IPEX-AWQ linear method.") from err
         from intel_extension_for_pytorch.nn.utils._quantize_convert import (
             WeightOnlyQuantizedLinear)
+
         # Using the compute dtype (lowp_mode) as INT8 to leverage instructions
         # with better performance.
         lowp_mode = ipex.quantization.WoqLowpMode.INT8
@@ -270,7 +271,8 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"])
         layer.qweight_new = layer.ipex_qlinear.qweight.data
         layer.scales_new = layer.ipex_qlinear.scales.data
-        layer.gidx_new = layer.ipex_qlinear.g_idx.data if g_idx is not None else None
+        layer.gidx_new = layer.ipex_qlinear.g_idx.data \
+            if g_idx is not None else None
 
     def apply(self,
               layer: torch.nn.Module,
@@ -335,13 +337,6 @@ class IPEXAWQLinearMethod(AWQLinearMethod):
 
         layer.ipex_output_size = layer.qweight.size(
             1) * self.quant_config.pack_factor
-        # ipex_qlinear = IPEXWoqLinear(layer,
-        #                              qconfig,
-        #                              bias,
-        #                              self.quant_config.group_size,
-        #                              IPEXConfig.IPEX_QUANT_METHOD_MAP["awq"] )
-
-        # layer.ipex_qlinear = ipex_qlinear
 
         layer.ipex_qlinear = \
             WeightOnlyQuantizedLinear.from_weight(
@@ -355,19 +350,14 @@ class IPEXAWQLinearMethod(AWQLinearMethod):
             group_size=self.quant_config.group_size,
             quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["awq"]  # type: ignore
         )
-        # layer.qweight = xx.transpose(0, 1).contiguous().transpose(0, 1)
-        # layer.ipex_qlinear.transpose_onednn_woq_format()
-        layer.qweight_new = layer.ipex_qlinear.qweight.transpose(
-            0, 1).contiguous().transpose(0, 1)
-        layer.scales_new = layer.ipex_qlinear.scales.transpose(0,
-                                                               1).contiguous()
+        layer.qweight_new = layer.ipex_qlinear.qweight.data
+        layer.scales_new = layer.ipex_qlinear.scales.data
 
     def apply(self,
               layer: torch.nn.Module,
               x: torch.Tensor,
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         reshaped_x = x.reshape(-1, x.shape[-1])
-        # print(f"woq: {layer.ipex_qlinear}")
         out = torch.ops.vllm.ipex_woq_linear(
             reshaped_x,
             layer.qweight_new,
@@ -378,5 +368,4 @@ class IPEXAWQLinearMethod(AWQLinearMethod):
             layer.ipex_qlinear.g_idx,
             layer.ipex_qlinear.out_features,
         )
-        # print('aaaaa')
         return out.reshape(x.shape[:-1] + (layer.ipex_output_size, ))
