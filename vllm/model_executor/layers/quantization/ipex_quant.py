@@ -44,6 +44,7 @@ class IPEXConfig(QuantizationConfig):
         desc_act: Optional[bool] = None,
         lm_head_quantized: Optional[bool] = None,
         is_checkpoint_fp8_serialized: bool = False,
+        is_qweight_sym: Optional[bool] = None,
     ) -> None:
         super().__init__()
         self.method = method
@@ -62,6 +63,7 @@ class IPEXConfig(QuantizationConfig):
             print("Detected fp8 checkpoint. Please note that the "
                    "format is experimental and subject to change.")
         self.activation_scheme = "dynamic"
+        self.is_qweight_sym = is_qweight_sym
 
     def __repr__(self) -> str:
         return (f"IPEXConfig(method={self.method},"
@@ -96,8 +98,9 @@ class IPEXConfig(QuantizationConfig):
                                            ["q_group_size", "group_size"])
             modules_to_not_convert = cls.get_from_keys_or(
                 config, ["modules_to_not_convert"], None)
+            is_qweight_sym = not cls.get_from_keys_or(config, ["zero_point"], default=False)
             return cls(method, weight_bits, group_size, modules_to_not_convert,
-                       False, False)
+                       False, False, is_qweight_sym)
         # otherwise for gptq
         weight_bits = cls.get_from_keys(config, ["bits"])
         group_size = cls.get_from_keys(config, ["group_size"])
@@ -108,8 +111,9 @@ class IPEXConfig(QuantizationConfig):
         is_checkpoint_fp8_serialized = ("fp8" in data_type)
 
         desc_act = cls.get_from_keys_or(config, ["desc_act"], default=False)
+        is_qweight_sym = cls.get_from_keys_or(config, ["sym"], default=True)
         return cls(method, weight_bits, group_size, [], desc_act,
-                   lm_head_quantized, is_checkpoint_fp8_serialized)
+                   lm_head_quantized, is_checkpoint_fp8_serialized, is_qweight_sym)
 
     @classmethod
     def override_quantization_method(
@@ -263,7 +267,8 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             g_idx=g_idx,
             bias=None,
             group_size=self.quant_config.group_size,
-            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"]
+            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"],
+            weight_qscheme="sym" if self.quant_config.is_qweight_sym else "asym",
         )
 
     def apply(self,
@@ -328,7 +333,8 @@ class IPEXAWQLinearMethod(AWQLinearMethod):
             qconfig=qconfig,
             bias=bias,
             group_size=self.quant_config.group_size,
-            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["awq"]  # type: ignore
+            quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["awq"],
+            weight_qscheme="sym" if self.quant_config.is_qweight_sym else "asym",
         )
 
     def apply(self,
