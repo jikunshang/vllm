@@ -39,6 +39,7 @@ message(STATUS "44444444444444444444")
 
 # Supported AMD GPU architectures.
 set(HIP_SUPPORTED_ARCHS "gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1030;gfx1100;gfx1101;gfx1200;gfx1201")
+set(SYCL_SUPPORTED_ARCHS "intel_gpu_pvc;intel_gpu_bmg_g21")
 
 #
 # Supported/expected torch versions for CUDA/ROCm.
@@ -665,19 +666,21 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
 elseif(VLLM_GPU_LANG STREQUAL "SYCL")
   set(VLLM_EXT_SRC
     "csrc/xpu/hello_vllm.cpp"
+    "csrc/xpu/layernorm.cpp"
     "csrc/xpu/torch_bindings.cpp"
   )
   # append_cmake_prefix_path("intel_extension_for_pytorch" "intel_extension_for_pytorch.cmake_prefix_path")
   # find_package(IPEX REQUIRED)
   # IPEX will overwrite TORCH_LIBRARIES, so re-add torch_python lib.
-  # append_torchlib_if_found(torch_python)
+  append_torchlib_if_found(torch_python)
   # include_directories(${IPEX_INCLUDE_DIRS})
+  include_directories("/usr/include")
   set(CMPLR_ROOT $ENV{CMPLR_ROOT})
   set(CMAKE_CXX_COMPILER icpx)
   set(VLLM_EXTRA_INCLUDE_DIRECTORIES ${CMPLR_ROOT}/include/sycl)
   list(APPEND VLLM_GPU_FLAGS "-DVLLM_BUILD_XPU_OPS" )
   list(APPEND VLLM_GPU_LINK_FLAGS "-fsycl" "-fsycl-targets=spir64")
-  list(APPEND VLLM_LINK_LIBRARIES "sycl" "OpenCL" "pthread" "m" "dl" )
+  list(APPEND VLLM_LINK_LIBRARIES "sycl" "OpenCL" "pthread" "m" "dl" "torch" )
 endif()
 
 message(STATUS "Enabling C extension.")

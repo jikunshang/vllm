@@ -267,7 +267,8 @@ class GroupCoordinator:
 
         from vllm.platforms import current_platform
         self.use_custom_op_call = (current_platform.is_cuda_alike()
-                                   or current_platform.is_tpu())
+                                   or current_platform.is_tpu()
+                                   or current_platform.is_xpu())
 
     @property
     def first_rank(self):
