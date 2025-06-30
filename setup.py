@@ -688,7 +688,7 @@ setup(
     # static metadata should rather go in pyproject.toml
     version=get_vllm_version(),
     ext_modules=ext_modules,
-    install_requires=get_requirements(),
+    # install_requires=get_requirements(),
     extras_require={
         "tensorizer": ["tensorizer>=2.9.0"],
         "fastsafetensors": ["fastsafetensors >= 0.1.10"],

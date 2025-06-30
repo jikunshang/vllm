@@ -491,13 +491,18 @@ function (define_gpu_extension_target GPU_MOD_NAME)
 
   set_property(TARGET ${GPU_MOD_NAME} PROPERTY CXX_STANDARD 17)
 
-  message(STATUS "${GPU_MOD_NAME} , ${GPU_COMPILE_FLAGS}")
+  message(STATUS "-------${GPU_MOD_NAME} , ${COMPILE_LANGUAGE}, ${GPU_LANGUAGE}")
   target_compile_options(${GPU_MOD_NAME} PRIVATE
     $<$<COMPILE_LANGUAGE:${GPU_LANGUAGE}>:${GPU_COMPILE_FLAGS}>)
+
+  if (GPU_LANGUAGE STREQUAL "SYCL")
+    target_compile_options(${GPU_MOD_NAME} PRIVATE ${GPU_COMPILE_FLAGS})
+  endif()
 
   target_compile_definitions(${GPU_MOD_NAME} PRIVATE
     "-DTORCH_EXTENSION_NAME=${GPU_MOD_NAME}")
 
+  message(STATUS "GPU_MOD_NAME: ${GPU_MOD_NAME}")
   target_include_directories(${GPU_MOD_NAME} PRIVATE csrc
     ${GPU_INCLUDE_DIRECTORIES})
 
