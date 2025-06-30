@@ -103,6 +103,10 @@ class XPUPlatform(Platform):
         return True
 
     @classmethod
+    def get_vit_attn_backend(cls, support_fa: bool = False) -> _Backend:
+        return _Backend.IPEX
+
+    @classmethod
     def inference_mode(cls):
         return torch.no_grad()
 

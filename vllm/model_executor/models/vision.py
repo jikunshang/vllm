@@ -80,7 +80,6 @@ def get_vit_attn_backend(support_fa: bool = False) -> _Backend:
 
     return current_platform.get_vit_attn_backend(support_fa)
 
-
 def resolve_visual_encoder_outputs(
     encoder_outputs: Union[torch.Tensor, list[torch.Tensor]],
     feature_sample_layers: Optional[list[int]],
