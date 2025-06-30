@@ -276,7 +276,7 @@ class Qwen2VisionAttention(nn.Module):
         # Detect attention implementation.
         self.attn_backend: _Backend = get_vit_attn_backend(support_fa=True)
         if self.attn_backend not in {
-                _Backend.FLASH_ATTN, _Backend.TORCH_SDPA, _Backend.XFORMERS
+                _Backend.FLASH_ATTN, _Backend.TORCH_SDPA, _Backend.XFORMERS, _Backend.IPEX_V1
         }:
             raise RuntimeError(
                 f"Qwen2-VL does not support {self.attn_backend} backend now.")
@@ -346,6 +346,38 @@ class Qwen2VisionAttention(nn.Module):
             context_layer = rearrange(output,
                                       "(b s) ... -> b s ...",
                                       b=batch_size)
+        elif self.attn_backend == _Backend.IPEX_V1:
+            from vllm._ipex_ops import ipex_ops
+
+            q, k, v = (rearrange(x, "b s ... -> (b s) ...") for x in [q, k, v])
+
+            output = torch.empty(
+                q.shape,
+                dtype=q.dtype,
+                device=q.device)
+            ipex_ops.varlen_attention(
+                    q,
+                    k,
+                    v,
+                    output,
+                    cu_seqlens,
+                    cu_seqlens,
+                    None,
+                    max_seqlen,
+                    max_seqlen,
+                    pdropout=0.0,
+                    softmax_scale=1.0/(q.shape[-1] ** 0.5),
+                    zero_tensors=False,
+                    is_causal=True,
+                    return_softmax=False,
+                    gen_=None,
+                    window_size_left=-1,
+                    window_size_right=-1,
+                    logits_soft_cap=-1,
+            )
+            context_layer = rearrange(output,
+                            "(b s) ... -> b s ...",
+                            b=batch_size)
         elif self.attn_backend == _Backend.TORCH_SDPA:
             # Execute attention entry by entry for speed & less VRAM.
             outputs = []
@@ -626,6 +658,8 @@ class Qwen2VisionTransformer(nn.Module):
             max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max().item()
         elif self.attn_backend == _Backend.XFORMERS:
             seqlens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+        elif self.attn_backend == _Backend.IPEX_V1:
+            max_seqlen = (cu_seqlens[1:] - cu_seqlens[:-1]).max().item()
         return max_seqlen, seqlens
 
     def forward(
