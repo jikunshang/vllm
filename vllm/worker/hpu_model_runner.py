@@ -1241,7 +1241,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                                    pad=0,
                                                    dtype=torch.long,
                                                    device='cpu')
-        self.input_tokens_tensor_cpu = input_tokens_tensor
+        self.input_tokens_tensor_cpu = input_tokens_tensor.clone()
 
         input_positions = make_tensor_with_pad(input_positions,
                                                max_len=max_prompt_len,
