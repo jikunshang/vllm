@@ -171,6 +171,9 @@ class XPUModelRunner(GPUModelRunner):
         self.seq_lens = torch.zeros(self.max_num_reqs,
                                     dtype=torch.int32,
                                     device=self.device)
+        self.seq_lens_q = torch.zeros(self.max_num_reqs,
+                                      dtype=torch.int32,
+                                      device=self.device)
         self.slot_mapping = torch.zeros(self.max_num_tokens,
                                         dtype=torch.int64,
                                         device=self.device)
@@ -246,6 +249,11 @@ class XPUModelRunner(GPUModelRunner):
                                         device="cpu",
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
+        self.seq_lens_q_cpu = torch.zeros(self.max_num_reqs,
+                                          dtype=torch.int32,
+                                          device="cpu",
+                                          pin_memory=self.pin_memory)
+        self.seq_lens_q_np = self.seq_lens_q_cpu.numpy()
         self.decode_num = 0
         self.have_prompt = False
 
@@ -279,13 +287,16 @@ class XPUModelRunner(GPUModelRunner):
                     num_scheduled_tokens)
         self.seq_start_loc_np[0] = 0
         np.cumsum(seq_lens, out=self.seq_start_loc_np[1:num_reqs + 1])
+
         self.decode_num = 0
-        self.have_prompt = False
+        self.prompt_num = 0
         for token in tokens:
             if token == 1:
                 self.decode_num += 1
             else:
-                self.have_prompt = True
+                self.prompt_num += 1
+                self.seq_lens_q_np[self.prompt_num] = self.seq_lens_q_np[
+                    self.prompt_num - 1] + token
 
         # ======== XPU end =========
         return super()._prepare_inputs(scheduler_output)

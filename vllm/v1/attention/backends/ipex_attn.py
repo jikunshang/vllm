@@ -25,13 +25,15 @@ if TYPE_CHECKING:
 class IPEXAttentionMetadata(FlashAttentionMetadata):
     seq_start_loc: torch.Tensor = torch.tensor([0], dtype=torch.int64)
     decode_num: int = 0
-    have_prompt: bool = False
+    prompt_num: int = 0
+    seq_lens_q: Optional[torch.Tensor] = None
 
     def __init__(self,
                  flash_attn_metadata: FlashAttentionMetadata,
                  seq_start_loc: torch.Tensor = None,
                  decode_num: int = 0,
-                 have_prompt: bool = False,
+                 prompt_num: int = 0,
+                 seq_lens_q: Optional[torch.Tensor] = None,
                  **kwargs) -> None:
         super().__init__(**flash_attn_metadata.__dict__, **kwargs)
         if seq_start_loc is not None:
@@ -41,7 +43,8 @@ class IPEXAttentionMetadata(FlashAttentionMetadata):
                                               dtype=torch.int64,
                                               device=self.block_table.device)
         self.decode_num = decode_num
-        self.have_prompt = have_prompt
+        self.prompt_num = prompt_num
+        self.seq_lens_q = seq_lens_q
 
 
 class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
@@ -122,12 +125,15 @@ class IPEXAttentionMetadataBuilder(FlashAttentionMetadataBuilder):
         seq_start_loc = seq_start_loc_cpu.to(self.runner.device,
                                              non_blocking=True)
         decode_num = self.runner.decode_num
-        have_prompt = self.runner.have_prompt
+        prompt_num = self.runner.prompt_num
+        seq_lens_q_cpu = self.runner.seq_lens_q_cpu
+        seq_lens_q = seq_lens_q_cpu.to(self.runner.device, non_blocking=True)
         return IPEXAttentionMetadata(
             attn_metadata,
             seq_start_loc=seq_start_loc,
             decode_num=decode_num,
-            have_prompt=have_prompt,
+            prompt_num=prompt_num,
+            seq_lens_q=seq_lens_q,
         )
 
 
@@ -249,6 +255,7 @@ class IPEXAttentionImpl(AttentionImpl):
             return output
         # print(attn_metadata.decode_num)
         decode_num = attn_metadata.decode_num
+        prompt_num = attn_metadata.prompt_num
 
         num_heads = self.num_heads
         head_size = self.head_size
@@ -293,8 +300,7 @@ class IPEXAttentionImpl(AttentionImpl):
                 v_scale=layer._v_scale_float,
             )
         # 2. process prefill if any
-        if attn_metadata.have_prompt:
-
+        if prompt_num >= 1:
             ipex_ops.varlen_attention(
                 query=query[
                     decode_num:,
@@ -308,11 +314,11 @@ class IPEXAttentionImpl(AttentionImpl):
                 out=output[
                     decode_num:,
                 ],
-                seqlen_q=attn_metadata.seq_lens[
-                    decode_num:,
+                seqlen_q=attn_metadata.seq_lens_q[
+                    :prompt_num + 1,
                 ],
-                seqlen_k=attn_metadata.seq_lens[
-                    decode_num:,
+                seqlen_k=attn_metadata.seq_lens_q[
+                    :prompt_num + 1,
                 ],
                 alibi_slopes=self.alibi_slopes,
                 max_seqlen_q=attn_metadata.max_seq_len,
