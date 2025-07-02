@@ -57,12 +57,6 @@ FROM vllm-base AS vllm-openai
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install accelerate hf_transfer 'modelscope!=1.15.0'
 
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip uninstall pytorch-triton-xpu -y
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu/new/validation/IPEX/weekly/PVC/2025/ww21_Stock_test/vllm_pytorch_whl_310/tp2_fix_spec_triton/triton-3.3.1+git4e945233-cp310-cp310-linux_x86_64.whl
-
 ENV VLLM_USAGE_SOURCE production-docker-image \
     TRITON_XPU_PROFILE 1
 # install development dependencies (for testing)
