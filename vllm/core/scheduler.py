@@ -25,7 +25,8 @@ from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceStatus)
 from vllm.utils import Device, PyObjectCache, SharedDict
 from vllm.distributed import get_kv_transfer_group
-
+from vllm_hpu_extension.profiler import (HabanaHighLevelProfiler,
+                                         HabanaMemoryProfiler, format_bytes)
 logger = init_logger(__name__)
 
 # Test-only. If configured, decode is preempted with
@@ -524,6 +525,7 @@ class Scheduler:
         # will be stopped during schedule() call and added to this stop list
         # for processing and deallocation by the free_finished_seq_groups()
         self._async_stopped: List[SequenceGroup] = []
+        self.scheduler_profiler = HabanaHighLevelProfiler("scheduler_instance_0")
 
     def _fetch_kv_thread(self):
         assert self.kv_cache_shared_dict is not None
@@ -563,6 +565,7 @@ class Scheduler:
                 return
             # print(f"fetcing key queue len: {self.fetching_kv.qsize()}")
             if not self.fetching_kv.empty():
+                self.profiler.start('internal', 'fetching_kv')
                 seq_group = self.fetching_kv.get()
                 hash_prefix = hash_list(seq_group.prompt_token_ids)
                 print(f"seq group is {hash_prefix}")
@@ -571,6 +574,7 @@ class Scheduler:
                 if seq_group is not None:
                     self.waiting.append(self.fetching_kv.get())
                 self.fetching_kv.task_done()
+                self.profiler.end()
             else:
                 time.sleep(0.1)
 
