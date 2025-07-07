@@ -394,7 +394,8 @@ class Fp8LinearMethod(LinearMethodBase):
         if current_platform.is_xpu():
             weight = layer.weight.data
             scale = layer.weight_scale.data
-            output = torch.ops.torch_ipex.fp8_gemm_w8a16(x, weight, True, scale, bias)
+            output = torch.ops.vllm.fp8_gemm(x, False, weight, True, None,
+                                             x.dtype, None, scale, bias, False)
             return output
 
         if self.use_marlin:
@@ -688,16 +689,17 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                                                       requires_grad=False)
                 layer.w2_weight = torch.nn.Parameter(shuffled_w2,
                                                      requires_grad=False)
-            
+
             if current_platform.is_xpu():
                 import intel_extension_for_pytorch as ipex
                 layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
                     layer.w13_weight,
                     layer.w2_weight,
                     w1_scale_inv=(layer.w13_weight_scale_inv
-                        if self.block_quant else layer.w13_weight_scale),
-                    w2_scale_inv=(layer.w2_weight_scale_inv
-                        if self.block_quant else layer.w2_weight_scale),
+                                  if self.block_quant else
+                                  layer.w13_weight_scale),
+                    w2_scale_inv=(layer.w2_weight_scale_inv if self.block_quant
+                                  else layer.w2_weight_scale),
                     a1_scale_inv=layer.w13_input_scale,
                     a2_scale_inv=layer.w2_input_scale,
                     use_prepack=True,
@@ -839,8 +841,6 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 activation=activation,
                 apply_router_weight_on_input=apply_router_weight_on_input)
 
-        from vllm.model_executor.layers.fused_moe import fused_experts
-
         topk_weights, topk_ids = FusedMoE.select_experts(
             hidden_states=x,
             router_logits=router_logits,
@@ -912,17 +912,17 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             )
 
     def forward_xpu(
-            self,
-            layer: torch.nn.Module,
-            x: torch.Tensor,
-            use_grouped_topk: bool,
-            top_k: int,
-            router_logits: torch.Tensor,
-            renormalize: bool,
-            topk_group: Optional[int] = None,
-            num_expert_group: Optional[int] = None,
-            custom_routing_function: Optional[Callable] = None,
-            **kwargs,
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        use_grouped_topk: bool,
+        top_k: int,
+        router_logits: torch.Tensor,
+        renormalize: bool,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        custom_routing_function: Optional[Callable] = None,
+        **kwargs,
     ):
         assert custom_routing_function is None
         return layer.ipex_fusion(
@@ -934,6 +934,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             topk_group,
             num_expert_group,
         )
+
 
 class Fp8KVCacheMethod(BaseKVCacheMethod):
     """

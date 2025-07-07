@@ -3,7 +3,6 @@
 from typing import Any, Optional
 
 import torch
-import time
 
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
                                                UnquantizedLinearMethod)
@@ -18,12 +17,9 @@ from vllm.model_executor.parameter import (ModelWeightParameter,
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 
-from vllm.model_executor.layers.quantization import register_quantization_config
-from vllm.model_executor.layers.quantization import get_quantization_config
-
-
 MIN_IPEX_VERSION = "2.7.0"
 ACTIVATION_SCHEMES = ["static", "dynamic"]
+
 
 class IPEXConfig(QuantizationConfig):
     """INT8 quantization config class using IPEX for the CPU/XPU backend,
@@ -55,12 +51,13 @@ class IPEXConfig(QuantizationConfig):
         self.pack_factor = 32 // self.weight_bits
         self.is_checkpoint_fp8_serialized = is_checkpoint_fp8_serialized
         if self.method not in ["awq", "gptq", "auto-round", "fp8"]:
-            raise ValueError(f"IPEX quantization supports [awq, gptq, auto-round, fp8], "
-                             f"but got {self.method}.")
+            raise ValueError(
+                f"IPEX quantization supports [awq, gptq, auto-round, fp8], "
+                f"but got {self.method}.")
         if is_checkpoint_fp8_serialized:
             self.quant_method = "fp8"
             print("Detected fp8 checkpoint. Please note that the "
-                   "format is experimental and subject to change.")
+                  "format is experimental and subject to change.")
         self.activation_scheme = "dynamic"
 
     def __repr__(self) -> str:
@@ -103,8 +100,7 @@ class IPEXConfig(QuantizationConfig):
         group_size = cls.get_from_keys(config, ["group_size"])
         lm_head_quantized = cls.get_from_keys_or(config, ["lm_head"],
                                                  default=False)
-        data_type = cls.get_from_keys_or(config, ["data_type"],
-                                      default="int4")
+        data_type = cls.get_from_keys_or(config, ["data_type"], default="int4")
         is_checkpoint_fp8_serialized = ("fp8" in data_type)
 
         desc_act = cls.get_from_keys_or(config, ["desc_act"], default=False)
@@ -137,20 +133,22 @@ class IPEXConfig(QuantizationConfig):
                 return IPEXAutoRoundLinearMethod(self)
         return None
 
+
 class IPEXAutoRoundLinearMethod(LinearMethodBase):
+
     def __init__(self, quant_config: IPEXConfig):
         self.quant_config = quant_config
         self.out_dtype = torch.get_default_dtype()
 
     def create_weights(
-            self,
-            layer: torch.nn.Module,
-            input_size_per_partition: int,
-            output_partition_sizes: list[int],
-            input_size: int,
-            output_size: int,
-            params_dtype: torch.dtype,
-            **extra_weight_attrs,
+        self,
+        layer: torch.nn.Module,
+        input_size_per_partition: int,
+        output_partition_sizes: list[int],
+        input_size: int,
+        output_size: int,
+        params_dtype: torch.dtype,
+        **extra_weight_attrs,
     ):
         # maybe_create_device_identity()
 
@@ -170,9 +168,9 @@ class IPEXAutoRoundLinearMethod(LinearMethodBase):
             output_size_per_partition,
             input_size_per_partition,
             dtype=weight_dtype),
-            input_dim=1,
-            output_dim=0,
-            weight_loader=weight_loader)
+                                      input_dim=1,
+                                      output_dim=0,
+                                      weight_loader=weight_loader)
         layer.register_parameter("weight", weight)
 
         # If checkpoint is serialized fp8, load them.
@@ -192,7 +190,7 @@ class IPEXAutoRoundLinearMethod(LinearMethodBase):
             if self.quant_config.activation_scheme == "static":
                 scale = PerTensorScaleParameter(data=torch.empty(
                     1, dtype=torch.float32),
-                    weight_loader=weight_loader)
+                                                weight_loader=weight_loader)
 
                 scale[:] = torch.finfo(torch.float32).min
                 set_weight_attrs(scale, {"scale_type": "input_scale"})
@@ -209,8 +207,11 @@ class IPEXAutoRoundLinearMethod(LinearMethodBase):
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         weight = layer.weight.data
         scale = layer.weight_scale.data
-        output = torch.ops.torch_ipex.fp8_gemm_w8a16(x, weight, True, scale, bias)
+
+        output = torch.ops.vllm.fp8_gemm(x, False, weight, True, None, x.dtype,
+                                         None, scale, bias, False)
         return output
+
 
 class IPEXGPTQLinearMethod(GPTQLinearMethod):
     """GPTQ linear method using IPEX for the CPU/XPU backend.

@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, List
+from typing import Optional
 
 import torch
 
 from vllm.logger import init_logger
+from vllm.utils import direct_register_custom_op
 
 logger = init_logger(__name__)
 
@@ -12,6 +13,47 @@ try:
     import intel_extension_for_pytorch as ipex
 except ImportError as e:
     logger.warning("Import error msg: %s", e.msg)
+
+
+def ipex_fp8_gemm(
+    a: torch.Tensor,
+    trans_a: bool,
+    b: torch.Tensor,
+    trans_b: bool,
+    d: Optional[torch.Tensor],
+    dtype: torch.dtype,
+    a_scale_inv: Optional[torch.Tensor],
+    b_scale_inv: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor],
+    acc: bool,
+) -> torch.Tensor:
+    return torch.ops.torch_ipex.fp8_gemm_w8a16(a, trans_a, b, trans_b, d,
+                                               dtype, a_scale_inv, b_scale_inv,
+                                               bias, acc)
+
+
+def ipex_fp8_gemm_fake_(
+    a: torch.Tensor,
+    trans_a: bool,
+    b: torch.Tensor,
+    trans_b: bool,
+    d: Optional[torch.Tensor],
+    dtype: torch.dtype,
+    a_scale_inv: Optional[torch.Tensor],
+    b_scale_inv: Optional[torch.Tensor],
+    bias: Optional[torch.Tensor],
+    acc: bool,
+) -> torch.Tensor:
+    dim_0 = a.size(1) if trans_a else a.size(0)
+    dim_1 = b.size(0) if trans_b else b.size(1)
+    return torch.zeros((dim_0, dim_1), device=a.device, dtype=a.dtype)
+
+
+direct_register_custom_op(op_name="fp8_gemm",
+                          op_func=ipex_fp8_gemm,
+                          mutates_args=[],
+                          fake_impl=ipex_fp8_gemm_fake_,
+                          dispatch_key="XPU")
 
 
 class ipex_ops:
@@ -401,7 +443,8 @@ class ipex_ops:
     #     ipex.llm.functional.lora_expand(inputs, lora_b_weights,
     #                                     output_tensor, token_lora_mapping,
     #                                     token_indices_sorted_by_lora_ids,
-    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     num_tokens_per_lora,
+    #                                     num_tokens_per_lora,
     #                                     lora_token_start_loc, lora_ids,
     #                                     offset_start, add_inputs)
 
@@ -418,6 +461,7 @@ class ipex_ops:
     #     ipex.llm.functional.lora_shrink(inputs, lora_a_weights,
     #                                     output_tensor, token_lora_mapping,
     #                                     token_indices_sorted_by_lora_ids,
-    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     num_tokens_per_lora,
+    #                                     num_tokens_per_lora,
     #                                     lora_token_start_loc, lora_ids,
     #                                     scaling)
