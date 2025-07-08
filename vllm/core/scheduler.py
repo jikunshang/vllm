@@ -565,7 +565,7 @@ class Scheduler:
                 return
             # print(f"fetcing key queue len: {self.fetching_kv.qsize()}")
             if not self.fetching_kv.empty():
-                self.profiler.start('internal', 'fetching_kv')
+                self.scheduler_profiler.start('internal', 'fetching_kv')
                 seq_group = self.fetching_kv.get()
                 hash_prefix = hash_list(seq_group.prompt_token_ids)
                 print(f"seq group is {hash_prefix}")
@@ -574,7 +574,7 @@ class Scheduler:
                 if seq_group is not None:
                     self.waiting.append(self.fetching_kv.get())
                 self.fetching_kv.task_done()
-                self.profiler.end()
+                self.scheduler_profiler.end()
             else:
                 time.sleep(0.1)
 
