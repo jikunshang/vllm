@@ -1423,7 +1423,7 @@ class LLMEngine:
                 # We use ExecuteModelRequest to pass the last sampled_token_ids
                 # to each of the non-last PP stages for in-place prepare_input.
                 last_sampled_token_ids=last_sampled_token_ids,
-                shared_kv_cache_dict=self.kv_cache_shared_dict)
+                kv_cache_shared_dict=self.kv_cache_shared_dict)
 
             if allow_async_output_proc:
                 execute_model_req.async_callback = self.async_callbacks[

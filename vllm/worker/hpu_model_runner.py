@@ -2663,7 +2663,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
     ) -> Optional[Union[List[SamplerOutput], IntermediateTensors]]:
         warmup_mode = kwargs.get('warmup_mode', False)
         previous_hidden_states = kwargs.get('previous_hidden_states')
-        shared_kv_cache_dict: Optional[SharedDict] = kwargs.get('shared_kv_cache_dict', None)
+        kv_cache_shared_dict: Optional[SharedDict] = kwargs.get('kv_cache_shared_dict', None)
 
         self.has_patched_prev_output = False
         use_delayed_sampling = VLLM_DELAYED_SAMPLING and not warmup_mode
@@ -2875,13 +2875,13 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         if get_tensor_model_parallel_rank() == 0:
                             current_tokens = input_tokens_tensor_cpu[idx][:slen]
                             prefix = tensor_hash(current_tokens)
-                            assert shared_kv_cache_dict is not None
-                            kv_cache_for_cur_seq, hidden_states = shared_kv_cache_dict.get_item(prefix)
+                            assert kv_cache_shared_dict is not None
+                            kv_cache_for_cur_seq, hidden_states = kv_cache_shared_dict.get_item(prefix)
 
                             if get_tensor_model_parallel_world_size() > 1:
                                 kv_cache_for_cur_seq = tensor_model_parallel_all_reduce(kv_cache_for_cur_seq)
                                 hidden_states = tensor_model_parallel_all_reduce(hidden_states)
-                            shared_kv_cache_dict.remove_item(prefix)
+                            kv_cache_shared_dict.remove_item(prefix)
                         else:
                             kv_cache_for_cur_seq = torch.zeros(kv_cache_shape, dtype=torch.bfloat16, device="hpu")
                             hidden_states = torch.zeros((1, 7168), dtype=torch.bfloat16, device="hpu")

@@ -1322,8 +1322,8 @@ class ExecuteModelRequest(
     async_callback: Optional[Callable] = None
     # Dummy batch
     is_dummy_batch: bool = False
-    # shared_kv_cache_dict
-    shared_kv_cache_dict: Optional[SharedDict] = None
+    # kv_cache_shared_dict
+    kv_cache_shared_dict: Optional[SharedDict] = None
 
     @property
     def is_first_multi_step(self) -> bool:
