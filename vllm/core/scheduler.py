@@ -609,6 +609,7 @@ class Scheduler:
             self.fetching_kv.put(seq_group)
         # Add sequence groups to the waiting queue.
         else:
+            print(f"adding seq group {seq_group.request_id} to waiting queue")
             self.waiting.append(seq_group)
 
     def _add_seq_group_to_running(self, seq_group: SequenceGroup) -> None:

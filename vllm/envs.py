@@ -623,7 +623,7 @@ environment_variables: Dict[str, Callable[[], Any]] = {
     lambda: bool(int(os.getenv("VLLM_PP_USE_CPU_COMS", "0"))),
     
     "VLLM_USE_ASYNC_PD":
-    lambda: bool(int(os.getenv("VLLM_USE_ASYNC_PD", "1"))),
+    lambda: bool(int(os.getenv("VLLM_USE_ASYNC_PD", "0"))),
 }
 
 # end-env-vars-definition

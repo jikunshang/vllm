@@ -800,6 +800,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
         
         self.pd_executor_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.use_async_pd = envs.VLLM_USE_ASYNC_PD
+        logger.info(f"will use async pd: {self.use_async_pd}")
 
     def _set_gc_threshold(self) -> None:
         """
