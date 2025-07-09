@@ -466,7 +466,8 @@ class Scheduler:
         # Sequence groups in FETCHING_KV state, before becoming waiting,
         self.fetching_kv: Queue[SequenceGroup] = Queue()
         self.fetching_thread = threading.Thread(target=self._fetch_kv_thread,)
-        self.fetching_thread.start()
+        if self.need_fetch_kv:
+            self.fetching_thread.start()
         # Sequence groups in the WAITING state.
         # Contain new prefill or preempted requests.
         self.waiting: Deque[SequenceGroup] = deque()

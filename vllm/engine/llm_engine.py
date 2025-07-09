@@ -352,6 +352,7 @@ class LLMEngine:
         # Create the scheduler.
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
+        use_async_pd = envs.VLLM_USE_ASYNC_PD and self.vllm_config.kv_transfer_config.is_kv_consumer
         self.scheduler = [
             Scheduler(
                 self.scheduler_config, self.cache_config, self.lora_config,
@@ -359,7 +360,7 @@ class LLMEngine:
                 self.async_callbacks[v_id]
                 if self.model_config.use_async_output_proc else None,
                 self.kv_cache_shared_dict,
-                self.vllm_config.kv_transfer_config.is_kv_consumer)
+                use_async_pd)
             for v_id in range(self.parallel_config.pipeline_parallel_size)
         ]
 
