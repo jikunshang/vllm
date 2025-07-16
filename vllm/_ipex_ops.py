@@ -27,9 +27,8 @@ def ipex_fp8_gemm(
     bias: Optional[torch.Tensor],
     acc: bool,
 ) -> torch.Tensor:
-    return torch.ops.torch_ipex.fp8_gemm_w8a16(a, trans_a, b, trans_b, d,
-                                               dtype, a_scale_inv, b_scale_inv,
-                                               bias, acc)
+    return torch.ops.torch_ipex.fp8_gemm_w8a16(a, b, trans_b, b_scale_inv,
+                                               bias)
 
 
 def ipex_fp8_gemm_fake_(
