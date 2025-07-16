@@ -564,12 +564,10 @@ class Scheduler:
             if self.fetching_thread_should_shutdown:
                 logger.info("The fetching thread is shutting down.")
                 return
-            # print(f"fetcing key queue len: {self.fetching_kv.qsize()}")
             if not self.fetching_kv.empty():
                 self.scheduler_profiler.start('internal', 'fetching_kv')
                 seq_group = self.fetching_kv.get()
                 hash_prefix = hash_list(seq_group.prompt_token_ids)
-                print(f"seq group is {hash_prefix}")
                 prefix, kv_cache, hidden_states = get_kv_and_hidden_states(hash_prefix)
                 put_to_shared_dict(prefix, kv_cache, hidden_states)
                 if seq_group is not None:
@@ -583,7 +581,6 @@ class Scheduler:
         self.fetching_thread_should_shutdown = True
         """Shutdown the scheduler."""
         if self.fetching_thread.is_alive():
-            print(f"trying to join thread!")
             self.fetching_thread.join(timeout=1.0)
         else:
             logger.warning("The fetching thread is not alive, "
@@ -609,7 +606,6 @@ class Scheduler:
             self.fetching_kv.put(seq_group)
         # Add sequence groups to the waiting queue.
         else:
-            print(f"adding seq group {seq_group.request_id} to waiting queue")
             self.waiting.append(seq_group)
 
     def _add_seq_group_to_running(self, seq_group: SequenceGroup) -> None:
