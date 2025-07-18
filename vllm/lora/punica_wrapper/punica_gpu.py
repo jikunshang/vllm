@@ -8,6 +8,7 @@ https://arxiv.org/abs/2310.18547
 """
 
 from typing import Optional, Union, Tuple, final
+import os
 
 import torch
 
@@ -17,18 +18,15 @@ from vllm.platforms import current_platform
 from vllm.triton_utils import HAS_TRITON
 
 is_xpu = current_platform.is_xpu()
+xpu_use_triton_kernels = os.getenv("XPU_USE_TRITON_KERNELS", "0") == "1"
 
-if HAS_TRITON and not is_xpu:
-    from vllm.lora.ops.triton_ops import (LoRAKernelMeta, lora_expand,
-                                          lora_shrink)
-elif is_xpu:
+if is_xpu and not xpu_use_triton_kernels:
     from vllm._ipex_ops import ipex_ops
     try:
         lora_expand = ipex_ops.lora_expand
         lora_shrink = ipex_ops.lora_shrink
         XPU_KERNEL_V = 1
     except AttributeError:
-        from vllm._ipex_ops import ipex_ops
         bgmv_expand = ipex_ops.bgmv_expand
         bgmv_expand_slice = ipex_ops.bgmv_expand_slice
         bgmv_shrink = ipex_ops.bgmv_shrink
@@ -36,7 +34,11 @@ elif is_xpu:
         sgmv_expand_slice = ipex_ops.sgmv_expand_slice
         sgmv_shrink = ipex_ops.sgmv_shrink
         XPU_KERNEL_V = 0
-
+elif HAS_TRITON:
+    from vllm.lora.ops.triton_ops import (LoRAKernelMeta, lora_expand,
+                                          lora_shrink)
+    if is_xpu:
+        XPU_KERNEL_V = 1
 
 from .punica_base import PunicaWrapperBase
 
@@ -57,9 +59,8 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         self.max_loras = kwargs['max_loras']
 
         if not (is_xpu and XPU_KERNEL_V == 0):
-            self.token_mapping_meta = LoRAKernelMeta.make(self.max_loras,
-                                                          max_num_batched_tokens,
-                                                          device=device)
+            self.token_mapping_meta = LoRAKernelMeta.make(
+                self.max_loras, max_num_batched_tokens, device=device)
 
         # When cudagraph capture size is greater than max_num_seqs (max_batches,
         # here), V0 captures the graph as if max_num_seqs is set to
@@ -148,7 +149,6 @@ class PunicaWrapperGPU(PunicaWrapperBase):
     ):
         bgmv_expand_slice(x, w_t_all, y, self.token_lora_indices, y_offset,
                           y_slice_size, add_inputs)
-
 
     def add_shrink(self, y: torch.Tensor, x: torch.Tensor,
                    lora_a_stacked: tuple[torch.Tensor,
@@ -267,7 +267,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
 
         if is_xpu and XPU_KERNEL_V == 0:
             bgmv_expand(x, lora_b_stacked, y, self.token_lora_indices,
-                            add_inputs)
+                        add_inputs)
         else:
             lora_expand(
                 x.unsqueeze(dim=0),
