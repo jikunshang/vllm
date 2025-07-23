@@ -21,15 +21,13 @@ is_xpu = current_platform.is_xpu()
 xpu_use_triton_kernels = os.getenv("XPU_USE_TRITON_KERNELS", "0") == "1"
 
 if is_xpu and not xpu_use_triton_kernels:
-    from vllm._ipex_ops import ipex_ops
+    from vllm._ipex_ops import bgmv_expand_slice, bgmv_shrink, ipex_ops
     try:
         lora_expand = ipex_ops.lora_expand
         lora_shrink = ipex_ops.lora_shrink
         XPU_KERNEL_V = 1
     except AttributeError:
         bgmv_expand = ipex_ops.bgmv_expand
-        bgmv_expand_slice = ipex_ops.bgmv_expand_slice
-        bgmv_shrink = ipex_ops.bgmv_shrink
         sgmv_expand = ipex_ops.sgmv_expand
         sgmv_expand_slice = ipex_ops.sgmv_expand_slice
         sgmv_shrink = ipex_ops.sgmv_shrink
@@ -108,6 +106,9 @@ class PunicaWrapperGPU(PunicaWrapperBase):
             scale,
         )
 
+    def _get_token_lora_indices(self, x: torch.Tensor) -> torch.IntTensor:
+        return torch.narrow(self._token_lora_indices, 0, 0, x.size(0))
+
     def _apply_shrink_decode(
         self,
         y: torch.Tensor,
@@ -115,7 +116,7 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         w_t_all: torch.Tensor,
         scale: float,
     ):
-        bgmv_shrink(x, w_t_all, y, self.token_lora_indices, scale)
+        bgmv_shrink(x, w_t_all, y, self._get_token_lora_indices(x), scale)
 
     def _apply_expand_prefill(
         self,
@@ -147,7 +148,8 @@ class PunicaWrapperGPU(PunicaWrapperBase):
         y_slice_size: Optional[int],
         add_inputs: bool,
     ):
-        bgmv_expand_slice(x, w_t_all, y, self.token_lora_indices, y_offset,
+        token_lora_indices = self._get_token_lora_indices(x)
+        bgmv_expand_slice(x, w_t_all, y, token_lora_indices, y_offset,
                           y_slice_size, add_inputs)
 
     def add_shrink(self, y: torch.Tensor, x: torch.Tensor,

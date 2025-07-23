@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Optional, List
+from typing import Optional
 
 import torch
 
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
+from vllm.utils import direct_register_custom_op
 
 logger = init_logger(__name__)
 
@@ -350,13 +352,21 @@ class ipex_ops:
         torch.xpu.swap_blocks(src, dst, block_mapping)  # type: ignore
 
     @staticmethod
-    def bgmv_shrink(inputs: torch.Tensor,
-                    lora_a_weights: torch.Tensor,
-                    output_tensor: torch.Tensor,
-                    lora_indices_tensor: torch.Tensor,
-                    scaling: float = 1.0) -> None:
+    def _bgmv_shrink(inputs: torch.Tensor,
+                     lora_a_weights: torch.Tensor,
+                     output_tensor: torch.Tensor,
+                     lora_indices_tensor: torch.Tensor,
+                     scaling: float = 1.0) -> None:
+
         ipex.llm.functional.bgmv_shrink(inputs, lora_a_weights, output_tensor,
                                         lora_indices_tensor, scaling)
+
+    def _bgmv_shrink_fake(inputs: torch.Tensor,
+                          lora_a_weights: torch.Tensor,
+                          output_tensor: torch.Tensor,
+                          lora_indices_tensor: torch.Tensor,
+                          scaling: float = 1.0) -> None:
+        pass
 
     @staticmethod
     def bgmv_expand(inputs: torch.Tensor,
@@ -368,18 +378,27 @@ class ipex_ops:
                                         lora_indices_tensor, add_inputs)
 
     @staticmethod
-    def bgmv_expand_slice(inputs: torch.Tensor,
-                          lora_b_weights: torch.Tensor,
-                          output_tensor: torch.Tensor,
-                          lora_indices_tensor: torch.Tensor,
-                          slice_offset: int,
-                          slice_size: int,
-                          add_inputs: bool = True) -> None:
+    def _bgmv_expand_slice(inputs: torch.Tensor,
+                           lora_b_weights: torch.Tensor,
+                           output_tensor: torch.Tensor,
+                           lora_indices_tensor: torch.Tensor,
+                           slice_offset: int,
+                           slice_size: int,
+                           add_inputs: bool = True) -> None:
         ipex.llm.functional.bgmv_expand_slice(inputs, lora_b_weights,
                                               output_tensor,
                                               lora_indices_tensor,
                                               slice_offset, slice_size,
                                               add_inputs)
+
+    def _bgmv_expand_slice_fake(inputs: torch.Tensor,
+                                lora_b_weights: torch.Tensor,
+                                output_tensor: torch.Tensor,
+                                lora_indices_tensor: torch.Tensor,
+                                slice_offset: int,
+                                slice_size: int,
+                                add_inputs: bool = True) -> None:
+        pass
 
     @staticmethod
     def sgmv_shrink(inputs: torch.Tensor,
@@ -450,7 +469,7 @@ class ipex_ops:
     #     ipex.llm.functional.lora_expand(inputs, lora_b_weights,
     #                                     output_tensor, token_lora_mapping,
     #                                     token_indices_sorted_by_lora_ids,
-    #                                     num_tokens_per_lora, num_tokens_per_lora,
+    #                                     num_tokens_per_lora, num_tokens_per_lora, #no_qa
     #                                     lora_token_start_loc, lora_ids,
     #                                     offset_start, add_inputs)
 
@@ -470,3 +489,27 @@ class ipex_ops:
     #                                     num_tokens_per_lora, num_tokens_per_lora,
     #                                     lora_token_start_loc, lora_ids,
     #                                     scaling)
+
+
+try:
+    direct_register_custom_op(
+        op_name="bgmv_shrink",
+        op_func=ipex_ops._bgmv_shrink,
+        mutates_args=["output_tensor"],
+        fake_impl=ipex_ops._bgmv_shrink_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+    bgmv_shrink = torch.ops.vllm.bgmv_shrink
+
+    direct_register_custom_op(
+        op_name="bgmv_expand_slice",
+        op_func=ipex_ops._bgmv_expand_slice,
+        mutates_args=["output_tensor"],
+        fake_impl=ipex_ops._bgmv_expand_slice_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+    bgmv_expand_slice = torch.ops.vllm.bgmv_expand_slice
+
+except AttributeError:
+    bgmv_shrink = ipex_ops._bgmv_shrink
+    bgmv_expand_slice = ipex_ops._bgmv_expand_slice
