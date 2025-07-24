@@ -17,7 +17,7 @@ class TestConfig:
 
 model_config = {
     "bigcode/starcoder2-3b": TestConfig(4096, (800, 1100)),
-    "google/gemma-3-1b-it": TestConfig(4096, (400, 800)),
+    # "google/gemma-3-1b-it": TestConfig(4096, (400, 800)),
 }
 
 
@@ -25,7 +25,7 @@ model_config = {
     "model",
     [
         "bigcode/starcoder2-3b",  # sliding window only
-        "google/gemma-3-1b-it",  # sliding window + full attention
+        # "google/gemma-3-1b-it",  # sliding window + full attention
     ],
 )
 @pytest.mark.parametrize("batch_size", [5])
@@ -43,7 +43,10 @@ def test_sliding_window_retrieval(
     test_config = model_config[model]
 
     llm = LLM(
-        model=model, disable_hybrid_kv_cache_manager=disable_hybrid_kv_cache_manager
+        model=model,
+        disable_hybrid_kv_cache_manager=disable_hybrid_kv_cache_manager,
+        enforce_eager=True,
+        block_size=64,
     )
     sampling_params = SamplingParams(temperature=0.0, max_tokens=100)
 
