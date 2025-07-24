@@ -322,6 +322,8 @@ class EagleProposer:
                                                        non_blocking=True),
             seq_lens=new_seq_lens_cpu.to(device, non_blocking=True),
             query_start_loc_cpu=new_query_start_loc_cpu,
+            seq_start_loc=None,
+            seq_start_loc_cpu=None,
             seq_lens_cpu=new_seq_lens_cpu,
             num_computed_tokens_cpu=common_attn_metadata.
             num_computed_tokens_cpu,
