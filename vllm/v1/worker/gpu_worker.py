@@ -407,7 +407,7 @@ class Worker(WorkerBase):
                 )
             if self.model_runner.is_pooling_model:
                 self.model_runner._dummy_pooler_run(hidden_states)
-            else:
+            elif not self.model_runner.use_spec_decode:
                 self.model_runner._dummy_sampler_run(
                     hidden_states=last_hidden_states)
 

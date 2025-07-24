@@ -246,6 +246,9 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         # NOTE(Jiayi): currently we put the entire draft model on
         # the last PP rank. This is not ideal if there are many
         # layers in the draft model.
+        self.use_spec_decode = False
+        if self.speculative_config:
+            self.use_spec_decode = True
         if self.speculative_config and get_pp_group().is_last_rank:
             if self.speculative_config.method == "ngram":
                 self.drafter = NgramProposer(self.vllm_config)
@@ -3025,11 +3028,10 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                     # Cache the dummy encoder outputs.
                     self.encoder_cache["tmp"] = dict(
                         enumerate(dummy_encoder_outputs))
-
         # Add `is_profile` here to pre-allocate communication buffers
         hidden_states, last_hidden_states \
             = self._dummy_run(self.max_num_tokens, is_profile=True)
-        if get_pp_group().is_last_rank:
+        if get_pp_group().is_last_rank and not self.use_spec_decode:
             if self.is_pooling_model:
                 output = self._dummy_pooler_run(hidden_states)
             else:
