@@ -361,6 +361,9 @@ class GPUModelRunner(
         # NOTE(Jiayi): currently we put the entire draft model on
         # the last PP rank. This is not ideal if there are many
         # layers in the draft model.
+        self.use_spec_decode = False
+        if self.speculative_config:
+            self.use_spec_decode = True
         if self.speculative_config and get_pp_group().is_last_rank:
             self.drafter: (
                 NgramProposer | SuffixDecodingProposer | EagleProposer | MedusaProposer
@@ -4131,7 +4134,7 @@ class GPUModelRunner(
         hidden_states, last_hidden_states = self._dummy_run(
             self.max_num_tokens, is_profile=True
         )
-        if get_pp_group().is_last_rank:
+        if get_pp_group().is_last_rank and not self.use_spec_decode:
             if self.is_pooling_model:
                 output = self._dummy_pooler_run(hidden_states)
             else:
