@@ -455,7 +455,7 @@ class FlashAttentionImpl(AttentionImpl):
 
         if attn_metadata is None:
             # Profiling run.
-            return output
+            return output.uniform_()
 
         attn_type = self.attn_type
 
