@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING, Optional
 
 import torch
+import vllm_xpu_kernels._C  # noqa
 
 import vllm.envs as envs
 from vllm.logger import init_logger
