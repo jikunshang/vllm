@@ -312,6 +312,16 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                                         pin_memory=self.pin_memory)
         self.seq_lens_np = self.seq_lens_cpu.numpy()
 
+        # this is XPU specific
+        self.seq_start_loc = torch.zeros(self.max_num_reqs + 1,
+                                         dtype=torch.int32,
+                                         device=self.device)
+        self.seq_start_loc_cpu = torch.zeros(self.max_num_reqs + 1,
+                                             dtype=torch.int32,
+                                             device="cpu",
+                                             pin_memory=self.pin_memory)
+        self.seq_start_loc_np = self.seq_start_loc_cpu.numpy()
+
         # Layer pairings for cross-layer KV sharing.
         # If an Attention layer `layer_name` is in the keys of this dict, it
         # means this layer will perform attention using the keys and values
@@ -705,6 +715,14 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             self.input_batch.num_computed_tokens_cpu[:num_reqs] +
             num_scheduled_tokens)
 
+        # for xpu
+        seq_lens = (self.input_batch.num_computed_tokens_cpu[:num_reqs] +
+                    num_scheduled_tokens)
+        self.seq_start_loc_np[0] = 0
+        np.cumsum(seq_lens, out=self.seq_start_loc_np[1:num_reqs + 1])
+        self.seq_start_loc[:num_reqs + 1].copy_(
+            self.seq_start_loc_cpu[:num_reqs + 1], non_blocking=True)
+
         # Copy the tensors to the GPU.
         self.input_ids[:total_num_scheduled_tokens].copy_(
             self.input_ids_cpu[:total_num_scheduled_tokens], non_blocking=True)
@@ -816,6 +834,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             common_attn_metadata = CommonAttentionMetadata(
                 query_start_loc=self.query_start_loc[:num_reqs + 1],
                 query_start_loc_cpu=self.query_start_loc_cpu[:num_reqs + 1],
+                seq_start_loc=self.seq_start_loc[:num_reqs + 1],
+                seq_start_loc_cpu=self.seq_start_loc_cpu[:num_reqs + 1],
                 seq_lens=self.seq_lens[:num_reqs],
                 seq_lens_cpu=self.seq_lens_cpu[:num_reqs],
                 num_computed_tokens_cpu=self.input_batch.
@@ -2188,6 +2208,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                     query_start_loc=self.query_start_loc[:num_reqs + 1],
                     query_start_loc_cpu=self.query_start_loc_cpu[:num_reqs +
                                                                  1],
+                    seq_start_loc=self.seq_start_loc[:num_reqs + 1],
+                    seq_start_loc_cpu=self.seq_start_loc_cpu[:num_reqs + 1],
                     seq_lens=self.seq_lens[:num_reqs],
                     seq_lens_cpu=self.seq_lens_cpu[:num_reqs],
                     num_computed_tokens_cpu=self.input_batch.
