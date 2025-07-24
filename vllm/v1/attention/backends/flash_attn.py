@@ -24,6 +24,7 @@ if is_flash_attn_varlen_func_available():
 
 from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.logger import init_logger
+from vllm.platforms import current_platform
 from vllm.utils import cdiv
 from vllm.v1.attention.backends.utils import (AttentionCGSupport,
                                               AttentionMetadataBuilder,
@@ -133,6 +134,9 @@ class FlashAttentionMetadata:
     prefix_kv_lens: Optional[torch.Tensor]
     suffix_kv_lens: Optional[torch.Tensor]
 
+    # For XPU.
+    seq_start_loc: Optional[torch.Tensor]
+
     # Optional aot scheduling
     scheduler_metadata: Optional[torch.Tensor] = None
     prefix_scheduler_metadata: Optional[torch.Tensor] = None
@@ -222,6 +226,8 @@ class FlashAttentionMetadataBuilder(
         max_query_len = common_attn_metadata.max_query_len
         max_seq_len = int(common_attn_metadata.seq_lens_cpu.max())
         query_start_loc = common_attn_metadata.query_start_loc
+        seq_start_loc = common_attn_metadata.seq_start_loc \
+            if current_platform.is_xpu() else None
         seq_lens = common_attn_metadata.seq_lens
         seq_lens_cpu = common_attn_metadata.seq_lens_cpu
         block_table_tensor = common_attn_metadata.block_table_tensor
@@ -335,6 +341,7 @@ class FlashAttentionMetadataBuilder(
             num_actual_tokens=num_actual_tokens,
             max_query_len=max_query_len,
             query_start_loc=query_start_loc,
+            seq_start_loc=seq_start_loc,
             max_seq_len=max_seq_len,
             seq_lens=seq_lens,
             block_table=block_table_tensor,
@@ -521,6 +528,8 @@ class FlashAttentionImpl(AttentionImpl):
             scheduler_metadata = attn_metadata.scheduler_metadata
 
             descale_shape = (cu_seqlens_q.shape[0] - 1, key.shape[1])
+            cu_seqlens_k = attn_metadata.seq_start_loc if \
+                current_platform.is_xpu() else None
 
             flash_attn_varlen_func(
                 q=query[:num_actual_tokens],
@@ -529,6 +538,7 @@ class FlashAttentionImpl(AttentionImpl):
                 out=output[:num_actual_tokens],
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
+                cu_seqlens_k=cu_seqlens_k,
                 seqused_k=seqused_k,
                 max_seqlen_k=max_seqlen_k,
                 softmax_scale=self.scale,
