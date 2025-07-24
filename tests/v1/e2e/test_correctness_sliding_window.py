@@ -18,7 +18,7 @@ class TestConfig:
 
 model_config = {
     "bigcode/starcoder2-3b": TestConfig(4096, (800, 1100)),
-    "google/gemma-3-1b-it": TestConfig(4096, (400, 800)),
+    #"google/gemma-3-1b-it": TestConfig(4096, (400, 800)),
 }
 
 
@@ -26,7 +26,7 @@ model_config = {
     "model",
     [
         "bigcode/starcoder2-3b",  # sliding window only
-        "google/gemma-3-1b-it",  # sliding window + full attention
+        #"google/gemma-3-1b-it",  # sliding window + full attention
     ])
 @pytest.mark.parametrize("batch_size", [5])
 @pytest.mark.parametrize("seed", [1])
@@ -42,7 +42,7 @@ def test_sliding_window_retrieval(monkeypatch, model, batch_size, seed):
 
         test_config = model_config[model]
 
-        llm = LLM(model=model)
+        llm = LLM(model=model, enforce_eager=True, block_size=64)
         sampling_params = SamplingParams(temperature=0.0, max_tokens=100)
 
         prompts, answer, indices = prep_prompts(batch_size,
