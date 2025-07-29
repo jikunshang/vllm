@@ -608,8 +608,8 @@ class Scheduler:
             self.fetching_kv.put(seq_group)
             # we put twice to avoid fetching kv empty status
             self.fetching_kv.put(seq_group)
-        # Add sequence groups to the waiting queue.
         else:
+            # Add sequence groups to the waiting queue.
             self.waiting.append(seq_group)
 
     def _add_seq_group_to_running(self, seq_group: SequenceGroup) -> None:

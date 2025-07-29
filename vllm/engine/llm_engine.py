@@ -353,7 +353,8 @@ class LLMEngine:
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
 
-        self.use_async_pd = envs.VLLM_USE_ASYNC_PD and \
+        self.use_async_kv_transfer_in_pd = \
+            envs.VLLM_USE_ASYNC_TRANSFER_IN_PD and \
             self.vllm_config.kv_transfer_config.is_kv_consumer
         self.scheduler = [
             Scheduler(
@@ -361,7 +362,7 @@ class LLMEngine:
                 self.parallel_config.pipeline_parallel_size,
                 self.async_callbacks[v_id]
                 if self.model_config.use_async_output_proc else None,
-                self.kv_cache_shared_dict, self.use_async_pd)
+                self.kv_cache_shared_dict, self.use_async_kv_transfer_in_pd)
             for v_id in range(self.parallel_config.pipeline_parallel_size)
         ]
 
@@ -1470,7 +1471,7 @@ class LLMEngine:
 
             # in async PD scenario, outputs here maybe empty, and still
             # append to ctx. this may cause error
-            if len(outputs) > 0 or (not self.use_async_pd):
+            if len(outputs) > 0 or (not self.use_async_kv_transfer_in_pd):
                 # Add results to the output_queue
                 ctx.append_output(
                     outputs=outputs,

@@ -795,8 +795,8 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
 
         self.pd_executor_pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=1)
-        self.use_async_pd = envs.VLLM_USE_ASYNC_PD
-        logger.info("will use async pd: %s", self.use_async_pd)
+        self.use_async_kv_transfer_in_pd = envs.VLLM_USE_ASYNC_TRANSFER_IN_PD
+        logger.info("will use async pd: %s", self.use_async_kv_transfer_in_pd)
 
     def _set_gc_threshold(self) -> None:
         """
@@ -1246,7 +1246,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                                                    pad=0,
                                                    dtype=torch.long,
                                                    device='cpu')
-        if self.use_async_pd:
+        if self.use_async_kv_transfer_in_pd:
             self.input_tokens_tensor_cpu = input_tokens_tensor.clone()
 
         input_positions = make_tensor_with_pad(input_positions,
@@ -2973,7 +2973,7 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                         return hidden_states, bypass_model_exec
 
                     model = self.get_model()
-                    if self.use_async_pd:
+                    if self.use_async_kv_transfer_in_pd:
                         hidden_states, bypass_model_exec = \
                             async_recv_kv_caches(model, model_input,
                                                  attn_metadata, kv_caches)
@@ -3101,13 +3101,13 @@ class HPUModelRunner(HPUModelRunnerBase[ModelInputForHPUWithSamplingMetadata]):
                             hidden_states_list,
                         )
 
-                    if self.use_async_pd:
+                    if self.use_async_kv_transfer_in_pd:
                         async_send_kv_caches(hidden_states)
                     else:
                         sync_send_kv_caches(hidden_states)
 
                     now = time.time()
-                    logger.info("KV send time: %S", now - cur_time)
+                    logger.info("KV send time: %f", now - cur_time)
 
                 if self.lora_config:
                     LoraMask.setLoraMask(
