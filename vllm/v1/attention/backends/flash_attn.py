@@ -32,6 +32,8 @@ from vllm.v1.attention.backends.utils import (AttentionCGSupport,
                                               get_kv_cache_layout)
 from vllm.v1.kv_cache_interface import AttentionSpec
 
+if current_platform.is_xpu():
+    from vllm._ipex_ops import ipex_ops
 logger = init_logger(__name__)
 
 # NOTE(woosuk): This is an arbitrary number. Tune it if needed.
@@ -622,6 +624,29 @@ class FlashAttentionImpl(AttentionImpl):
         descale_shape = (
             cu_seqlens_q.shape[0] - 1,  # type: ignore[union-attr]
             self.num_kv_heads)
+
+        if current_platform.is_xpu():
+            ipex_ops.varlen_attention(
+                    query=query,
+                    key=key,
+                    value=value,
+                    out=output,
+                    seqlen_q=cu_seqlens_q,
+                    seqlen_k=cu_seqlens_k,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
+                    softmax_scale=self.scale,
+                    is_causal=False,  # Encoder attention is bidirectional
+                    alibi_slopes=self.alibi_slopes,
+                    pdropout=0.0,
+                    zero_tensors=False,
+                    return_softmax=False,
+                    gen_=None,
+                    window_size_left=-1,
+                    window_size_right=-1,
+                    logits_soft_cap=self.logits_soft_cap,
+                    )
+            return output
 
         # Call flash attention directly on Q, K, V tensors
         flash_attn_varlen_func(
