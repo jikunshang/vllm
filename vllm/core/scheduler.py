@@ -557,7 +557,7 @@ class Scheduler:
             self.kv_cache_shared_dict.add_item(
                 prefix, [kv_cache_hpu, hidden_states_hpu])
             if torch.distributed.get_rank() == 0:
-                logger.info(
+                logger.debug(
                     "putting kv cache to shared dict, takes: %3f seconds"
                     "start time: %s, end time: %s",
                     end_time_stamp - start_time_stamp, start_time_stamp,
