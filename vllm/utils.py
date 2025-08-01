@@ -205,11 +205,13 @@ class SharedDict:
 
     def __init__(self):
         self.dict = {}
+        self.ref_count: Dict[str, int] = {}
         self.lock = threading.Lock()
 
     def add_item(self, key, value):
         with self.lock:
             self.dict[key] = value
+            self.ref_count[key] = self.ref_count.get(key, 0) + 1
 
     def get_item(self, key):
         with self.lock:
@@ -218,7 +220,10 @@ class SharedDict:
     def remove_item(self, key):
         with self.lock:
             if key in self.dict:
-                del self.dict[key]
+                self.ref_count[key] -= 1
+                if self.ref_count[key] == 0:
+                    # Remove the item from the dict if no references left
+                    del self.dict[key]
 
 
 class CacheInfo(NamedTuple):
