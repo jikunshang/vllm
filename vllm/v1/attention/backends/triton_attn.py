@@ -7,7 +7,6 @@ from typing import ClassVar, Optional
 
 import torch
 
-from vllm import _custom_ops as ops
 from vllm import envs
 from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl,
                                               AttentionMetadata, AttentionType)
@@ -341,7 +340,10 @@ class TritonAttentionImpl(AttentionImpl):
                     layer._v_scale,
                 )
             else:
-                torch.ops._C_cache_ops.reshape_and_cache_flash(
+                #
+                # torch.ops._C_cache_ops.reshape_and_cache_flash(
+                from vllm._ipex_ops import ipex_ops as ops
+                ops.reshape_and_cache_flash(
                     key,
                     value,
                     key_cache,
