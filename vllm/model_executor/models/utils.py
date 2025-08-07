@@ -535,6 +535,7 @@ class PPMissingLayer(torch.nn.Identity):
 
     def __init__(self, *args, **kwargs):
         super().__init__()
+        self.attention_type = "full_attention"
 
     def forward(self, *args, **kwargs):
         """Return the first arg from args or the first value from kwargs."""
