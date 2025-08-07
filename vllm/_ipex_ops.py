@@ -305,6 +305,7 @@ class ipex_ops:
             window_size_right=real_window_size[1],
             k_scale=1.0,
             v_scale=1.0,
+            sink=s_aux,
         )
 
     @staticmethod
