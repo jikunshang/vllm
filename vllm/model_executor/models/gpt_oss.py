@@ -309,7 +309,7 @@ class GptOssForCausalLM(nn.Module):
 
         for name, weight in weights:
             # FIXME(woosuk): Remove this after testing.
-            weight = weight.cuda()
+            weight = weight.xpu()
 
             if "gate_up_proj_blocks" in name:
                 # Handle MLP gate and up projection weights
