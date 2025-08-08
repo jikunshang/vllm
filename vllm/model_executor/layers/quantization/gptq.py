@@ -160,11 +160,11 @@ class GPTQLinearMethod(LinearMethodBase):
     ):
         del output_size  # Unused.
         weight_loader = extra_weight_attrs.get("weight_loader")
-        if input_size_per_partition % self.quant_config.group_size != 0:
-            raise ValueError(
-                "The input size is not aligned with the quantized "
-                "weight shape. This can be caused by too large "
-                "tensor parallel size.")
+        #if input_size_per_partition % self.quant_config.group_size != 0:
+        #    raise ValueError(
+        #        "The input size is not aligned with the quantized "
+        #        "weight shape. This can be caused by too large "
+        #        "tensor parallel size.")
         output_size_per_partition = sum(output_partition_sizes)
         if (output_size_per_partition % self.quant_config.pack_factor.numerator
                 != 0):
@@ -178,7 +178,7 @@ class GPTQLinearMethod(LinearMethodBase):
         else:
             group_size = input_size
         exllama_state = ExllamaState.UNINITIALIZED
-        scale_and_zero_size = input_size // group_size
+        scale_and_zero_size = int((input_size + group_size - 1) // group_size)
         scale_and_zero_input_dim = None
         if (input_size != input_size_per_partition
                 and self.quant_config.group_size != -1):
@@ -187,7 +187,7 @@ class GPTQLinearMethod(LinearMethodBase):
                 exllama_state = ExllamaState.UNUSED
             else:
                 # we need to partition qzeros and scales for exllama kernel
-                scale_and_zero_size = input_size_per_partition // group_size
+                scale_and_zero_size = int((input_size_per_partition + group_size - 1) // group_size)
                 scale_and_zero_input_dim = 0
 
         qweight = PackedvLLMParameter(
