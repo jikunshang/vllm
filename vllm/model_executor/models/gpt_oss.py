@@ -540,7 +540,7 @@ class GptOssForCausalLM(nn.Module):
                 if use_ep:
                     narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
                 else:
-                    narrow_weight = weight[..., tp_rank_start:tp_rank_end]
+                    narrow_weight = weight[:, tp_rank_start:tp_rank_end, :]
                 narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
                 param = params_dict[new_name]
 
