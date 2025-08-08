@@ -512,6 +512,9 @@ class TransformersBase(nn.Module, SupportsQuant, SupportsLoRA, SupportsPP):
             for child_name, child_module in module.named_children():
                 qual_name = maybe_prefix(prefix, child_name)
                 for pattern, style in tp_plan.items():
+                    if "router" in qual_name or "attn" in qual_name:
+                        print(f"vllm::tensor_parallel:module,qual_name,{qual_name},child_name,{child_name},{child_module},style,{style},quant_config,{self.quant_config}")
+                        break
                     if re.match(pattern, qual_name) and isinstance(
                             child_module, nn.Linear):
                         new_module = replace_linear_class(
