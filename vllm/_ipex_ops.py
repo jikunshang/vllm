@@ -300,12 +300,12 @@ class ipex_ops:
             causal,
             block_table,
             alibi_slopes,
+            sink=s_aux,
             softcap=softcap,
             window_size_left=real_window_size[0],
             window_size_right=real_window_size[1],
             k_scale=1.0,
             v_scale=1.0,
-            sink=s_aux,
         )
 
     @staticmethod
