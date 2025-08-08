@@ -46,6 +46,16 @@ def find_seq_idx(query_start_len_ptr, target_idx, num_seqs,
     return left - 1
 
 
+@triton.autotune(configs=[
+    triton.Config({
+        'grf_mode': 'large',
+        'BLOCK_N': N
+    },
+                  num_warps=n_warps,
+                  num_stages=n_stages) for N in [16] for n_warps in [1]
+    for n_stages in [1]
+],
+                 key=['kv_group_num', 'BLOCK_DMODEL'])
 @triton.jit
 def kernel_unified_attention_2d(
         output_ptr,  # [num_tokens, num_query_heads, head_size]
@@ -293,6 +303,16 @@ def kernel_unified_attention_2d(
     )
 
 
+@triton.autotune(configs=[
+    triton.Config({
+        'grf_mode': 'large',
+        'BLOCK_N': N
+    },
+                  num_warps=n_warps,
+                  num_stages=n_stages) for N in [16] for n_warps in [1]
+    for n_stages in [1]
+],
+                 key=['kv_group_num', 'BLOCK_DMODEL'])
 @triton.jit
 def kernel_unified_attention_3d(
         segm_output_ptr,
@@ -550,6 +570,16 @@ def kernel_unified_attention_3d(
              mask=query_mask_0 & query_mask_1)
 
 
+@triton.autotune(configs=[
+    triton.Config({
+        'grf_mode': 'large',
+        'BLOCK_N': N
+    },
+                  num_warps=n_warps,
+                  num_stages=n_stages) for N in [16] for n_warps in [1]
+    for n_stages in [1]
+],
+                 key=['kv_group_num', 'BLOCK_DMODEL'])
 @triton.jit
 def reduce_segments(
         output_ptr,  # [num_tokens, num_query_heads, head_size]
