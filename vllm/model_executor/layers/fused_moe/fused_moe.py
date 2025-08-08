@@ -268,53 +268,56 @@ def fused_moe_kernel_gptq_awq(
 
 @triton.jit
 def fused_moe_kernel(
-    # Pointers to matrices
-    a_ptr,
-    b_ptr,
-    c_ptr,
-    a_scale_ptr,
-    b_scale_ptr,
-    topk_weights_ptr,
-    sorted_token_ids_ptr,
-    expert_ids_ptr,
-    num_tokens_post_padded_ptr,
-    # Matrix dimensions
-    N,
-    K,
-    EM,
-    num_valid_tokens,
-    # The stride variables represent how much to increase the ptr by when
-    # moving by 1 element in a particular dimension. E.g. `stride_am` is
-    # how much to increase `a_ptr` by to get the element one row down
-    # (A has M rows).
-    stride_am,
-    stride_ak,
-    stride_be,
-    stride_bk,
-    stride_bn,
-    stride_cm,
-    stride_cn,
-    stride_asm,
-    stride_ask,
-    stride_bse,
-    stride_bsk,
-    stride_bsn,
-    # Block size for block-wise quantization
+        # Pointers to matrices
+        a_ptr,
+        b_ptr,
+        c_ptr,
+        b_bias_ptr,
+        a_scale_ptr,
+        b_scale_ptr,
+        topk_weights_ptr,
+        sorted_token_ids_ptr,
+        expert_ids_ptr,
+        num_tokens_post_padded_ptr,
+        # Matrix dimensions
+        N,
+        K,
+        EM,
+        num_valid_tokens,
+        # The stride variables represent how much to increase the ptr by when
+        # moving by 1 element in a particular dimension. E.g. `stride_am` is
+        # how much to increase `a_ptr` by to get the element one row down
+        # (A has M rows).
+        stride_am,
+        stride_ak,
+        stride_be,
+        stride_bk,
+        stride_bn,
+        stride_cm,
+        stride_cn,
+        stride_asm,
+        stride_ask,
+        stride_bse,
+        stride_bsk,
+        stride_bsn,
+        stride_bbe,  # bias expert stride
+        stride_bbn,  # bias N stride
+        # Block size for block-wise quantization
     group_n: tl.constexpr,
-    group_k: tl.constexpr,
-    # Meta-parameters
-    BLOCK_SIZE_M: tl.constexpr,
-    BLOCK_SIZE_N: tl.constexpr,
-    BLOCK_SIZE_K: tl.constexpr,
-    GROUP_SIZE_M: tl.constexpr,
-    MUL_ROUTED_WEIGHT: tl.constexpr,
-    top_k: tl.constexpr,
-    compute_type: tl.constexpr,
-    use_fp8_w8a8: tl.constexpr,
-    use_int8_w8a8: tl.constexpr,
-    use_int8_w8a16: tl.constexpr,
-    per_channel_quant: tl.constexpr,
-):
+        group_k: tl.constexpr,
+        # Meta-parameters
+        BLOCK_SIZE_M: tl.constexpr,
+        BLOCK_SIZE_N: tl.constexpr,
+        BLOCK_SIZE_K: tl.constexpr,
+        GROUP_SIZE_M: tl.constexpr,
+        MUL_ROUTED_WEIGHT: tl.constexpr,
+        top_k: tl.constexpr,
+        compute_type: tl.constexpr,
+        use_fp8_w8a8: tl.constexpr,
+        use_int8_w8a8: tl.constexpr,
+        use_int8_w8a16: tl.constexpr,
+        per_channel_quant: tl.constexpr,
+        HAS_BIAS: tl.constexpr):
     """
     Implements the fused computation for a Mixture of Experts (MOE) using
     token and expert matrices.
@@ -411,7 +414,10 @@ def fused_moe_kernel(
         else:
             a_scale = tl.load(a_scale_ptr)
             b_scale = tl.load(b_scale_ptr + off_experts)
-
+    if HAS_BIAS:
+        # bias shape: [num_experts, N]
+        bias_ptrs = b_bias_ptr + off_experts * stride_bbe + offs_bn * stride_bbn
+        bias = tl.load(bias_ptrs, mask=(offs_bn < N), other=0.0)
     # -----------------------------------------------------------
     # Iterate to compute a block of the C matrix.
     # We accumulate into a `[BLOCK_SIZE_M, BLOCK_SIZE_N]` block
@@ -453,7 +459,8 @@ def fused_moe_kernel(
         # Advance the ptrs to the next K block.
         a_ptrs += BLOCK_SIZE_K * stride_ak
         b_ptrs += BLOCK_SIZE_K * stride_bk
-
+    if HAS_BIAS:
+        accumulator = accumulator + bias[None, :]
     if MUL_ROUTED_WEIGHT:
         moe_weight = tl.load(topk_weights_ptr + offs_token,
                              mask=token_mask,
@@ -468,6 +475,7 @@ def fused_moe_kernel(
             accumulator = (accumulator * a_scale * b_scale).to(compute_type)
     else:
         accumulator = accumulator.to(compute_type)
+
     # -----------------------------------------------------------
     # Write back the block of the output
     offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
@@ -480,6 +488,7 @@ def fused_moe_kernel(
 def invoke_fused_moe_kernel(A: torch.Tensor,
                             B: torch.Tensor,
                             C: torch.Tensor,
+                            B_bias: Optional[torch.Tensor],
                             A_scale: Optional[torch.Tensor],
                             B_scale: Optional[torch.Tensor],
                             B_zp: Optional[torch.Tensor],
@@ -528,7 +537,7 @@ def invoke_fused_moe_kernel(A: torch.Tensor,
                  A.size(0) * top_k * config['BLOCK_SIZE_M'])
     grid = lambda META: (triton.cdiv(EM, META['BLOCK_SIZE_M']) * triton.cdiv(
         B.size(1), META['BLOCK_SIZE_N']), )
-
+    HAS_BIAS = B_bias is not None
     if (use_int8_w8a16 or use_int4_w4a16) and \
             block_shape is not None and block_shape[1] > 0:
         assert B_scale is not None and B_scale.ndim == 3
@@ -608,6 +617,7 @@ def invoke_fused_moe_kernel(A: torch.Tensor,
             A,
             B,
             C,
+            B_bias,
             A_scale,
             B_scale,
             topk_weights,
@@ -635,6 +645,8 @@ def invoke_fused_moe_kernel(A: torch.Tensor,
             if B_scale is not None and B_scale.ndim == 3 else 0,
             B_scale.stride(1)
             if B_scale is not None and B_scale.ndim >= 2 else 0,
+            B_bias.stride(0) if B_bias is not None else 0,
+            B_bias.stride(1) if B_bias is not None else 0,
             0 if block_shape is None else block_shape[0],
             0 if block_shape is None else block_shape[1],
             MUL_ROUTED_WEIGHT=mul_routed_weight,
@@ -644,6 +656,7 @@ def invoke_fused_moe_kernel(A: torch.Tensor,
             use_int8_w8a8=use_int8_w8a8,
             use_int8_w8a16=use_int8_w8a16,
             per_channel_quant=per_channel_quant,
+            HAS_BIAS=HAS_BIAS,
             BLOCK_SIZE_K=BLOCK_SIZE_K,
             **config,
         )
@@ -1001,6 +1014,8 @@ def get_config_dtype_str(
 def inplace_fused_experts(hidden_states: torch.Tensor,
                           w1: torch.Tensor,
                           w2: torch.Tensor,
+                          w1_bias: Optional[torch.Tensor],
+                          w2_bias: Optional[torch.Tensor],
                           topk_weights: torch.Tensor,
                           topk_ids: torch.Tensor,
                           activation: str = "silu",
@@ -1021,8 +1036,8 @@ def inplace_fused_experts(hidden_states: torch.Tensor,
                           a1_scale: Optional[torch.Tensor] = None,
                           a2_scale: Optional[torch.Tensor] = None,
                           block_shape: Optional[list[int]] = None) -> None:
-    fused_experts_impl(hidden_states, w1, w2, topk_weights, topk_ids, True,
-                       activation, is_act_and_mul,
+    fused_experts_impl(hidden_states, w1, w2, w1_bias, w2_bias, topk_weights,
+                       topk_ids, True, activation, is_act_and_mul,
                        apply_router_weight_on_input, use_fp8_w8a8,
                        use_int8_w8a8, use_int8_w8a16, use_int4_w4a16,
                        use_mxfp4_w4a4, per_channel_quant, global_num_experts,
@@ -1034,6 +1049,8 @@ def inplace_fused_experts_fake(
         hidden_states: torch.Tensor,
         w1: torch.Tensor,
         w2: torch.Tensor,
+        w1_bias: Optional[torch.Tensor],
+        w2_bias: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         activation: str = "silu",
@@ -1245,6 +1262,8 @@ def outplace_fused_experts(
         hidden_states: torch.Tensor,
         w1: torch.Tensor,
         w2: torch.Tensor,
+        w1_bias: Optional[torch.Tensor],
+        w2_bias: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         activation: str = "silu",
@@ -1266,8 +1285,8 @@ def outplace_fused_experts(
         a2_scale: Optional[torch.Tensor] = None,
         block_shape: Optional[list[int]] = None) -> torch.Tensor:
     return fused_experts_impl(
-        hidden_states, w1, w2, topk_weights, topk_ids, False, activation,
-        is_act_and_mul, apply_router_weight_on_input, use_fp8_w8a8,
+        hidden_states, w1, w2, w1_bias, w2_bias, topk_weights, topk_ids, False,
+        activation, is_act_and_mul, apply_router_weight_on_input, use_fp8_w8a8,
         use_int8_w8a8, use_int8_w8a16, use_int4_w4a16, use_mxfp4_w4a4,
         per_channel_quant, global_num_experts, expert_map, w1_scale, w2_scale,
         w1_zp, w2_zp, a1_scale, a2_scale, block_shape)
@@ -1277,6 +1296,8 @@ def outplace_fused_experts_fake(
         hidden_states: torch.Tensor,
         w1: torch.Tensor,
         w2: torch.Tensor,
+        w1_bias: Optional[torch.Tensor],
+        w2_bias: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         activation: str = "silu",
@@ -1331,6 +1352,8 @@ def fused_experts(
         hidden_states: torch.Tensor,
         w1: torch.Tensor,
         w2: torch.Tensor,
+        w1_bias: Optional[torch.Tensor],
+        w2_bias: Optional[torch.Tensor],
         topk_weights: torch.Tensor,
         topk_ids: torch.Tensor,
         inplace: bool = False,
@@ -1399,6 +1422,8 @@ def fused_experts(
             hidden_states=hidden_states,
             w1=w1,
             w2=w2,
+            w1_bias=w1_bias,
+            w2_bias=w2_bias,
             topk_weights=topk_weights,
             topk_ids=topk_ids,
             activation=activation,
@@ -1425,6 +1450,8 @@ def fused_experts_impl(
     hidden_states: torch.Tensor,
     w1: torch.Tensor,
     w2: torch.Tensor,
+    w1_bias: Optional[torch.Tensor],
+    w2_bias: Optional[torch.Tensor],
     topk_weights: torch.Tensor,
     topk_ids: torch.Tensor,
     inplace: bool = False,
@@ -1570,6 +1597,7 @@ def fused_experts_impl(
         invoke_fused_moe_kernel(qcurr_hidden_states,
                                 w1,
                                 intermediate_cache1,
+                                w1_bias,
                                 a1q_scale,
                                 w1_scale,
                                 w1_zp,
@@ -1588,6 +1616,17 @@ def fused_experts_impl(
                                 per_channel_quant=per_channel_quant,
                                 block_shape=block_shape)
 
+        # TODO fused kernel
+        def oss_act(gate_up):
+            alpha = 1.702
+            limit = 7.0
+            gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+            gate = gate.clamp(min=None, max=limit)
+            up = up.clamp(min=-limit, max=limit)
+            glu = gate * torch.sigmoid(gate * alpha)
+            gated_output = (up + 1) * glu
+            return gated_output
+
         # Activation function with multiplication
         if activation == "silu" and is_act_and_mul:
             torch.ops._C.silu_and_mul(intermediate_cache2,
@@ -1600,6 +1639,8 @@ def fused_experts_impl(
             intermediate_cache2 = F.silu(intermediate_cache1.view(-1, N))
         elif activation == "gelu":
             intermediate_cache2 = F.gelu(intermediate_cache1.view(-1, N))
+        elif activation == "oss_act":
+            intermediate_cache2 = oss_act(intermediate_cache1.view(-1, N))
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}, "
                              f"with is_act_and_mul={is_act_and_mul}.")
@@ -1614,6 +1655,7 @@ def fused_experts_impl(
         invoke_fused_moe_kernel(qintermediate_cache2,
                                 w2,
                                 intermediate_cache3,
+                                w2_bias,
                                 a2q_scale,
                                 w2_scale,
                                 w2_zp,
