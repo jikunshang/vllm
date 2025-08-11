@@ -6,9 +6,8 @@ from typing import Any, Callable, Optional
 import torch
 from packaging import version
 
-from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
-                                                        FusedMoEMethodBase,
-                                                        FusedMoeWeightScaleSupported)
+from vllm.model_executor.layers.fused_moe.layer import (
+    FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
                                                UnquantizedLinearMethod)
 from vllm.model_executor.layers.quantization import QuantizationMethods
@@ -131,13 +130,17 @@ class IPEXConfig(QuantizationConfig):
             if self.method == "gptq":
                 return IPEXGPTQLinearMethod(self)
         if isinstance(layer, FusedMoE) and self.method == "auto-round":
-                return IPEXAutoRoundFusedMoEMethod(self)
+            return IPEXAutoRoundFusedMoEMethod(self)
         return None
 
+
 class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
+
     def __init__(self, quant_config: IPEXConfig):
         self.quant_config = quant_config
         self.out_dtype = torch.get_default_dtype()
+        self.alpha = 1.702
+        self.limit = 7.0
 
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
@@ -147,6 +150,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         bit8_pack_factor = self.quant_config.bit8_pack_factor
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
+        self.hidden_size = hidden_size
 
         # make intermediate_size and hidden_size diviable by group_size
         # we reduce the group size to ensure that
@@ -209,6 +213,21 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.register_parameter("w2_scales", w2_scales)
         set_weight_attrs(w2_scales, extra_weight_attrs)
 
+        w13_bias = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            dtype=torch.bfloat16),
+                                      requires_grad=False)
+        layer.register_parameter("w13_bias", w13_bias)
+        set_weight_attrs(w13_bias, extra_weight_attrs)
+
+        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                 hidden_size,
+                                                 dtype=torch.bfloat16),
+                                     requires_grad=False)
+        layer.register_parameter("w2_bias", w2_bias)
+        set_weight_attrs(w2_bias, extra_weight_attrs)
+
         if self.quant_config.has_zp:
             w13_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
@@ -228,7 +247,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             layer.register_parameter("w2_qzeros", w2_qzeros)
             set_weight_attrs(w2_qzeros, extra_weight_attrs)
 
-        if True: # self.quant_config.quant_method == "gptq":
+        if True:  # self.quant_config.quant_method == "gptq":
             # some param are unused, but we need to init them in order to
             # load weights
             invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
@@ -240,6 +259,34 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                            requires_grad=False)
                 layer.register_parameter(key, param)
                 set_weight_attrs(param, extra_weight_attrs)
+
+        print(
+            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
+        )
+
+    def topk(self, router_logits, top_k: int):
+        router_top_value, router_indices = torch.topk(
+            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
+
+        router_top_value = torch.nn.functional.softmax(
+            router_top_value, dim=-1, dtype=router_top_value.dtype)
+
+        router_scores = torch.zeros_like(router_logits).scatter_(
+            dim=1, index=router_indices, src=router_top_value)
+
+        return router_scores, router_indices
+
+    def int4_linear(self,
+                    x: torch.Tensor,
+                    qweight: torch.Tensor,
+                    scales: torch.Tensor,
+                    qzero: torch.Tensor,
+                    g_idx: torch.Tensor,
+                    bias: torch.Tensor,
+                    block_size: int = 128) -> torch.Tensor:
+        out = torch.ops.torch_ipex.mm_int4(x, qweight, bias, scales, qzero,
+                                           block_size, g_idx)
+        return out
 
     def apply(
         self,
@@ -263,44 +310,45 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        if enable_eplb:
-            raise NotImplementedError(
-                "EPLB not supported for `MoeWNA16Method` yet.")
 
-        from vllm.model_executor.layers.fused_moe import fused_experts
-        assert activation == "silu", "Only SiLU activation is supported."
-        topk_weights, topk_ids = FusedMoE.select_experts(
-            hidden_states=x,
-            router_logits=router_logits,
-            use_grouped_topk=use_grouped_topk,
-            top_k=top_k,
-            renormalize=renormalize,
-            topk_group=topk_group,
-            num_expert_group=num_expert_group,
-            custom_routing_function=custom_routing_function,
-            scoring_func=scoring_func,
-            e_score_correction_bias=e_score_correction_bias)
+        router_scores, router_indices = self.topk(router_logits, top_k)
+        num_experts = router_scores.shape[1]
 
-        weight_bits = self.quant_config.weight_bits
-        has_zp = self.quant_config.has_zp
+        batch_size = x.shape[0]
+        x = x.reshape(-1, self.hidden_size)
 
-        return fused_experts(
-            x,
-            layer.w13_qweight,
-            layer.w2_qweight,
-            topk_weights=topk_weights,
-            topk_ids=topk_ids,
-            inplace=True,
-            use_int4_w4a16=weight_bits == 4,
-            use_int8_w8a16=weight_bits == 8,
-            global_num_experts=global_num_experts,
-            apply_router_weight_on_input=apply_router_weight_on_input,
-            expert_map=expert_map,
-            w1_scale=layer.w13_scales,
-            w2_scale=layer.w2_scales,
-            w1_zp=layer.w13_qzeros if has_zp else None,
-            w2_zp=layer.w2_qzeros if has_zp else None,
-            block_shape=[0, layer.group_size])
+        x = x.repeat(num_experts, 1)
+        x = x.view(num_experts, -1, self.hidden_size)
+
+        gate_ups = []
+        for i in range(num_experts):
+            gate_up = self.int4_linear(
+                x[i], layer.w13_qweight[i], layer.w13_scales,
+                layer.w13_qzeros if self.quant_config.has_zp else None,
+                layer.w13_g_idx, layer.w13_bias)
+            gate_ups.append(gate_up)
+        gate_up = torch.stack(gate_ups, dim=0)
+        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        gate = gate.clamp(min=None, max=self.limit)
+        up = up.clamp(min=-self.limit, max=self.limit)
+        glu = gate * torch.sigmoid(gate * self.alpha)
+
+        next_states = []
+        for i in range(num_experts):
+            next_state = self.int4_linear(
+                (up[i] + 1) * glu[i], layer.w2_qweight, layer.w2_scales,
+                layer.w2_qzeros if self.quant_config.has_zp else None,
+                layer.w2_g_idx, layer.w2_bias)
+            next_states.append(next_state)
+        next_states = torch.stack(next_states, dim=0)
+
+        next_states = next_states.view(num_experts, batch_size, -1,
+                                       self.hidden_size)
+        next_states = next_states * router_logits.transpose(0, 1).view(
+            num_experts, batch_size, -1)[..., None]
+        next_states = next_states.sum(dim=0)
+
+        return next_states
 
     @staticmethod
     def get_weight_loader(layer, weight_loader):

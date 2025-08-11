@@ -513,41 +513,41 @@ class GptOssForCausalLM(nn.Module):
         ep_rank_end = (ep_rank + 1) * experts_per_rank
 
         for name, weight in weights:
-            if ".experts.gate_up_proj" in name and "bias" not in name:
-                # Handle MLP gate and up projection weights
-                new_name = name.replace(".experts.gate_up_proj",
-                                        ".experts.w13_weight")
+            # if ".experts.gate_up_proj" in name and "bias" not in name:
+            #     # Handle MLP gate and up projection weights
+            #     new_name = name.replace(".experts.gate_up_proj",
+            #                             ".experts.w13_weight")
 
-                # Extract gate and up projection parts
-                # since the weight is shuffled, we can slice directly
-                if use_ep:
-                    narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-                else:
-                    narrow_weight = weight[:, :,
-                                           2 * tp_rank_start:2 * tp_rank_end]
+            #     # Extract gate and up projection parts
+            #     # since the weight is shuffled, we can slice directly
+            #     if use_ep:
+            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
+            #     else:
+            #         narrow_weight = weight[:, :,
+            #                                2 * tp_rank_start:2 * tp_rank_end]
 
-                narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-                param = params_dict[new_name]
+            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
+            #     param = params_dict[new_name]
 
-                param.copy_(narrow_weight)
-                loaded_params.add(new_name)
+            #     param.copy_(narrow_weight)
+            #     loaded_params.add(new_name)
 
-            elif ".experts.down_proj" in name and "bias" not in name:
-                # Handle MLP down projection weights
-                new_name = name.replace(".experts.down_proj",
-                                        ".experts.w2_weight")
+            # elif ".experts.down_proj" in name and "bias" not in name:
+            #     # Handle MLP down projection weights
+            #     new_name = name.replace(".experts.down_proj",
+            #                             ".experts.w2_weight")
 
-                if use_ep:
-                    narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-                else:
-                    narrow_weight = weight[:, tp_rank_start:tp_rank_end, :]
-                narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-                param = params_dict[new_name]
+            #     if use_ep:
+            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
+            #     else:
+            #         narrow_weight = weight[:, tp_rank_start:tp_rank_end]
+            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
+            #     param = params_dict[new_name]
 
-                param.copy_(narrow_weight)
-                loaded_params.add(new_name)
+            #     param.copy_(narrow_weight)
+            #     loaded_params.add(new_name)
 
-            elif "gate_up_proj_bias" in name:
+            if "gate_up_proj_bias" in name:
                 # Handle MLP gate and up projection biases
                 new_name = name.replace("gate_up_proj_bias", "w13_bias")
 
