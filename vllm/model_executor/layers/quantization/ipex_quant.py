@@ -284,7 +284,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                     g_idx: torch.Tensor,
                     bias: torch.Tensor,
                     block_size: int = 128) -> torch.Tensor:
-        out = torch.ops.torch_ipex.mm_int4(x, qweight, bias, scales, qzero,
+        out = torch.ops.torch_ipex.mm_bias_int4(x, qweight, bias, scales, qzero,
                                            block_size, g_idx)
         return out
 
@@ -323,9 +323,9 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         gate_ups = []
         for i in range(num_experts):
             gate_up = self.int4_linear(
-                x[i], layer.w13_qweight[i], layer.w13_scales,
-                layer.w13_qzeros if self.quant_config.has_zp else None,
-                layer.w13_g_idx, layer.w13_bias)
+                x[i], layer.w13_qweight[i], layer.w13_scales[i],
+                layer.w13_qzeros[i] if self.quant_config.has_zp else None,
+                layer.w13_g_idx, layer.w13_bias[i])
             gate_ups.append(gate_up)
         gate_up = torch.stack(gate_ups, dim=0)
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
@@ -336,9 +336,9 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         next_states = []
         for i in range(num_experts):
             next_state = self.int4_linear(
-                (up[i] + 1) * glu[i], layer.w2_qweight, layer.w2_scales,
-                layer.w2_qzeros if self.quant_config.has_zp else None,
-                layer.w2_g_idx, layer.w2_bias)
+                (up[i] + 1) * glu[i], layer.w2_qweight[i], layer.w2_scales[i],
+                layer.w2_qzeros[i] if self.quant_config.has_zp else None,
+                layer.w2_g_idx, layer.w2_bias[i])
             next_states.append(next_state)
         next_states = torch.stack(next_states, dim=0)
 
