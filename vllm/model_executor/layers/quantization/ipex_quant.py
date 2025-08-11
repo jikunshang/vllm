@@ -155,11 +155,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # make intermediate_size and hidden_size diviable by group_size
         # we reduce the group size to ensure that
         # and we would repeat the loaded_weight later
-        while intermediate_size_per_partition % group_size or \
-                hidden_size % group_size:
-            group_size = group_size // 2
-            group_size_div_factor *= 2
-            assert group_size >= 32
+        # while intermediate_size_per_partition % group_size or \
+        #         hidden_size % group_size:
+        #     group_size = group_size // 2
+        #     group_size_div_factor *= 2
+        #     assert group_size >= 32
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
@@ -259,6 +259,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                            requires_grad=False)
                 layer.register_parameter(key, param)
                 set_weight_attrs(param, extra_weight_attrs)
+                
+
 
         print(
             f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
@@ -284,9 +286,13 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                     g_idx: torch.Tensor,
                     bias: torch.Tensor,
                     block_size: int = 128) -> torch.Tensor:
-        out = torch.ops.torch_ipex.mm_bias_int4(x, qweight, bias, scales, qzero,
+        ori_shape = x.shape
+        x_pad = torch.nn.functional.pad(x, (0, 144)).contiguous()
+        qweight_pad = torch.nn.functional.pad(qweight, (0, 0, 0, 8)).contiguous()
+
+        out = torch.ops.torch_ipex.mm_bias_int4(x_pad, qweight_pad, bias, scales, qzero,
                                            block_size, g_idx)
-        return out
+        return out[...,:ori_shape[1]]
 
     def apply(
         self,
@@ -322,10 +328,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         gate_ups = []
         for i in range(num_experts):
+            print(f"running: {x[i].shape}")
             gate_up = self.int4_linear(
                 x[i], layer.w13_qweight[i], layer.w13_scales[i],
                 layer.w13_qzeros[i] if self.quant_config.has_zp else None,
-                layer.w13_g_idx, layer.w13_bias[i])
+                None, layer.w13_bias[i])
             gate_ups.append(gate_up)
         gate_up = torch.stack(gate_ups, dim=0)
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
@@ -338,7 +345,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             next_state = self.int4_linear(
                 (up[i] + 1) * glu[i], layer.w2_qweight[i], layer.w2_scales[i],
                 layer.w2_qzeros[i] if self.quant_config.has_zp else None,
-                layer.w2_g_idx, layer.w2_bias[i])
+                None, layer.w2_bias[i])
             next_states.append(next_state)
         next_states = torch.stack(next_states, dim=0)
 
