@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import torch
 from packaging import version
 
+from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
+                                                        FusedMoEMethodBase,
+                                                        FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
                                                UnquantizedLinearMethod)
 from vllm.model_executor.layers.quantization import QuantizationMethods
@@ -14,6 +17,7 @@ from vllm.model_executor.layers.quantization.awq import (AWQLinearMethod,
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
+from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 
 MIN_IPEX_VERSION = "2.6.0"
@@ -37,6 +41,7 @@ class IPEXConfig(QuantizationConfig):
         modules_to_not_convert: Optional[list[str]] = None,
         desc_act: Optional[bool] = None,
         lm_head_quantized: Optional[bool] = None,
+        has_zp: Optional[bool] = False,
     ) -> None:
         super().__init__()
         self.method = method
@@ -47,11 +52,14 @@ class IPEXConfig(QuantizationConfig):
         self.lm_head_quantized = lm_head_quantized
         self.pack_factor = 32 // self.weight_bits
 
+        self.has_zp = has_zp
+        self.bit8_pack_factor = 8 // self.weight_bits
+
         if self.weight_bits not in [4]:
             raise ValueError(f"IPEX quantization supports weight bits [4], "
                              f"but got {self.weight_bits}.")
 
-        if self.method not in ["awq", "gptq"]:
+        if self.method not in ["awq", "gptq", "auto-round"]:
             raise ValueError(f"IPEX quantization supports [awq, gptq], "
                              f"but got {self.method}.")
 
@@ -107,13 +115,14 @@ class IPEXConfig(QuantizationConfig):
 
         quant_method = hf_quant_cfg.get("quant_method", "").lower()
 
-        if quant_method in ["awq", "gptq"]:
+        if quant_method in ["awq", "gptq", "auto-round"]:
             return cls.get_name()
 
         return None
 
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> Optional["LinearMethodBase"]:
+        print(f"!!!!!prefix: {prefix} layer: {layer}")
         if isinstance(layer, LinearBase):
             if self.method == "awq":
                 if is_layer_skipped_awq(prefix, self.modules_to_not_convert):
@@ -121,7 +130,243 @@ class IPEXConfig(QuantizationConfig):
                 return IPEXAWQLinearMethod(self)
             if self.method == "gptq":
                 return IPEXGPTQLinearMethod(self)
+        if isinstance(layer, FusedMoE) and self.method == "auto-round":
+                return IPEXAutoRoundFusedMoEMethod(self)
         return None
+
+class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
+    def __init__(self, quant_config: IPEXConfig):
+        self.quant_config = quant_config
+        self.out_dtype = torch.get_default_dtype()
+
+    def create_weights(self, layer: torch.nn.Module, num_experts: int,
+                       hidden_size: int, intermediate_size_per_partition: int,
+                       params_dtype: torch.dtype, **extra_weight_attrs):
+
+        layer.quant_config = self.quant_config
+        bit8_pack_factor = self.quant_config.bit8_pack_factor
+        group_size = self.quant_config.group_size
+        group_size_div_factor = 1
+
+        # make intermediate_size and hidden_size diviable by group_size
+        # we reduce the group size to ensure that
+        # and we would repeat the loaded_weight later
+        while intermediate_size_per_partition % group_size or \
+                hidden_size % group_size:
+            group_size = group_size // 2
+            group_size_div_factor *= 2
+            assert group_size >= 32
+        layer.group_size = group_size
+        layer.group_size_div_factor = group_size_div_factor
+
+        strategy = FusedMoeWeightScaleSupported.GROUP.value
+        extra_weight_attrs.update({
+            "quant_method": strategy,
+            "is_transposed": False
+        })
+
+        assert 'weight_loader' in extra_weight_attrs
+        weight_loader = extra_weight_attrs['weight_loader']
+        wrapped_weight_loader = IPEXAutoRoundFusedMoEMethod.get_weight_loader(
+            layer, weight_loader)
+        extra_weight_attrs['weight_loader'] = wrapped_weight_loader
+
+        # Fused gate_up_proj (column parallel)
+        w13_qweight = torch.nn.Parameter(torch.empty(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            hidden_size // bit8_pack_factor,
+            dtype=torch.uint8),
+                                         requires_grad=False)
+        layer.register_parameter("w13_qweight", w13_qweight)
+        set_weight_attrs(w13_qweight, extra_weight_attrs)
+
+        # down_proj (row parallel)
+        w2_qweight = torch.nn.Parameter(torch.empty(
+            num_experts,
+            hidden_size,
+            intermediate_size_per_partition // bit8_pack_factor,
+            dtype=torch.uint8),
+                                        requires_grad=False)
+        layer.register_parameter("w2_qweight", w2_qweight)
+        set_weight_attrs(w2_qweight, extra_weight_attrs)
+
+        w13_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            hidden_size // group_size,
+            dtype=params_dtype),
+                                        requires_grad=False)
+        layer.register_parameter("w13_scales", w13_scales)
+        set_weight_attrs(w13_scales, extra_weight_attrs)
+
+        w2_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            hidden_size,
+            intermediate_size_per_partition // group_size,
+            dtype=params_dtype),
+                                       requires_grad=False)
+        layer.register_parameter("w2_scales", w2_scales)
+        set_weight_attrs(w2_scales, extra_weight_attrs)
+
+        if self.quant_config.has_zp:
+            w13_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                2 * intermediate_size_per_partition // bit8_pack_factor,
+                hidden_size // group_size,
+                dtype=torch.uint8),
+                                            requires_grad=False)
+            layer.register_parameter("w13_qzeros", w13_qzeros)
+            set_weight_attrs(w13_qzeros, extra_weight_attrs)
+
+            w2_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                hidden_size // bit8_pack_factor,
+                intermediate_size_per_partition // group_size,
+                dtype=torch.uint8),
+                                           requires_grad=False)
+            layer.register_parameter("w2_qzeros", w2_qzeros)
+            set_weight_attrs(w2_qzeros, extra_weight_attrs)
+
+        if True: # self.quant_config.quant_method == "gptq":
+            # some param are unused, but we need to init them in order to
+            # load weights
+            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
+            if not self.quant_config.has_zp:
+                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
+            for key in invalid_param_keys:
+                param = torch.nn.Parameter(torch.empty((0, ),
+                                                       dtype=torch.int32),
+                                           requires_grad=False)
+                layer.register_parameter(key, param)
+                set_weight_attrs(param, extra_weight_attrs)
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if enable_eplb:
+            raise NotImplementedError(
+                "EPLB not supported for `MoeWNA16Method` yet.")
+
+        from vllm.model_executor.layers.fused_moe import fused_experts
+        assert activation == "silu", "Only SiLU activation is supported."
+        topk_weights, topk_ids = FusedMoE.select_experts(
+            hidden_states=x,
+            router_logits=router_logits,
+            use_grouped_topk=use_grouped_topk,
+            top_k=top_k,
+            renormalize=renormalize,
+            topk_group=topk_group,
+            num_expert_group=num_expert_group,
+            custom_routing_function=custom_routing_function,
+            scoring_func=scoring_func,
+            e_score_correction_bias=e_score_correction_bias)
+
+        weight_bits = self.quant_config.weight_bits
+        has_zp = self.quant_config.has_zp
+
+        return fused_experts(
+            x,
+            layer.w13_qweight,
+            layer.w2_qweight,
+            topk_weights=topk_weights,
+            topk_ids=topk_ids,
+            inplace=True,
+            use_int4_w4a16=weight_bits == 4,
+            use_int8_w8a16=weight_bits == 8,
+            global_num_experts=global_num_experts,
+            apply_router_weight_on_input=apply_router_weight_on_input,
+            expert_map=expert_map,
+            w1_scale=layer.w13_scales,
+            w2_scale=layer.w2_scales,
+            w1_zp=layer.w13_qzeros if has_zp else None,
+            w2_zp=layer.w2_qzeros if has_zp else None,
+            block_shape=[0, layer.group_size])
+
+    @staticmethod
+    def get_weight_loader(layer, weight_loader):
+
+        def convert_gptq_int4_qzeros(tensor):
+            tensor = tensor.view(torch.uint8)
+            shifter = torch.tensor([0, 4],
+                                   dtype=torch.uint8,
+                                   device=tensor.device)
+            tensor = (tensor[:, :, None] >> shifter) & 0xF
+            tensor = tensor + 1
+            tensor = tensor[:, :, 0] + tensor[:, :, 1] * 16
+            return tensor
+
+        def moe_wna16_weight_loader(param: torch.nn.Parameter,
+                                    loaded_weight: torch.Tensor,
+                                    weight_name: str, shard_id: str,
+                                    expert_id: int):
+            if "g_idx" in weight_name:
+                return
+            if not layer.quant_config.has_zp and "qzeros" in weight_name:
+                return
+
+            device = get_tp_group().device
+            tp_rank = get_tensor_model_parallel_rank()
+            loaded_weight = loaded_weight.to(device)
+            shard_size = layer.intermediate_size_per_partition
+
+            # convert gptq and awq weight to a standard format
+            if layer.quant_config.linear_quant_method == "gptq":
+                assert layer.quant_config.weight_bits in [4, 8]
+                if "weight" in weight_name:
+                    loaded_weight = loaded_weight.T.contiguous().view(
+                        torch.uint8)
+                elif "zeros" in weight_name:
+                    # add 1 to gptq qzeros to align with awq
+                    loaded_weight = loaded_weight.view(torch.uint8)
+                    if layer.quant_config.weight_bits == 4:
+                        loaded_weight = convert_gptq_int4_qzeros(
+                            loaded_weight).T
+                    else:
+                        loaded_weight = loaded_weight.T + 1
+                else:
+                    loaded_weight = loaded_weight.T
+
+            # repeat the qzeros/scales to fit new group size
+            if layer.group_size_div_factor > 1 and \
+                    "qzeros" in weight_name or "scales" in weight_name:
+                loaded_weight = loaded_weight.repeat_interleave(
+                    layer.group_size_div_factor, 1)
+
+            if "w13_qzeros" in weight_name:
+                tensor = loaded_weight.view(layer.tp_size, -1,
+                                            loaded_weight.size(1))[tp_rank]
+                if shard_id == "w1":
+                    param.data[expert_id, :shard_size // 2] = tensor
+                else:
+                    param.data[expert_id, shard_size // 2:] = tensor
+            elif "w2_qzeros" in weight_name:
+                param.data[expert_id] = loaded_weight.view(
+                    loaded_weight.size(0), layer.tp_size, -1)[:, tp_rank]
+            else:
+                weight_loader(param, loaded_weight, weight_name, shard_id,
+                              expert_id)
+
+        return moe_wna16_weight_loader
 
 
 class IPEXGPTQLinearMethod(GPTQLinearMethod):

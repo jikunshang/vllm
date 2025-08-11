@@ -9,6 +9,8 @@ import torch
 from vllm.logger import init_logger
 from vllm.model_executor.layers.linear import (LinearBase,
                                                UnquantizedLinearMethod)
+from vllm.model_executor.layers.fused_moe.layer import (FusedMoE,
+                                                        FusedMoEMethodBase)
 from vllm.model_executor.layers.quantization import QuantizationMethods
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
@@ -357,9 +359,10 @@ class AutoRoundConfig(QuantizationConfig):
             else:
                 return None
         from vllm.model_executor.layers.quantization.ipex_quant import (
-            IPEXAWQLinearMethod, IPEXConfig, IPEXGPTQLinearMethod)
+            IPEXAWQLinearMethod, IPEXConfig, IPEXGPTQLinearMethod, IPEXAutoRoundFusedMoEMethod)
 
         if isinstance(layer, (LinearBase, ParallelLMHead)):
+            print("!!!!caught layer")
             if "awq" in self.packing_format:
                 config = IPEXConfig(method="awq",
                                     weight_bits=weight_bits,
