@@ -150,6 +150,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         bit8_pack_factor = self.quant_config.bit8_pack_factor
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
+        self.ori_hidden_size = hidden_size  
         self.hidden_size =  2944
 
         # make intermediate_size and hidden_size diviable by group_size
@@ -296,7 +297,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
               f"scales shape: {scales.shape}, "
               f"qzero shape: {qzero.shape if qzero is not None else None}, "
               f"bias shape: {bias.shape if bias is not None else None}, ")
-
+        qweight = qweight.transpose(0,1).contiguous().transpose(0,1)
         out = torch.ops.torch_ipex.mm_bias_int4(x, qweight, bias, scales, qzero,
                                            block_size, g_idx)
         return out[...,:ori_shape[1]]
@@ -328,10 +329,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         num_experts = router_scores.shape[1]
 
         batch_size = x.shape[0]
-        x = x.reshape(-1, self.hidden_size)
+        x = x.reshape(-1, self.ori_hidden_size)
 
         x = x.repeat(num_experts, 1)
-        x = x.view(num_experts, -1, self.hidden_size)
+        x = x.view(num_experts, -1, self.ori_hidden_size)
+        x = torch.nn.functional.pad(x, (0, self.hidden_size - self.ori_hidden_size))
 
         gate_ups = []
         for i in range(num_experts):
@@ -362,6 +364,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             num_experts, batch_size, -1)[..., None]
         next_states = next_states.sum(dim=0)
 
+        next_states = next_states[..., :self.ori_hidden_size]
         return next_states
 
     @staticmethod
