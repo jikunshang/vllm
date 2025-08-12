@@ -181,7 +181,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # Fused gate_up_proj (column parallel)
         w13_linears = []
         w2_linears = []
-        for i in num_experts:
+        for i in range(num_experts):
             cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
             cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
             # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
