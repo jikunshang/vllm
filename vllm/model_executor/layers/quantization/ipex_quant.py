@@ -178,31 +178,39 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # Fused gate_up_proj (column parallel)
         w13_qweight = torch.nn.Parameter(torch.empty(
             num_experts,
-            intermediate_size_per_partition // 8 + 8,  # 8 int4 store to int32
-            2 * hidden_size,
+            2 * intermediate_size_per_partition,
+            hidden_size // 8,  # 8 int4 store to int32
             dtype=torch.int32),
                                          requires_grad=False)
         layer.register_parameter("w13_qweight", w13_qweight)
         set_weight_attrs(w13_qweight, extra_weight_attrs)
 
+        w13_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            hidden_size // group_size + 1,  # 23
+            dtype=params_dtype),
+                                        requires_grad=False)
+        layer.register_parameter("w13_scales", w13_scales)
+        set_weight_attrs(w13_scales, extra_weight_attrs)
+
+        w13_bias = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            dtype=params_dtype),
+                                      requires_grad=False)
+        layer.register_parameter("w13_bias", w13_bias)
+        set_weight_attrs(w13_bias, extra_weight_attrs)
+        
         # down_proj (row parallel)
         w2_qweight = torch.nn.Parameter(torch.empty(
             num_experts,
-            hidden_size // 8 + 8, # 8 int4 store to int32
+            hidden_size // 8, # 8 int4 store to int32
             intermediate_size_per_partition,
             dtype=torch.int32),
                                         requires_grad=False)
         layer.register_parameter("w2_qweight", w2_qweight)
         set_weight_attrs(w2_qweight, extra_weight_attrs)
-
-        w13_scales = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            hidden_size // group_size + 1,  # 23
-            2 * intermediate_size_per_partition,
-            dtype=params_dtype),
-                                        requires_grad=False)
-        layer.register_parameter("w13_scales", w13_scales)
-        set_weight_attrs(w13_scales, extra_weight_attrs)
 
         w2_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
@@ -212,14 +220,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                        requires_grad=False)
         layer.register_parameter("w2_scales", w2_scales)
         set_weight_attrs(w2_scales, extra_weight_attrs)
-
-        w13_bias = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            2 * intermediate_size_per_partition,
-            dtype=params_dtype),
-                                      requires_grad=False)
-        layer.register_parameter("w13_bias", w13_bias)
-        set_weight_attrs(w13_bias, extra_weight_attrs)
 
         w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
                                                  hidden_size,
@@ -231,8 +231,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         if self.quant_config.has_zp:
             w13_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                hidden_size // group_size + 1,
                 2 * intermediate_size_per_partition // 8,
+                hidden_size // group_size + 1,
                 dtype=torch.int32),
                                             requires_grad=False)
             layer.register_parameter("w13_qzeros", w13_qzeros)
@@ -240,8 +240,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
             w2_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                hidden_size // bit8_pack_factor + 1,
-                intermediate_size_per_partition // group_size,
+                hidden_size // group_size + 1,
+                intermediate_size_per_partition // 8,
                 dtype=torch.int32),
                                            requires_grad=False)
             layer.register_parameter("w2_qzeros", w2_qzeros)
@@ -287,9 +287,14 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                     bias: torch.Tensor,
                     block_size: int = 128) -> torch.Tensor:
         ori_shape = x.shape
-        x_pad = torch.nn.functional.pad(x, (0, 144)).contiguous()
+        # x_pad = torch.nn.functional.pad(x, (0, 64)).contiguous()
+        print(f"x shape: {x.shape}, "
+              f"qweight shape: {qweight.shape}, "
+              f"scales shape: {scales.shape}, "
+              f"qzero shape: {qzero.shape if qzero is not None else None}, "
+              f"bias shape: {bias.shape if bias is not None else None}, ")
 
-        out = torch.ops.torch_ipex.mm_bias_int4(x_pad, qweight, bias, scales, qzero,
+        out = torch.ops.torch_ipex.mm_bias_int4(x, qweight, bias, scales, qzero,
                                            block_size, g_idx)
         return out[...,:ori_shape[1]]
 
