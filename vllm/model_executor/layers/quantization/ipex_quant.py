@@ -178,7 +178,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # Fused gate_up_proj (column parallel)
         w13_qweight = torch.nn.Parameter(torch.empty(
             num_experts,
-            intermediate_size_per_partition // 8,  # 8 int4 store to int32
+            intermediate_size_per_partition // 8 + 8,  # 8 int4 store to int32
             2 * hidden_size,
             dtype=torch.int32),
                                          requires_grad=False)
@@ -188,7 +188,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # down_proj (row parallel)
         w2_qweight = torch.nn.Parameter(torch.empty(
             num_experts,
-            hidden_size // 8, # 8 int4 store to int32
+            hidden_size // 8 + 8, # 8 int4 store to int32
             intermediate_size_per_partition,
             dtype=torch.int32),
                                         requires_grad=False)
@@ -288,9 +288,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                     block_size: int = 128) -> torch.Tensor:
         ori_shape = x.shape
         x_pad = torch.nn.functional.pad(x, (0, 144)).contiguous()
-        qweight_pad = torch.nn.functional.pad(qweight, (0, 0, 0, 8)).contiguous()
 
-        out = torch.ops.torch_ipex.mm_bias_int4(x_pad, qweight_pad, bias, scales, qzero,
+        out = torch.ops.torch_ipex.mm_bias_int4(x_pad, qweight, bias, scales, qzero,
                                            block_size, g_idx)
         return out[...,:ori_shape[1]]
 
