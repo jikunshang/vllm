@@ -18,6 +18,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
+from vllm.model_executor.layers.linear import MergedColumnParallelLinear, RowParallelLinear
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -152,6 +153,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         group_size_div_factor = 1
         self.ori_hidden_size = hidden_size  
         self.hidden_size =  2944
+        hidden_size = self.hidden_size
 
         # make intermediate_size and hidden_size diviable by group_size
         # we reduce the group size to ensure that
@@ -177,6 +179,22 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
         # Fused gate_up_proj (column parallel)
+        w13_linears = []
+        w2_linears = []
+        for i in num_experts:
+            cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
+            cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
+            # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
+            # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
+            # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
+            # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
+            w13_linears.append(cur_w13_linear)
+            w2_linears.append(cur_w2_linear)
+        layer.register_parameter("w13_linears", w13_linears)
+        layer.register_parameter("w2_linears", w2_linears)
+        set_weight_attrs(w13_linears, extra_weight_attrs)
+        set_weight_attrs(w2_linears, extra_weight_attrs)
+        
         w13_qweight = torch.nn.Parameter(torch.empty(
             num_experts,
             hidden_size // 8,  # 8 int4 store to int32
@@ -338,10 +356,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         gate_ups = []
         for i in range(num_experts):
             print(f"running: {x[i].shape}")
-            gate_up = self.int4_linear(
-                x[i], layer.w13_qweight[i], layer.w13_scales[i],
-                layer.w13_qzeros[i] if self.quant_config.has_zp else None,
-                None, layer.w13_bias[i])
+            gate_up = layer.w13_linears[i](x[i])
             gate_ups.append(gate_up)
         gate_up = torch.stack(gate_ups, dim=0)
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
@@ -351,10 +366,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         next_states = []
         for i in range(num_experts):
-            next_state = self.int4_linear(
-                (up[i] + 1) * glu[i], layer.w2_qweight[i], layer.w2_scales[i],
-                layer.w2_qzeros[i] if self.quant_config.has_zp else None,
-                None, layer.w2_bias[i])
+            next_state = layer.w2_linears[i]((up[i] + 1) * glu[i])
+            # next_state = self.int4_linear(
+            #     (up[i] + 1) * glu[i], layer.w2_qweight[i], layer.w2_scales[i],
+            #     layer.w2_qzeros[i] if self.quant_config.has_zp else None,
+            #     None, layer.w2_bias[i])
             next_states.append(next_state)
         next_states = torch.stack(next_states, dim=0)
 
