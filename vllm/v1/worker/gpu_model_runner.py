@@ -1957,6 +1957,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                     self.model_memory_usage / GiB_bytes,
                     time_after_load - time_before_load)
         prepare_communication_buffer_for_model(self.model)
+        print(f"model is {self.model}")
 
         if is_mixture_of_experts(
                 self.model) and self.parallel_config.enable_eplb:

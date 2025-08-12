@@ -122,13 +122,12 @@ class IPEXConfig(QuantizationConfig):
 
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> Optional["LinearMethodBase"]:
-        print(f"!!!!!prefix: {prefix} layer: {layer}")
         if isinstance(layer, LinearBase):
             if self.method == "awq":
                 if is_layer_skipped_awq(prefix, self.modules_to_not_convert):
                     return UnquantizedLinearMethod()
                 return IPEXAWQLinearMethod(self)
-            if self.method == "gptq":
+            if self.method == "gptq" or self.method == "auto-round":
                 return IPEXGPTQLinearMethod(self)
         if isinstance(layer, FusedMoE) and self.method == "auto-round":
             return IPEXAutoRoundFusedMoEMethod(self)
@@ -146,7 +145,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
-
         layer.quant_config = self.quant_config
         bit8_pack_factor = self.quant_config.bit8_pack_factor
         group_size = self.quant_config.group_size
@@ -179,114 +177,116 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
         # Fused gate_up_proj (column parallel)
-        w13_linears = []
-        w2_linears = []
-        for i in range(num_experts):
-            cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
-            cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
-            # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
-            # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
-            # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
-            # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
-            w13_linears.append(cur_w13_linear)
-            w2_linears.append(cur_w2_linear)
-        layer.register_parameter("w13_linears", w13_linears)
-        layer.register_parameter("w2_linears", w2_linears)
+        w13_linears = torch.nn.ModuleList([MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config,  return_bias=False) for _ in range(num_experts)])
+        w2_linears = torch.nn.ModuleList([ RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config,  return_bias=False) for _ in range(num_experts)])
+
+        
+        # for i in range(num_experts):
+        #     cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
+        #     cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
+        #     # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
+        #     # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
+        #     # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
+        #     # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
+        #     w13_linears.append(cur_w13_linear)
+        #     w2_linears.append(cur_w2_linear)
+        layer.w13_linears = w13_linears
+        layer.w2_linears = w2_linears
         set_weight_attrs(w13_linears, extra_weight_attrs)
         set_weight_attrs(w2_linears, extra_weight_attrs)
         
-        w13_qweight = torch.nn.Parameter(torch.empty(
-            num_experts,
-            hidden_size // 8,  # 8 int4 store to int32
-            2 * intermediate_size_per_partition,
-            dtype=torch.int32),
-                                         requires_grad=False)
-        layer.register_parameter("w13_qweight", w13_qweight)
-        set_weight_attrs(w13_qweight, extra_weight_attrs)
-
-        w13_scales = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            hidden_size // group_size,  # 23
-            2 * intermediate_size_per_partition,
-            dtype=params_dtype),
-                                        requires_grad=False)
-        layer.register_parameter("w13_scales", w13_scales)
-        set_weight_attrs(w13_scales, extra_weight_attrs)
-
-        w13_bias = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            1,
-            2 * intermediate_size_per_partition,
-            dtype=params_dtype),
-                                      requires_grad=False)
-        layer.register_parameter("w13_bias", w13_bias)
-        set_weight_attrs(w13_bias, extra_weight_attrs)
-        
-        # down_proj (row parallel)
-        w2_qweight = torch.nn.Parameter(torch.empty(
-            num_experts,
-            intermediate_size_per_partition,
-            hidden_size // 8, # 8 int4 store to int32
-            dtype=torch.int32),
-                                        requires_grad=False)
-        layer.register_parameter("w2_qweight", w2_qweight)
-        set_weight_attrs(w2_qweight, extra_weight_attrs)
-
-        w2_scales = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            intermediate_size_per_partition,
-            hidden_size // group_size ,#23
-            dtype=params_dtype),
-                                       requires_grad=False)
-        layer.register_parameter("w2_scales", w2_scales)
-        set_weight_attrs(w2_scales, extra_weight_attrs)
-
-        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
-                                                 1,
-                                                 hidden_size,
-                                                 dtype=params_dtype),
-                                     requires_grad=False)
-        layer.register_parameter("w2_bias", w2_bias)
-        set_weight_attrs(w2_bias, extra_weight_attrs)
-
-        if self.quant_config.has_zp:
-            w13_qzeros = torch.nn.Parameter(torch.zeros(
-                num_experts,
-                hidden_size // group_size,
-                2 * intermediate_size_per_partition // 8,
-                dtype=torch.int32),
-                                            requires_grad=False)
-            layer.register_parameter("w13_qzeros", w13_qzeros)
-            set_weight_attrs(w13_qzeros, extra_weight_attrs)
-
-            w2_qzeros = torch.nn.Parameter(torch.zeros(
-                num_experts,
-                hidden_size // group_size,
-                intermediate_size_per_partition // 8,
-                dtype=torch.int32),
-                                           requires_grad=False)
-            layer.register_parameter("w2_qzeros", w2_qzeros)
-            set_weight_attrs(w2_qzeros, extra_weight_attrs)
-
-        if True:  # self.quant_config.quant_method == "gptq":
-            # some param are unused, but we need to init them in order to
-            # load weights
-            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
-            if not self.quant_config.has_zp:
-                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
-            for key in invalid_param_keys:
-                param = torch.nn.Parameter(torch.empty((0, ),
-                                                       dtype=torch.int32),
-                                           requires_grad=False)
-                layer.register_parameter(key, param)
-                set_weight_attrs(param, extra_weight_attrs)
-                
-        print(
-            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
-        )
-        print(
-            f"test: layer.w2_qweight shape: {layer.w2_qweight.shape}, bias shape: {layer.w2_bias.shape}, scale shape: {layer.w2_scales.shape},  zero shape: {layer.w2_qzeros.shape if self.quant_config.has_zp else None}"
-        )
+#        w13_qweight = torch.nn.Parameter(torch.empty(
+#            num_experts,
+#            hidden_size // 8,  # 8 int4 store to int32
+#            2 * intermediate_size_per_partition,
+#            dtype=torch.int32),
+#                                         requires_grad=False)
+#        layer.register_parameter("w13_qweight", w13_qweight)
+#        set_weight_attrs(w13_qweight, extra_weight_attrs)
+#
+#        w13_scales = torch.nn.Parameter(torch.zeros(
+#            num_experts,
+#            hidden_size // group_size,  # 23
+#            2 * intermediate_size_per_partition,
+#            dtype=params_dtype),
+#                                        requires_grad=False)
+#        layer.register_parameter("w13_scales", w13_scales)
+#        set_weight_attrs(w13_scales, extra_weight_attrs)
+#
+#        w13_bias = torch.nn.Parameter(torch.zeros(
+#            num_experts,
+#            1,
+#            2 * intermediate_size_per_partition,
+#            dtype=params_dtype),
+#                                      requires_grad=False)
+#        layer.register_parameter("w13_bias", w13_bias)
+#        set_weight_attrs(w13_bias, extra_weight_attrs)
+#        
+#        # down_proj (row parallel)
+#        w2_qweight = torch.nn.Parameter(torch.empty(
+#            num_experts,
+#            intermediate_size_per_partition,
+#            hidden_size // 8, # 8 int4 store to int32
+#            dtype=torch.int32),
+#                                        requires_grad=False)
+#        layer.register_parameter("w2_qweight", w2_qweight)
+#        set_weight_attrs(w2_qweight, extra_weight_attrs)
+#
+#        w2_scales = torch.nn.Parameter(torch.zeros(
+#            num_experts,
+#            intermediate_size_per_partition,
+#            hidden_size // group_size ,#23
+#            dtype=params_dtype),
+#                                       requires_grad=False)
+#        layer.register_parameter("w2_scales", w2_scales)
+#        set_weight_attrs(w2_scales, extra_weight_attrs)
+#
+#        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+#                                                 1,
+#                                                 hidden_size,
+#                                                 dtype=params_dtype),
+#                                     requires_grad=False)
+#        layer.register_parameter("w2_bias", w2_bias)
+#        set_weight_attrs(w2_bias, extra_weight_attrs)
+#
+#        if self.quant_config.has_zp:
+#            w13_qzeros = torch.nn.Parameter(torch.zeros(
+#                num_experts,
+#                hidden_size // group_size,
+#                2 * intermediate_size_per_partition // 8,
+#                dtype=torch.int32),
+#                                            requires_grad=False)
+#            layer.register_parameter("w13_qzeros", w13_qzeros)
+#            set_weight_attrs(w13_qzeros, extra_weight_attrs)
+#
+#            w2_qzeros = torch.nn.Parameter(torch.zeros(
+#                num_experts,
+#                hidden_size // group_size,
+#                intermediate_size_per_partition // 8,
+#                dtype=torch.int32),
+#                                           requires_grad=False)
+#            layer.register_parameter("w2_qzeros", w2_qzeros)
+#            set_weight_attrs(w2_qzeros, extra_weight_attrs)
+#
+#        if True:  # self.quant_config.quant_method == "gptq":
+#            # some param are unused, but we need to init them in order to
+#            # load weights
+#            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
+#            if not self.quant_config.has_zp:
+#                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
+#            for key in invalid_param_keys:
+#                param = torch.nn.Parameter(torch.empty((0, ),
+#                                                       dtype=torch.int32),
+#                                           requires_grad=False)
+#                layer.register_parameter(key, param)
+#                set_weight_attrs(param, extra_weight_attrs)
+#                
+#        print(
+#            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
+#        )
+#        print(
+#            f"test: layer.w2_qweight shape: {layer.w2_qweight.shape}, bias shape: {layer.w2_bias.shape}, scale shape: {layer.w2_scales.shape},  zero shape: {layer.w2_qzeros.shape if self.quant_config.has_zp else None}"
+#        )
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(
@@ -355,7 +355,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         gate_ups = []
         for i in range(num_experts):
-            print(f"running: {x[i].shape}")
             gate_up = layer.w13_linears[i](x[i])
             gate_ups.append(gate_up)
         gate_up = torch.stack(gate_ups, dim=0)
@@ -366,7 +365,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         next_states = []
         for i in range(num_experts):
-            next_state = layer.w2_linears[i]((up[i] + 1) * glu[i])
+            next_state = layer.w2_linears[i]((up[i] + 1) * glu[i]) 
             # next_state = self.int4_linear(
             #     (up[i] + 1) * glu[i], layer.w2_qweight[i], layer.w2_scales[i],
             #     layer.w2_qzeros[i] if self.quant_config.has_zp else None,
@@ -376,11 +375,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         next_states = next_states.view(num_experts, batch_size, -1,
                                        self.hidden_size)
-        next_states = next_states * router_logits.transpose(0, 1).view(
+        next_states = next_states * router_scores.transpose(0, 1).view(
             num_experts, batch_size, -1)[..., None]
         next_states = next_states.sum(dim=0)
 
-        next_states = next_states[..., :self.ori_hidden_size]
+        next_states = next_states[..., :self.ori_hidden_size].squeeze(1)
         return next_states
 
     @staticmethod
