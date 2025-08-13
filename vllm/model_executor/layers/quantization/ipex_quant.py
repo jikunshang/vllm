@@ -62,8 +62,9 @@ class IPEXConfig(QuantizationConfig):
                              f"but got {self.weight_bits}.")
 
         if self.method not in ["awq", "gptq", "auto-round"]:
-            raise ValueError(f"IPEX quantization supports [awq, gptq, auto-round], "
-                             f"but got {self.method}.")
+            raise ValueError(
+                f"IPEX quantization supports [awq, gptq, auto-round], "
+                f"but got {self.method}.")
 
     def __repr__(self) -> str:
         return (f"IPEXConfig(method={self.method},"
@@ -153,7 +154,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
         self.ori_hidden_size = hidden_size
-        self.hidden_size = 2944
+        self.hidden_size = hidden_size
         hidden_size = self.hidden_size
 
         # make intermediate_size and hidden_size diviable by group_size
@@ -186,7 +187,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                        bias=True,
                                        quant_config=self.quant_config,
                                        return_bias=False,
-                                    prefix=f"{prefix}.gate_up_projs.{i}")
+                                       prefix=f"{prefix}.gate_up_projs.{i}")
             for i in range(num_experts)
         ])
         down_projs = torch.nn.ModuleList([
@@ -195,7 +196,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                               bias=True,
                               quant_config=self.quant_config,
                               return_bias=False,
-                              prefix=f"{prefix}.down_projs.{i}") for i in range(num_experts)
+                              prefix=f"{prefix}.down_projs.{i}")
+            for i in range(num_experts)
         ])
 
         # for i in range(num_experts):
@@ -208,7 +210,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         #     w13_linears.append(cur_w13_linear)
         #     w2_linears.append(cur_w2_linear)
         layer.gate_up_projs = gate_up_projs
-        layer.gate_up_projs = down_projs
+        layer.down_projs = down_projs
         set_weight_attrs(gate_up_projs, extra_weight_attrs)
         set_weight_attrs(down_projs, extra_weight_attrs)
 
@@ -317,7 +319,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             dim=1, index=router_indices, src=router_top_value)
 
         return router_scores, router_indices
-
 
     def apply(
         self,
@@ -498,7 +499,6 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
             group_size=self.quant_config.group_size,
             quant_method=IPEXConfig.IPEX_QUANT_METHOD_MAP["gptq"]
         )
-        print(f"layer.qweight: {layer.qweight}")
 
     def apply(self,
               layer: torch.nn.Module,
