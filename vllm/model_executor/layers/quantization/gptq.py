@@ -187,7 +187,8 @@ class GPTQLinearMethod(LinearMethodBase):
                 exllama_state = ExllamaState.UNUSED
             else:
                 # we need to partition qzeros and scales for exllama kernel
-                scale_and_zero_size = int((input_size_per_partition + group_size - 1) // group_size)
+                scale_and_zero_size = int(
+                    (input_size_per_partition + group_size - 1) // group_size)
                 scale_and_zero_input_dim = 0
 
         qweight = PackedvLLMParameter(
