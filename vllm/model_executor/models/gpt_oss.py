@@ -561,7 +561,7 @@ class GptOssForCausalLM(nn.Module):
                     param[layer_index].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(get_string_between(name, "gate_up_projs.", ".bias"))
-                    narrow_bias = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
                     print(f"param shape: {param.shape}")
@@ -572,34 +572,44 @@ class GptOssForCausalLM(nn.Module):
                     raise ValueError(
                         f"Unexpected weight name format: {name}")
                     
-                # # Extract gate and up projection parts
-                # # since the weight is shuffled, we can slice directly
-                # if use_ep:
-                #     narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-                # else:
-                #     narrow_weight = weight[ :,
-                #                            2 * tp_rank_start:2 * tp_rank_end]
-
-                # narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-                # param = params_dict[new_name]
-
-                # param.copy_(narrow_weight)
-                # loaded_params.add(new_name)
-
-            # elif ".experts.down_proj" in name and "bias" not in name:
-            #     # Handle MLP down projection weights
-            #     new_name = name.replace(".experts.down_proj",
-            #                             ".experts.w2_weight")
-
-            #     if use_ep:
-            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-            #     else:
-            #         narrow_weight = weight[:, tp_rank_start:tp_rank_end]
-            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-            #     param = params_dict[new_name]
-
-            #     param.copy_(narrow_weight)
-            #     loaded_params.add(new_name)
+            elif ".experts.down_projs" in name:
+                # Handle MLP down projection weights
+                prefix = get_string_prefix(name, "experts")
+                
+                new_name = name.replace(".experts.down_proj",
+                                        ".experts.w2_weight")
+                # 1. process weight
+                if ".qweight" in name:
+                    layer_index = int(get_string_between(name, "down_projs.", ".qweight"))
+                    
+                    narrow_weight = weight[:, tp_rank_start:tp_rank_end]
+                    narrow_weight = narrow_weight.permute(0,1).contiguous()
+                    new_name = f"{prefix}.w2_qweight"
+                    
+                    param = params_dict[new_name]
+                    print(f"param shape: {param.shape}")
+                    param[layer_index].copy_(narrow_weight)
+                elif ".scales" in name:
+                    layer_index = int(get_string_between(name, "down_projs.", ".scales"))
+                    print(f"scale shape {weight.shape}")
+                    narrow_scale = weight[:, tp_rank_start:tp_rank_end]
+                    new_name = f"{prefix}.w2_scales"
+                    param = params_dict[new_name]
+                    print(f"param shape: {param.shape}")
+                    param[layer_index].copy_(narrow_scale)
+                    print(f"w2 scale {param[layer_index]}")
+                elif ".bias" in name:
+                    layer_index = int(get_string_between(name, "down_projs.", ".bias"))
+                    narrow_bias = weight[tp_rank_start:tp_rank_end]
+                    new_name = f"{prefix}.w2_bias"
+                    param = params_dict[new_name]
+                    print(f"param shape: {param.shape}")
+                    param[layer_index].copy_(narrow_bias)
+                elif ".qzero" in name:
+                    pass
+                else:
+                    raise ValueError(
+                        f"Unexpected weight name format: {name}")
 
             elif "gate_up_proj_bias" in name:
                 # Handle MLP gate and up projection biases
