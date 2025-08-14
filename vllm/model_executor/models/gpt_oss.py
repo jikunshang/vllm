@@ -538,20 +538,35 @@ class GptOssForCausalLM(nn.Module):
                 # Handle MLP gate and up projection weights
                 new_name = name.replace(".experts.gate_up_projs",
                                         ".experts.w13_qweight")
-
+                prefix = get_string_prefix(name, "experts")
+                
                 # 1. process weight 
                 if ".qweight" in name:
                     layer_index = int(get_string_between(name, "gate_up_projs.", ".qweight"))
+                    
                     narrow_weight = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
                     narrow_weight = narrow_weight.permute(0,1).contiguous()
-                    prefix = get_string_prefix(name, "gate_up_projs")
                     new_name = f"{prefix}.w13_qweight"
+                    
                     param = params_dict[new_name]
-                    print(f"param is {param}, shape: {param.shape}")
+                    print(f"param shape: {param.shape}")
                     param[layer_index].copy_(narrow_weight)
                 elif ".scales" in name:
-                    pass
+                    layer_index = int(get_string_between(name, "gate_up_projs.", ".scales"))
+                    print(f"scale shape {weight.shape}")
+                    narrow_scale = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    new_name = f"{prefix}.w13_scales"
+                    param = params_dict[new_name]
+                    print(f"param shape: {param.shape}")
+                    param[layer_index].copy_(narrow_scale)
                 elif ".bias" in name:
+                    layer_index = int(get_string_between(name, "gate_up_projs.", ".bias"))
+                    narrow_bias = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    new_name = f"{prefix}.w13_bias"
+                    param = params_dict[new_name]
+                    print(f"param shape: {param.shape}")
+                    param[layer_index].copy_(narrow_bias)
+                elif ".qzero" in name:
                     pass
                 else:
                     raise ValueError(
