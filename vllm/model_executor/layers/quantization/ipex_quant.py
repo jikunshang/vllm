@@ -265,7 +265,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
                                                  1,
-                                                 hidden_size,
+                                                 intermediate_size_per_partition,
                                                  dtype=params_dtype),
                                      requires_grad=False)
         layer.register_parameter("w2_bias", w2_bias)
