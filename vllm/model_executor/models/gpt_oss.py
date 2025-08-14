@@ -71,7 +71,7 @@ class OAIAttention(nn.Module):
         tp_size = get_tensor_model_parallel_world_size()
 
         attention_sink_dtype = (torch.float32 if envs.VLLM_USE_TRTLLM_ATTENTION
-                                else torch.bfloat16)
+                                else torch.float16)
         self.sinks = torch.nn.Parameter(
             torch.empty(config.num_attention_heads // tp_size,
                         dtype=attention_sink_dtype,
@@ -152,7 +152,7 @@ class MLPBlock(torch.nn.Module):
         self.norm = RMSNorm(config.hidden_size, eps=1e-5)
         self.router = torch.nn.Linear(config.hidden_size,
                                       config.num_local_experts,
-                                      dtype=torch.bfloat16)
+                                      dtype=torch.float16)
         assert config.intermediate_size % self.world_size == 0
         self.experts = FusedMoE(num_experts=config.num_local_experts,
                                 top_k=config.num_experts_per_tok,
@@ -481,6 +481,7 @@ class GptOssForCausalLM(nn.Module):
             "input_layernorm.weight": "attn.norm.weight",
             "post_attention_layernorm.weight": "mlp.norm.weight",
             "embed_tokens": "embedding",
+            "router.router": "router",
         }
 
         def maybe_rename(name: str) -> str:
@@ -582,7 +583,7 @@ class GptOssForCausalLM(nn.Module):
                 # Handle attention sinks (distributed across ranks)
                 name = name.replace("self_attn", "attn")
                 param = params_dict[name]
-                narrow_weight = weight.narrow(0, head_start, heads_per_rank)
+                narrow_weight = weight.narrow(0, head_start, heads_per_rank).half()
                 param.data.copy_(narrow_weight)
                 loaded_params.add(name)
             elif "q_proj" in name or "k_proj" in name or "v_proj" in name:

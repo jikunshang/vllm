@@ -150,13 +150,9 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                        params_dtype: torch.dtype, **extra_weight_attrs):
         prefix = layer.prefix
         layer.quant_config = self.quant_config
-        bit8_pack_factor = self.quant_config.bit8_pack_factor
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
-        self.ori_hidden_size = hidden_size
         self.hidden_size = hidden_size
-        hidden_size = self.hidden_size
-
         # make intermediate_size and hidden_size diviable by group_size
         # we reduce the group size to ensure that
         # and we would repeat the loaded_weight later
@@ -347,18 +343,17 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         num_experts = router_scores.shape[1]
 
         batch_size = x.shape[0]
-        x = x.reshape(-1, self.ori_hidden_size)
+        x = x.reshape(-1, self.hidden_size)
 
         x = x.repeat(num_experts, 1)
-        x = x.view(num_experts, -1, self.ori_hidden_size)
-        x = torch.nn.functional.pad(
-            x, (0, self.hidden_size - self.ori_hidden_size))
+        x = x.view(num_experts, -1, self.hidden_size)
 
         gate_ups = []
         for i in range(num_experts):
             gate_up = layer.gate_up_projs[i](x[i])
             gate_ups.append(gate_up)
         gate_up = torch.stack(gate_ups, dim=0)
+        
         gate, up = gate_up[..., ::2], gate_up[..., 1::2]
         gate = gate.clamp(min=None, max=self.limit)
         up = up.clamp(min=-self.limit, max=self.limit)
@@ -376,7 +371,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             num_experts, batch_size, -1)[..., None]
         next_states = next_states.sum(dim=0)
 
-        next_states = next_states[..., :self.ori_hidden_size].squeeze(1)
+        next_states = next_states.squeeze(1)
         return next_states
 
     @staticmethod
@@ -455,7 +450,13 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         bias = layer.bias if not layer.skip_bias_add else None
-
+        print(f"scales shape: {layer.scales.shape}")
+        print(f"scales: {layer.scales}")
+        if layer.prefix == "model.block.0.mlp.experts.down_projs.0":
+            print(f"layer.scales: {layer.scales}")
+            print(f"layer.bias: {layer.bias}")
+            print(f"layer.qweight: {layer.qweight}")
+        
         try:
             import intel_extension_for_pytorch as ipex
             if version.parse(
