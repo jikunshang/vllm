@@ -513,26 +513,63 @@ class GptOssForCausalLM(nn.Module):
         ep_rank_start = ep_rank * experts_per_rank
         ep_rank_end = (ep_rank + 1) * experts_per_rank
 
+        def get_string_between(ori_str, start_str, end_str):
+            start_idx = ori_str.find(start_str)
+            if start_idx == -1:
+                return None
+            start_idx += len(start_str)
+            end_idx = ori_str.find(end_str, start_idx)
+            if end_idx == -1:
+                return None
+            return ori_str[start_idx:end_idx]
+        
+        def get_string_prefix(ori_str, prefix):
+            start_idx = ori_str.find(prefix)
+            if start_idx == -1:
+                return None
+            start_idx += len(prefix)
+            return ori_str[:start_idx]
+            
+
+
         for name, weight in weights:
             print(f"loading weight name: {name}")
-            # if ".experts.gate_up_proj" in name and "bias" not in name:
-            #     # Handle MLP gate and up projection weights
-            #     new_name = name.replace(".experts.gate_up_proj",
-            #                             ".experts.w13_weight")
+            if ".experts.gate_up_projs" in name:
+                # Handle MLP gate and up projection weights
+                new_name = name.replace(".experts.gate_up_projs",
+                                        ".experts.w13_qweight")
 
-            #     # Extract gate and up projection parts
-            #     # since the weight is shuffled, we can slice directly
-            #     if use_ep:
-            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-            #     else:
-            #         narrow_weight = weight[:, :,
-            #                                2 * tp_rank_start:2 * tp_rank_end]
+                # 1. process weight 
+                if ".qweight" in name:
+                    layer_index = int(get_string_between(name, "gate_up_projs.", ".qweight"))
+                    narrow_weight = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    narrow_weight = narrow_weight.permute(0,1).contiguous()
+                    prefix = get_string_prefix(name, "gate_up_projs")
+                    new_name = f"{prefix}.w13_qweight"
+                    param = params_dict[new_name]
+                    print(f"param is {param}, shape: {param.shape}")
+                    param[layer_index].copy_(narrow_weight)
+                elif ".scales" in name:
+                    pass
+                elif ".bias" in name:
+                    pass
+                else:
+                    raise ValueError(
+                        f"Unexpected weight name format: {name}")
+                    
+                # # Extract gate and up projection parts
+                # # since the weight is shuffled, we can slice directly
+                # if use_ep:
+                #     narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
+                # else:
+                #     narrow_weight = weight[ :,
+                #                            2 * tp_rank_start:2 * tp_rank_end]
 
-            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-            #     param = params_dict[new_name]
+                # narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
+                # param = params_dict[new_name]
 
-            #     param.copy_(narrow_weight)
-            #     loaded_params.add(new_name)
+                # param.copy_(narrow_weight)
+                # loaded_params.add(new_name)
 
             # elif ".experts.down_proj" in name and "bias" not in name:
             #     # Handle MLP down projection weights
@@ -549,7 +586,7 @@ class GptOssForCausalLM(nn.Module):
             #     param.copy_(narrow_weight)
             #     loaded_params.add(new_name)
 
-            if "gate_up_proj_bias" in name:
+            elif "gate_up_proj_bias" in name:
                 # Handle MLP gate and up projection biases
                 new_name = name.replace("gate_up_proj_bias", "w13_bias")
 
