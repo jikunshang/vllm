@@ -21,7 +21,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
-from vllm.utils import next_power_of_2, round_up
+from vllm.utils import round_up
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -175,140 +175,140 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             "is_transposed": False
         })
         intermediate_size_per_partition_after_pad = round_up(
-                intermediate_size_per_partition, 256)
+            intermediate_size_per_partition, 256)
         assert 'weight_loader' in extra_weight_attrs
         weight_loader = extra_weight_attrs['weight_loader']
         wrapped_weight_loader = IPEXAutoRoundFusedMoEMethod.get_weight_loader(
             layer, weight_loader)
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
-        # Fused gate_up_proj (column parallel)
-        gate_up_projs = torch.nn.ModuleList([
-            MergedColumnParallelLinear(self.hidden_size,
-                                       [intermediate_size_per_partition_after_pad] * 2,
-                                       bias=True,
-                                       quant_config=self.quant_config,
-                                       return_bias=False,
-                                       prefix=f"{prefix}.gate_up_projs.{i}")
-            for i in range(num_experts)
-        ])
-        down_projs = torch.nn.ModuleList([
-            RowParallelLinear(intermediate_size_per_partition_after_pad,
-                              self.hidden_size,
-                              bias=True,
-                              quant_config=self.quant_config,
-                              return_bias=False,
-                              prefix=f"{prefix}.down_projs.{i}")
-            for i in range(num_experts)
-        ])
+        # # Fused gate_up_proj (column parallel)
+        # gate_up_projs = torch.nn.ModuleList([
+        #     MergedColumnParallelLinear(self.hidden_size,
+        #                                [intermediate_size_per_partition_after_pad] * 2,
+        #                                bias=True,
+        #                                quant_config=self.quant_config,
+        #                                return_bias=False,
+        #                                prefix=f"{prefix}.gate_up_projs.{i}")
+        #     for i in range(num_experts)
+        # ])
+        # down_projs = torch.nn.ModuleList([
+        #     RowParallelLinear(intermediate_size_per_partition_after_pad,
+        #                       self.hidden_size,
+        #                       bias=True,
+        #                       quant_config=self.quant_config,
+        #                       return_bias=False,
+        #                       prefix=f"{prefix}.down_projs.{i}")
+        #     for i in range(num_experts)
+        # ])
 
-        # for i in range(num_experts):
-        #     cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
-        #     cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
-        #     # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
-        #     # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
-        #     # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
-        #     # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
-        #     w13_linears.append(cur_w13_linear)
-        #     w2_linears.append(cur_w2_linear)
-        layer.gate_up_projs = gate_up_projs
-        layer.down_projs = down_projs
-        set_weight_attrs(gate_up_projs, extra_weight_attrs)
-        set_weight_attrs(down_projs, extra_weight_attrs)
+        # # for i in range(num_experts):
+        # #     cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
+        # #     cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
+        # #     # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
+        # #     # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
+        # #     # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
+        # #     # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
+        # #     w13_linears.append(cur_w13_linear)
+        # #     w2_linears.append(cur_w2_linear)
+        # layer.gate_up_projs = gate_up_projs
+        # layer.down_projs = down_projs
+        # set_weight_attrs(gate_up_projs, extra_weight_attrs)
+        # set_weight_attrs(down_projs, extra_weight_attrs)
 
 
-#        w13_qweight = torch.nn.Parameter(torch.empty(
-#            num_experts,
-#            hidden_size // 8,  # 8 int4 store to int32
-#            2 * intermediate_size_per_partition,
-#            dtype=torch.int32),
-#                                         requires_grad=False)
-#        layer.register_parameter("w13_qweight", w13_qweight)
-#        set_weight_attrs(w13_qweight, extra_weight_attrs)
-#
-#        w13_scales = torch.nn.Parameter(torch.zeros(
-#            num_experts,
-#            hidden_size // group_size,  # 23
-#            2 * intermediate_size_per_partition,
-#            dtype=params_dtype),
-#                                        requires_grad=False)
-#        layer.register_parameter("w13_scales", w13_scales)
-#        set_weight_attrs(w13_scales, extra_weight_attrs)
-#
-#        w13_bias = torch.nn.Parameter(torch.zeros(
-#            num_experts,
-#            1,
-#            2 * intermediate_size_per_partition,
-#            dtype=params_dtype),
-#                                      requires_grad=False)
-#        layer.register_parameter("w13_bias", w13_bias)
-#        set_weight_attrs(w13_bias, extra_weight_attrs)
-#
-#        # down_proj (row parallel)
-#        w2_qweight = torch.nn.Parameter(torch.empty(
-#            num_experts,
-#            intermediate_size_per_partition,
-#            hidden_size // 8, # 8 int4 store to int32
-#            dtype=torch.int32),
-#                                        requires_grad=False)
-#        layer.register_parameter("w2_qweight", w2_qweight)
-#        set_weight_attrs(w2_qweight, extra_weight_attrs)
-#
-#        w2_scales = torch.nn.Parameter(torch.zeros(
-#            num_experts,
-#            intermediate_size_per_partition,
-#            hidden_size // group_size ,#23
-#            dtype=params_dtype),
-#                                       requires_grad=False)
-#        layer.register_parameter("w2_scales", w2_scales)
-#        set_weight_attrs(w2_scales, extra_weight_attrs)
-#
-#        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
-#                                                 1,
-#                                                 hidden_size,
-#                                                 dtype=params_dtype),
-#                                     requires_grad=False)
-#        layer.register_parameter("w2_bias", w2_bias)
-#        set_weight_attrs(w2_bias, extra_weight_attrs)
-#
-#        if self.quant_config.has_zp:
-#            w13_qzeros = torch.nn.Parameter(torch.zeros(
-#                num_experts,
-#                hidden_size // group_size,
-#                2 * intermediate_size_per_partition // 8,
-#                dtype=torch.int32),
-#                                            requires_grad=False)
-#            layer.register_parameter("w13_qzeros", w13_qzeros)
-#            set_weight_attrs(w13_qzeros, extra_weight_attrs)
-#
-#            w2_qzeros = torch.nn.Parameter(torch.zeros(
-#                num_experts,
-#                hidden_size // group_size,
-#                intermediate_size_per_partition // 8,
-#                dtype=torch.int32),
-#                                           requires_grad=False)
-#            layer.register_parameter("w2_qzeros", w2_qzeros)
-#            set_weight_attrs(w2_qzeros, extra_weight_attrs)
-#
-#        if True:  # self.quant_config.quant_method == "gptq":
-#            # some param are unused, but we need to init them in order to
-#            # load weights
-#            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
-#            if not self.quant_config.has_zp:
-#                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
-#            for key in invalid_param_keys:
-#                param = torch.nn.Parameter(torch.empty((0, ),
-#                                                       dtype=torch.int32),
-#                                           requires_grad=False)
-#                layer.register_parameter(key, param)
-#                set_weight_attrs(param, extra_weight_attrs)
-#
-#        print(
-#            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
-#        )
-#        print(
-#            f"test: layer.w2_qweight shape: {layer.w2_qweight.shape}, bias shape: {layer.w2_bias.shape}, scale shape: {layer.w2_scales.shape},  zero shape: {layer.w2_qzeros.shape if self.quant_config.has_zp else None}"
-#        )
+        w13_qweight = torch.nn.Parameter(torch.empty(
+            num_experts,
+            hidden_size // 8,  # 8 int4 store to int32
+            2 * intermediate_size_per_partition,
+            dtype=torch.int32),
+                                         requires_grad=False)
+        layer.register_parameter("w13_qweight", w13_qweight)
+        set_weight_attrs(w13_qweight, extra_weight_attrs)
+
+        w13_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            hidden_size // group_size,  # 23
+            2 * intermediate_size_per_partition,
+            dtype=params_dtype),
+                                        requires_grad=False)
+        layer.register_parameter("w13_scales", w13_scales)
+        set_weight_attrs(w13_scales, extra_weight_attrs)
+
+        w13_bias = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            1,
+            2 * intermediate_size_per_partition,
+            dtype=params_dtype),
+                                      requires_grad=False)
+        layer.register_parameter("w13_bias", w13_bias)
+        set_weight_attrs(w13_bias, extra_weight_attrs)
+
+        # down_proj (row parallel)
+        w2_qweight = torch.nn.Parameter(torch.empty(
+            num_experts,
+            intermediate_size_per_partition,
+            hidden_size // 8, # 8 int4 store to int32
+            dtype=torch.int32),
+                                        requires_grad=False)
+        layer.register_parameter("w2_qweight", w2_qweight)
+        set_weight_attrs(w2_qweight, extra_weight_attrs)
+
+        w2_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            intermediate_size_per_partition,
+            hidden_size // group_size ,#23
+            dtype=params_dtype),
+                                       requires_grad=False)
+        layer.register_parameter("w2_scales", w2_scales)
+        set_weight_attrs(w2_scales, extra_weight_attrs)
+
+        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                 1,
+                                                 hidden_size,
+                                                 dtype=params_dtype),
+                                     requires_grad=False)
+        layer.register_parameter("w2_bias", w2_bias)
+        set_weight_attrs(w2_bias, extra_weight_attrs)
+
+        if self.quant_config.has_zp:
+            w13_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                hidden_size // group_size,
+                2 * intermediate_size_per_partition // 8,
+                dtype=torch.int32),
+                                            requires_grad=False)
+            layer.register_parameter("w13_qzeros", w13_qzeros)
+            set_weight_attrs(w13_qzeros, extra_weight_attrs)
+
+            w2_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                hidden_size // group_size,
+                intermediate_size_per_partition // 8,
+                dtype=torch.int32),
+                                           requires_grad=False)
+            layer.register_parameter("w2_qzeros", w2_qzeros)
+            set_weight_attrs(w2_qzeros, extra_weight_attrs)
+
+        if True:  # self.quant_config.quant_method == "gptq":
+            # some param are unused, but we need to init them in order to
+            # load weights
+            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
+            if not self.quant_config.has_zp:
+                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
+            for key in invalid_param_keys:
+                param = torch.nn.Parameter(torch.empty((0, ),
+                                                       dtype=torch.int32),
+                                           requires_grad=False)
+                layer.register_parameter(key, param)
+                set_weight_attrs(param, extra_weight_attrs)
+
+        print(
+            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
+        )
+        print(
+            f"test: layer.w2_qweight shape: {layer.w2_qweight.shape}, bias shape: {layer.w2_bias.shape}, scale shape: {layer.w2_scales.shape},  zero shape: {layer.w2_qzeros.shape if self.quant_config.has_zp else None}"
+        )
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(

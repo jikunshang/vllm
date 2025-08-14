@@ -27,6 +27,7 @@ from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.sampling_metadata import SamplingMetadata
 from vllm.sequence import IntermediateTensors
 from vllm.utils import cdiv
+from .interfaces import SupportsPP
 
 from .utils import extract_layer_index, maybe_prefix
 
@@ -513,6 +514,7 @@ class GptOssForCausalLM(nn.Module):
         ep_rank_end = (ep_rank + 1) * experts_per_rank
 
         for name, weight in weights:
+            print(f"loading weight name: {name}")
             # if ".experts.gate_up_proj" in name and "bias" not in name:
             #     # Handle MLP gate and up projection weights
             #     new_name = name.replace(".experts.gate_up_proj",
