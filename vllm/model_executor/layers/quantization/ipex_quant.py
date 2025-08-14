@@ -450,12 +450,6 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         bias = layer.bias if not layer.skip_bias_add else None
-        print(f"scales shape: {layer.scales.shape}")
-        print(f"scales: {layer.scales}")
-        if layer.prefix == "model.block.0.mlp.experts.down_projs.0":
-            print(f"layer.scales: {layer.scales}")
-            print(f"layer.bias: {layer.bias}")
-            print(f"layer.qweight: {layer.qweight}")
         
         try:
             import intel_extension_for_pytorch as ipex
