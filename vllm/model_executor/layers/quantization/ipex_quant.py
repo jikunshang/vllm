@@ -10,8 +10,6 @@ from vllm.distributed import get_tensor_model_parallel_rank, get_tp_group
 from vllm.model_executor.layers.fused_moe.layer import (
     FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
-                                               MergedColumnParallelLinear,
-                                               RowParallelLinear,
                                                UnquantizedLinearMethod)
 from vllm.model_executor.layers.quantization import QuantizationMethods
 from vllm.model_executor.layers.quantization.awq import (AWQLinearMethod,
@@ -21,7 +19,6 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
-from vllm.utils import round_up
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -149,23 +146,13 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
-        prefix = layer.prefix
         layer.quant_config = self.quant_config
-        bit8_pack_factor = self.quant_config.bit8_pack_factor
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
         self.ori_hidden_size = hidden_size
         self.hidden_size = hidden_size
         hidden_size = self.hidden_size
 
-        # make intermediate_size and hidden_size diviable by group_size
-        # we reduce the group size to ensure that
-        # and we would repeat the loaded_weight later
-        # while intermediate_size_per_partition % group_size or \
-        #         hidden_size % group_size:
-        #     group_size = group_size // 2
-        #     group_size_div_factor *= 2
-        #     assert group_size >= 32
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
@@ -174,61 +161,26 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             "quant_method": strategy,
             "is_transposed": False
         })
-        intermediate_size_per_partition_after_pad = round_up(
-            intermediate_size_per_partition, 256)
+
         assert 'weight_loader' in extra_weight_attrs
         weight_loader = extra_weight_attrs['weight_loader']
         wrapped_weight_loader = IPEXAutoRoundFusedMoEMethod.get_weight_loader(
             layer, weight_loader)
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
-        # # Fused gate_up_proj (column parallel)
-        # gate_up_projs = torch.nn.ModuleList([
-        #     MergedColumnParallelLinear(self.hidden_size,
-        #                                [intermediate_size_per_partition_after_pad] * 2,
-        #                                bias=True,
-        #                                quant_config=self.quant_config,
-        #                                return_bias=False,
-        #                                prefix=f"{prefix}.gate_up_projs.{i}")
-        #     for i in range(num_experts)
-        # ])
-        # down_projs = torch.nn.ModuleList([
-        #     RowParallelLinear(intermediate_size_per_partition_after_pad,
-        #                       self.hidden_size,
-        #                       bias=True,
-        #                       quant_config=self.quant_config,
-        #                       return_bias=False,
-        #                       prefix=f"{prefix}.down_projs.{i}")
-        #     for i in range(num_experts)
-        # ])
-
-        # # for i in range(num_experts):
-        # #     cur_w13_linear = MergedColumnParallelLinear(self.hidden_size, [intermediate_size_per_partition] *2, bias= True, quant_config=self.quant_config)
-        # #     cur_w2_linear = RowParallelLinear(intermediate_size_per_partition, self.hidden_size, bias=True, quant_config=self.quant_config)
-        # #     # layer.register_parameter("gate_up_projs." + str(i), cur_w13_linear)
-        # #     # layer.register_parameter("down_projs." + str(i), cur_w2_linear)
-        # #     # set_weight_attrs(cur_w13_linear, extra_weight_attrs)
-        # #     # set_weight_attrs(cur_w2_linear, extra_weight_attrs)
-        # #     w13_linears.append(cur_w13_linear)
-        # #     w2_linears.append(cur_w2_linear)
-        # layer.gate_up_projs = gate_up_projs
-        # layer.down_projs = down_projs
-        # set_weight_attrs(gate_up_projs, extra_weight_attrs)
-        # set_weight_attrs(down_projs, extra_weight_attrs)
-
-
-        w13_qweight = torch.nn.Parameter(torch.empty(
-            num_experts,
-            hidden_size // 8,  # 8 int4 store to int32
-            2 * intermediate_size_per_partition,
-            dtype=torch.int32),
-                                         requires_grad=False)
+        w13_qweight = torch.nn.Parameter(
+            torch.empty(
+                num_experts,
+                hidden_size // 8,  # 8 int4 store to int32
+                2 * intermediate_size_per_partition,
+                dtype=torch.int32),
+            requires_grad=False)
         layer.register_parameter("w13_qweight", w13_qweight)
         set_weight_attrs(w13_qweight, extra_weight_attrs)
 
         w13_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
-            hidden_size // group_size,  # 23
+            hidden_size // group_size,
             2 * intermediate_size_per_partition,
             dtype=params_dtype),
                                         requires_grad=False)
@@ -245,28 +197,30 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         set_weight_attrs(w13_bias, extra_weight_attrs)
 
         # down_proj (row parallel)
-        w2_qweight = torch.nn.Parameter(torch.empty(
-            num_experts,
-            intermediate_size_per_partition,
-            hidden_size // 8, # 8 int4 store to int32
-            dtype=torch.int32),
-                                        requires_grad=False)
+        w2_qweight = torch.nn.Parameter(
+            torch.empty(
+                num_experts,
+                intermediate_size_per_partition,
+                hidden_size // 8,  # 8 int4 store to int32
+                dtype=torch.int32),
+            requires_grad=False)
         layer.register_parameter("w2_qweight", w2_qweight)
         set_weight_attrs(w2_qweight, extra_weight_attrs)
 
         w2_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
             intermediate_size_per_partition,
-            hidden_size // group_size ,#23
+            hidden_size // group_size,
             dtype=params_dtype),
                                        requires_grad=False)
         layer.register_parameter("w2_scales", w2_scales)
         set_weight_attrs(w2_scales, extra_weight_attrs)
 
-        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
-                                                 1,
-                                                 intermediate_size_per_partition,
-                                                 dtype=params_dtype),
+        w2_bias = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            1,
+            intermediate_size_per_partition,
+            dtype=params_dtype),
                                      requires_grad=False)
         layer.register_parameter("w2_bias", w2_bias)
         set_weight_attrs(w2_bias, extra_weight_attrs)
@@ -302,13 +256,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                            requires_grad=False)
                 layer.register_parameter(key, param)
                 set_weight_attrs(param, extra_weight_attrs)
-
-        print(
-            f"test: layer.w13_qweight shape: {layer.w13_qweight.shape}, bias shape: {layer.w13_bias.shape}, scale shape: {layer.w13_scales.shape},  zero shape: {layer.w13_qzeros.shape if self.quant_config.has_zp else None}"
-        )
-        print(
-            f"test: layer.w2_qweight shape: {layer.w2_qweight.shape}, bias shape: {layer.w2_bias.shape}, scale shape: {layer.w2_scales.shape},  zero shape: {layer.w2_qzeros.shape if self.quant_config.has_zp else None}"
-        )
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(
