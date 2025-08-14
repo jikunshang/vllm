@@ -1,12 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import torch
 from packaging import version
 
+from vllm.distributed import get_tensor_model_parallel_rank, get_tp_group
+from vllm.model_executor.layers.fused_moe.layer import (
+    FusedMoE, FusedMoEMethodBase, FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
+                                               MergedColumnParallelLinear,
+                                               RowParallelLinear,
                                                UnquantizedLinearMethod)
 from vllm.model_executor.layers.quantization import QuantizationMethods
 from vllm.model_executor.layers.quantization.awq import (AWQLinearMethod,
@@ -14,6 +19,7 @@ from vllm.model_executor.layers.quantization.awq import (AWQLinearMethod,
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizationConfig)
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
+from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 
 MIN_IPEX_VERSION = "2.6.0"
@@ -37,6 +43,7 @@ class IPEXConfig(QuantizationConfig):
         modules_to_not_convert: Optional[list[str]] = None,
         desc_act: Optional[bool] = None,
         lm_head_quantized: Optional[bool] = None,
+        has_zp: Optional[bool] = False,
     ) -> None:
         super().__init__()
         self.method = method
@@ -47,13 +54,17 @@ class IPEXConfig(QuantizationConfig):
         self.lm_head_quantized = lm_head_quantized
         self.pack_factor = 32 // self.weight_bits
 
+        self.has_zp = has_zp
+        self.bit8_pack_factor = 8 // self.weight_bits
+
         if self.weight_bits not in [4]:
             raise ValueError(f"IPEX quantization supports weight bits [4], "
                              f"but got {self.weight_bits}.")
 
-        if self.method not in ["awq", "gptq"]:
-            raise ValueError(f"IPEX quantization supports [awq, gptq], "
-                             f"but got {self.method}.")
+        if self.method not in ["awq", "gptq", "auto-round"]:
+            raise ValueError(
+                f"IPEX quantization supports [awq, gptq, auto-round], "
+                f"but got {self.method}.")
 
     def __repr__(self) -> str:
         return (f"IPEXConfig(method={self.method},"
@@ -107,7 +118,7 @@ class IPEXConfig(QuantizationConfig):
 
         quant_method = hf_quant_cfg.get("quant_method", "").lower()
 
-        if quant_method in ["awq", "gptq"]:
+        if quant_method in ["awq", "gptq", "auto-round"]:
             return cls.get_name()
 
         return None
@@ -119,9 +130,212 @@ class IPEXConfig(QuantizationConfig):
                 if is_layer_skipped_awq(prefix, self.modules_to_not_convert):
                     return UnquantizedLinearMethod()
                 return IPEXAWQLinearMethod(self)
-            if self.method == "gptq":
+            if self.method == "gptq" or self.method == "auto-round":
                 return IPEXGPTQLinearMethod(self)
+        if isinstance(layer, FusedMoE) and self.method == "auto-round":
+            return IPEXAutoRoundFusedMoEMethod(self)
         return None
+
+
+class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
+
+    def __init__(self, quant_config: IPEXConfig):
+        self.quant_config = quant_config
+        self.out_dtype = torch.get_default_dtype()
+        self.alpha = 1.702
+        self.limit = 7.0
+
+    def create_weights(self, layer: torch.nn.Module, num_experts: int,
+                       hidden_size: int, intermediate_size_per_partition: int,
+                       params_dtype: torch.dtype, **extra_weight_attrs):
+        prefix = layer.prefix
+        layer.quant_config = self.quant_config
+        group_size = self.quant_config.group_size
+        group_size_div_factor = 1
+        self.hidden_size = hidden_size
+        # make intermediate_size and hidden_size diviable by group_size
+        # we reduce the group size to ensure that
+        # and we would repeat the loaded_weight later
+        # while intermediate_size_per_partition % group_size or \
+        #         hidden_size % group_size:
+        #     group_size = group_size // 2
+        #     group_size_div_factor *= 2
+        #     assert group_size >= 32
+        layer.group_size = group_size
+        layer.group_size_div_factor = group_size_div_factor
+
+        strategy = FusedMoeWeightScaleSupported.GROUP.value
+        extra_weight_attrs.update({
+            "quant_method": strategy,
+            "is_transposed": False
+        })
+
+        assert 'weight_loader' in extra_weight_attrs
+        weight_loader = extra_weight_attrs['weight_loader']
+        wrapped_weight_loader = IPEXAutoRoundFusedMoEMethod.get_weight_loader(
+            layer, weight_loader)
+        extra_weight_attrs['weight_loader'] = wrapped_weight_loader
+
+        # Fused gate_up_proj (column parallel)
+        gate_up_projs = torch.nn.ModuleList([
+            MergedColumnParallelLinear(self.hidden_size,
+                                       [intermediate_size_per_partition] * 2,
+                                       bias=True,
+                                       quant_config=self.quant_config,
+                                       return_bias=False,
+                                       prefix=f"{prefix}.gate_up_projs.{i}")
+            for i in range(num_experts)
+        ])
+        down_projs = torch.nn.ModuleList([
+            RowParallelLinear(intermediate_size_per_partition,
+                              self.hidden_size,
+                              bias=True,
+                              quant_config=self.quant_config,
+                              return_bias=False,
+                              prefix=f"{prefix}.down_projs.{i}")
+            for i in range(num_experts)
+        ])
+
+        layer.gate_up_projs = gate_up_projs
+        layer.down_projs = down_projs
+        set_weight_attrs(gate_up_projs, extra_weight_attrs)
+        set_weight_attrs(down_projs, extra_weight_attrs)
+
+    def topk(self, router_logits, top_k: int):
+        router_top_value, router_indices = torch.topk(
+            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
+
+        router_top_value = torch.nn.functional.softmax(
+            router_top_value, dim=-1, dtype=router_top_value.dtype)
+
+        router_scores = torch.zeros_like(router_logits).scatter_(
+            dim=1, index=router_indices, src=router_top_value)
+
+        return router_scores, router_indices
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+
+        router_scores, router_indices = self.topk(router_logits, top_k)
+        num_experts = router_scores.shape[1]
+
+        batch_size = x.shape[0]
+        x = x.reshape(-1, self.hidden_size)
+
+        x = x.repeat(num_experts, 1)
+        x = x.view(num_experts, -1, self.hidden_size)
+
+        gate_ups = []
+        for i in range(num_experts):
+            gate_up = layer.gate_up_projs[i](x[i])
+            gate_ups.append(gate_up)
+        gate_up = torch.stack(gate_ups, dim=0)
+        
+        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        gate = gate.clamp(min=None, max=self.limit)
+        up = up.clamp(min=-self.limit, max=self.limit)
+        glu = gate * torch.sigmoid(gate * self.alpha)
+
+        next_states = []
+        for i in range(num_experts):
+            next_state = layer.down_projs[i]((up[i] + 1) * glu[i])
+            next_states.append(next_state)
+        next_states = torch.stack(next_states, dim=0)
+
+        next_states = next_states.view(num_experts, batch_size, -1,
+                                       self.hidden_size)
+        next_states = next_states * router_scores.transpose(0, 1).view(
+            num_experts, batch_size, -1)[..., None]
+        next_states = next_states.sum(dim=0)
+
+        next_states = next_states.squeeze(1)
+        return next_states
+
+    @staticmethod
+    def get_weight_loader(layer, weight_loader):
+
+        def convert_gptq_int4_qzeros(tensor):
+            tensor = tensor.view(torch.uint8)
+            shifter = torch.tensor([0, 4],
+                                   dtype=torch.uint8,
+                                   device=tensor.device)
+            tensor = (tensor[:, :, None] >> shifter) & 0xF
+            tensor = tensor + 1
+            tensor = tensor[:, :, 0] + tensor[:, :, 1] * 16
+            return tensor
+
+        def moe_wna16_weight_loader(param: torch.nn.Parameter,
+                                    loaded_weight: torch.Tensor,
+                                    weight_name: str, shard_id: str,
+                                    expert_id: int):
+            if "g_idx" in weight_name:
+                return
+            if not layer.quant_config.has_zp and "qzeros" in weight_name:
+                return
+
+            device = get_tp_group().device
+            tp_rank = get_tensor_model_parallel_rank()
+            loaded_weight = loaded_weight.to(device)
+            shard_size = layer.intermediate_size_per_partition
+
+            # convert gptq and awq weight to a standard format
+            if layer.quant_config.linear_quant_method == "gptq":
+                assert layer.quant_config.weight_bits in [4, 8]
+                if "weight" in weight_name:
+                    loaded_weight = loaded_weight.T.contiguous().view(
+                        torch.uint8)
+                elif "zeros" in weight_name:
+                    # add 1 to gptq qzeros to align with awq
+                    loaded_weight = loaded_weight.view(torch.uint8)
+                    if layer.quant_config.weight_bits == 4:
+                        loaded_weight = convert_gptq_int4_qzeros(
+                            loaded_weight).T
+                    else:
+                        loaded_weight = loaded_weight.T + 1
+                else:
+                    loaded_weight = loaded_weight.T
+
+            # repeat the qzeros/scales to fit new group size
+            if layer.group_size_div_factor > 1 and \
+                    "qzeros" in weight_name or "scales" in weight_name:
+                loaded_weight = loaded_weight.repeat_interleave(
+                    layer.group_size_div_factor, 1)
+
+            if "w13_qzeros" in weight_name:
+                tensor = loaded_weight.view(layer.tp_size, -1,
+                                            loaded_weight.size(1))[tp_rank]
+                if shard_id == "w1":
+                    param.data[expert_id, :shard_size // 2] = tensor
+                else:
+                    param.data[expert_id, shard_size // 2:] = tensor
+            elif "w2_qzeros" in weight_name:
+                param.data[expert_id] = loaded_weight.view(
+                    loaded_weight.size(0), layer.tp_size, -1)[:, tp_rank]
+            else:
+                weight_loader(param, loaded_weight, weight_name, shard_id,
+                              expert_id)
+
+        return moe_wna16_weight_loader
 
 
 class IPEXGPTQLinearMethod(GPTQLinearMethod):
@@ -133,7 +347,7 @@ class IPEXGPTQLinearMethod(GPTQLinearMethod):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         bias = layer.bias if not layer.skip_bias_add else None
-
+        
         try:
             import intel_extension_for_pytorch as ipex
             if version.parse(

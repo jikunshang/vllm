@@ -721,6 +721,7 @@ class FusedMoE(torch.nn.Module):
         has_bias: bool = False,
     ):
         super().__init__()
+        self.prefix = prefix
         if params_dtype is None:
             params_dtype = torch.get_default_dtype()
         self.params_dtype = params_dtype
@@ -785,7 +786,8 @@ class FusedMoE(torch.nn.Module):
 
         assert intermediate_size % self.tp_size == 0
         self.hidden_size = hidden_size
-        self.intermediate_size_per_partition = intermediate_size // self.tp_size
+        # fixme: need to revert back for fused_moe case
+        self.intermediate_size_per_partition = intermediate_size  # // self.tp_size
         self.reduce_results = reduce_results
         self.renormalize = renormalize
         self.use_grouped_topk = use_grouped_topk
@@ -821,7 +823,6 @@ class FusedMoE(torch.nn.Module):
                                   has_bias=has_bias)
         self.moe_config = moe
         self.quant_config = quant_config
-
         # Note: get_quant_method will look at the layer's local_num_experts
         # for heuristic purposes, so it must be initialized first.
         quant_method: Optional[QuantizeMethodBase] = None

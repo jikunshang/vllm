@@ -71,7 +71,7 @@ class OAIAttention(nn.Module):
         tp_size = get_tensor_model_parallel_world_size()
 
         attention_sink_dtype = (torch.float32 if envs.VLLM_USE_TRTLLM_ATTENTION
-                                else torch.bfloat16)
+                                else torch.float16)
         self.sinks = torch.nn.Parameter(
             torch.empty(config.num_attention_heads // tp_size,
                         dtype=attention_sink_dtype,
@@ -89,14 +89,16 @@ class OAIAttention(nn.Module):
             head_size=self.head_dim,
             total_num_heads=self.num_attention_heads,
             total_num_kv_heads=self.num_key_value_heads,
-            quant_config=quant_config,
+            quant_config=None,
+            bias=True,
             prefix=f"{prefix}.qkv_proj",
         )
 
         self.o_proj = RowParallelLinear(
             input_size=self.num_attention_heads * self.head_dim,
             output_size=self.hidden_size,
-            quant_config=quant_config,
+            quant_config=None,
+            bias=True,
             prefix=f"{prefix}.o_proj",
         )
 
@@ -150,7 +152,7 @@ class MLPBlock(torch.nn.Module):
         self.norm = RMSNorm(config.hidden_size, eps=1e-5)
         self.router = torch.nn.Linear(config.hidden_size,
                                       config.num_local_experts,
-                                      dtype=torch.bfloat16)
+                                      dtype=torch.float16)
         assert config.intermediate_size % self.world_size == 0
         self.experts = FusedMoE(num_experts=config.num_local_experts,
                                 top_k=config.num_experts_per_tok,
@@ -479,6 +481,7 @@ class GptOssForCausalLM(nn.Module):
             "input_layernorm.weight": "attn.norm.weight",
             "post_attention_layernorm.weight": "mlp.norm.weight",
             "embed_tokens": "embedding",
+            "router.router": "router",
         }
 
         def maybe_rename(name: str) -> str:
@@ -513,41 +516,41 @@ class GptOssForCausalLM(nn.Module):
         ep_rank_end = (ep_rank + 1) * experts_per_rank
 
         for name, weight in weights:
-            if ".experts.gate_up_proj" in name and "bias" not in name:
-                # Handle MLP gate and up projection weights
-                new_name = name.replace(".experts.gate_up_proj",
-                                        ".experts.w13_weight")
+            # if ".experts.gate_up_proj" in name and "bias" not in name:
+            #     # Handle MLP gate and up projection weights
+            #     new_name = name.replace(".experts.gate_up_proj",
+            #                             ".experts.w13_weight")
 
-                # Extract gate and up projection parts
-                # since the weight is shuffled, we can slice directly
-                if use_ep:
-                    narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-                else:
-                    narrow_weight = weight[:, :,
-                                           2 * tp_rank_start:2 * tp_rank_end]
+            #     # Extract gate and up projection parts
+            #     # since the weight is shuffled, we can slice directly
+            #     if use_ep:
+            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
+            #     else:
+            #         narrow_weight = weight[:, :,
+            #                                2 * tp_rank_start:2 * tp_rank_end]
 
-                narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-                param = params_dict[new_name]
+            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
+            #     param = params_dict[new_name]
 
-                param.copy_(narrow_weight)
-                loaded_params.add(new_name)
+            #     param.copy_(narrow_weight)
+            #     loaded_params.add(new_name)
 
-            elif ".experts.down_proj" in name and "bias" not in name:
-                # Handle MLP down projection weights
-                new_name = name.replace(".experts.down_proj",
-                                        ".experts.w2_weight")
+            # elif ".experts.down_proj" in name and "bias" not in name:
+            #     # Handle MLP down projection weights
+            #     new_name = name.replace(".experts.down_proj",
+            #                             ".experts.w2_weight")
 
-                if use_ep:
-                    narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-                else:
-                    narrow_weight = weight[:, tp_rank_start:tp_rank_end, :]
-                narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-                param = params_dict[new_name]
+            #     if use_ep:
+            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
+            #     else:
+            #         narrow_weight = weight[:, tp_rank_start:tp_rank_end]
+            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
+            #     param = params_dict[new_name]
 
-                param.copy_(narrow_weight)
-                loaded_params.add(new_name)
+            #     param.copy_(narrow_weight)
+            #     loaded_params.add(new_name)
 
-            elif "gate_up_proj_bias" in name:
+            if "gate_up_proj_bias" in name:
                 # Handle MLP gate and up projection biases
                 new_name = name.replace("gate_up_proj_bias", "w13_bias")
 
@@ -580,7 +583,7 @@ class GptOssForCausalLM(nn.Module):
                 # Handle attention sinks (distributed across ranks)
                 name = name.replace("self_attn", "attn")
                 param = params_dict[name]
-                narrow_weight = weight.narrow(0, head_start, heads_per_rank)
+                narrow_weight = weight.narrow(0, head_start, heads_per_rank).half()
                 param.data.copy_(narrow_weight)
                 loaded_params.add(name)
             elif "q_proj" in name or "k_proj" in name or "v_proj" in name:
