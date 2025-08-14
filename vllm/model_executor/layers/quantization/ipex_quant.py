@@ -21,6 +21,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
+from vllm.utils import next_power_of_2, round_up
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -173,7 +174,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             "quant_method": strategy,
             "is_transposed": False
         })
-
+        intermediate_size_per_partition_after_pad = round_up(
+                intermediate_size_per_partition, 256)
         assert 'weight_loader' in extra_weight_attrs
         weight_loader = extra_weight_attrs['weight_loader']
         wrapped_weight_loader = IPEXAutoRoundFusedMoEMethod.get_weight_loader(
@@ -183,7 +185,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         # Fused gate_up_proj (column parallel)
         gate_up_projs = torch.nn.ModuleList([
             MergedColumnParallelLinear(self.hidden_size,
-                                       [intermediate_size_per_partition] * 2,
+                                       [intermediate_size_per_partition_after_pad] * 2,
                                        bias=True,
                                        quant_config=self.quant_config,
                                        return_bias=False,
@@ -191,7 +193,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             for i in range(num_experts)
         ])
         down_projs = torch.nn.ModuleList([
-            RowParallelLinear(intermediate_size_per_partition,
+            RowParallelLinear(intermediate_size_per_partition_after_pad,
                               self.hidden_size,
                               bias=True,
                               quant_config=self.quant_config,
