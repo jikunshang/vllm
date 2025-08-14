@@ -269,6 +269,14 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         return router_scores, router_indices
 
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        import intel_extension_for_pytorch as ipex
+        layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(layer.w13_qweight,
+                                                         layer.w2_qweight,
+                                                         use_prepack=True,
+                                                         #todo add w13_scale/w2_scale/w13_bias/w2_bias
+                                                         )
+
     def apply(
         self,
         layer: torch.nn.Module,
@@ -292,41 +300,43 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
-        router_scores, router_indices = self.topk(router_logits, top_k)
-        num_experts = router_scores.shape[1]
+        # router_scores, router_indices = self.topk(router_logits, top_k)
+        # num_experts = router_scores.shape[1]
 
-        batch_size = x.shape[0]
-        x = x.reshape(-1, self.ori_hidden_size)
+        # batch_size = x.shape[0]
+        # x = x.reshape(-1, self.ori_hidden_size)
 
-        x = x.repeat(num_experts, 1)
-        x = x.view(num_experts, -1, self.ori_hidden_size)
-        x = torch.nn.functional.pad(
-            x, (0, self.hidden_size - self.ori_hidden_size))
+        # x = x.repeat(num_experts, 1)
+        # x = x.view(num_experts, -1, self.ori_hidden_size)
+        # x = torch.nn.functional.pad(
+        #     x, (0, self.hidden_size - self.ori_hidden_size))
 
-        gate_ups = []
-        for i in range(num_experts):
-            gate_up = layer.gate_up_projs[i](x[i])
-            gate_ups.append(gate_up)
-        gate_up = torch.stack(gate_ups, dim=0)
-        gate, up = gate_up[..., ::2], gate_up[..., 1::2]
-        gate = gate.clamp(min=None, max=self.limit)
-        up = up.clamp(min=-self.limit, max=self.limit)
-        glu = gate * torch.sigmoid(gate * self.alpha)
+        # gate_ups = []
+        # for i in range(num_experts):
+        #     gate_up = layer.gate_up_projs[i](x[i])
+        #     gate_ups.append(gate_up)
+        # gate_up = torch.stack(gate_ups, dim=0)
+        # gate, up = gate_up[..., ::2], gate_up[..., 1::2]
+        # gate = gate.clamp(min=None, max=self.limit)
+        # up = up.clamp(min=-self.limit, max=self.limit)
+        # glu = gate * torch.sigmoid(gate * self.alpha)
 
-        next_states = []
-        for i in range(num_experts):
-            next_state = layer.down_projs[i]((up[i] + 1) * glu[i])
-            next_states.append(next_state)
-        next_states = torch.stack(next_states, dim=0)
+        # next_states = []
+        # for i in range(num_experts):
+        #     next_state = layer.down_projs[i]((up[i] + 1) * glu[i])
+        #     next_states.append(next_state)
+        # next_states = torch.stack(next_states, dim=0)
 
-        next_states = next_states.view(num_experts, batch_size, -1,
-                                       self.hidden_size)
-        next_states = next_states * router_scores.transpose(0, 1).view(
-            num_experts, batch_size, -1)[..., None]
-        next_states = next_states.sum(dim=0)
+        # next_states = next_states.view(num_experts, batch_size, -1,
+        #                                self.hidden_size)
+        # next_states = next_states * router_scores.transpose(0, 1).view(
+        #     num_experts, batch_size, -1)[..., None]
+        # next_states = next_states.sum(dim=0)
 
-        next_states = next_states[..., :self.ori_hidden_size].squeeze(1)
-        return next_states
+        # next_states = next_states[..., :self.ori_hidden_size].squeeze(1)
+        
+        hidden_states = layer.ipex_fusion(x, use_grouped_topk, top_k, router_logits, renormalize, topk_group, num_expert_group)
+        return hidden_states
 
     @staticmethod
     def get_weight_loader(layer, weight_loader):
