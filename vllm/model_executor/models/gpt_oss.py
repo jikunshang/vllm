@@ -515,42 +515,95 @@ class GptOssForCausalLM(nn.Module):
         ep_rank_start = ep_rank * experts_per_rank
         ep_rank_end = (ep_rank + 1) * experts_per_rank
 
+        def get_string_between(ori_str, start_str, end_str):
+            start_idx = ori_str.find(start_str)
+            if start_idx == -1:
+                return None
+            start_idx += len(start_str)
+            end_idx = ori_str.find(end_str, start_idx)
+            if end_idx == -1:
+                return None
+            return ori_str[start_idx:end_idx]
+
+        def get_string_prefix(ori_str, prefix):
+            start_idx = ori_str.find(prefix)
+            if start_idx == -1:
+                return None
+            start_idx += len(prefix)
+            return ori_str[:start_idx]
+
         for name, weight in weights:
-            # if ".experts.gate_up_proj" in name and "bias" not in name:
-            #     # Handle MLP gate and up projection weights
-            #     new_name = name.replace(".experts.gate_up_proj",
-            #                             ".experts.w13_weight")
+            if ".experts.gate_up_projs" in name:
+                # Handle MLP gate and up projection weights
 
-            #     # Extract gate and up projection parts
-            #     # since the weight is shuffled, we can slice directly
-            #     if use_ep:
-            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-            #     else:
-            #         narrow_weight = weight[:, :,
-            #                                2 * tp_rank_start:2 * tp_rank_end]
+                prefix = get_string_prefix(name, "experts")
 
-            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-            #     param = params_dict[new_name]
+                # process weight/scale/bias, bypass qzero
+                if ".qweight" in name:
+                    layer_index = int(
+                        get_string_between(name, "gate_up_projs.", ".qweight"))
 
-            #     param.copy_(narrow_weight)
-            #     loaded_params.add(new_name)
+                    narrow_weight = weight[:,
+                                           2 * tp_rank_start:2 * tp_rank_end]
+                    narrow_weight = narrow_weight.permute(0, 1).contiguous()
+                    new_name = f"{prefix}.w13_qweight"
 
-            # elif ".experts.down_proj" in name and "bias" not in name:
-            #     # Handle MLP down projection weights
-            #     new_name = name.replace(".experts.down_proj",
-            #                             ".experts.w2_weight")
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_weight)
+                elif ".scales" in name:
+                    layer_index = int(
+                        get_string_between(name, "gate_up_projs.", ".scales"))
+                    narrow_scale = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    new_name = f"{prefix}.w13_scales"
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_scale)
+                elif ".bias" in name:
+                    layer_index = int(
+                        get_string_between(name, "gate_up_projs.", ".bias"))
+                    narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
+                    new_name = f"{prefix}.w13_bias"
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_bias)
+                elif ".qzero" in name:
+                    pass
+                else:
+                    raise ValueError(f"Unexpected weight name format: {name}")
 
-            #     if use_ep:
-            #         narrow_weight = weight[ep_rank_start:ep_rank_end, ...]
-            #     else:
-            #         narrow_weight = weight[:, tp_rank_start:tp_rank_end]
-            #     narrow_weight = narrow_weight.permute(0, 2, 1).contiguous()
-            #     param = params_dict[new_name]
+            elif ".experts.down_projs" in name:
+                # Handle MLP down projection weights
+                prefix = get_string_prefix(name, "experts")
 
-            #     param.copy_(narrow_weight)
-            #     loaded_params.add(new_name)
+                # process weight/scales/bias, bypass qzero
+                if ".qweight" in name:
+                    layer_index = int(
+                        get_string_between(name, "down_projs.", ".qweight"))
 
-            if "gate_up_proj_bias" in name:
+                    narrow_weight = weight[:, tp_rank_start:tp_rank_end]
+                    narrow_weight = narrow_weight.permute(1, 0).contiguous()
+                    new_name = f"{prefix}.w2_qweight"
+
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_weight)
+                elif ".scales" in name:
+                    layer_index = int(
+                        get_string_between(name, "down_projs.", ".scales"))
+                    narrow_scale = weight[:, tp_rank_start:tp_rank_end]
+                    narrow_scale = narrow_scale.permute(1, 0).contiguous()
+                    new_name = f"{prefix}.w2_scales"
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_scale)
+                elif ".bias" in name:
+                    layer_index = int(
+                        get_string_between(name, "down_projs.", ".bias"))
+                    narrow_bias = weight[tp_rank_start:tp_rank_end]
+                    new_name = f"{prefix}.w2_bias"
+                    param = params_dict[new_name]
+                    param[layer_index].copy_(narrow_bias)
+                elif ".qzero" in name:
+                    pass
+                else:
+                    raise ValueError(f"Unexpected weight name format: {name}")
+            elif "gate_up_proj_bias" in name:
                 # Handle MLP gate and up projection biases
                 new_name = name.replace("gate_up_proj_bias", "w13_bias")
 
@@ -583,7 +636,8 @@ class GptOssForCausalLM(nn.Module):
                 # Handle attention sinks (distributed across ranks)
                 name = name.replace("self_attn", "attn")
                 param = params_dict[name]
-                narrow_weight = weight.narrow(0, head_start, heads_per_rank).half()
+                narrow_weight = weight.narrow(0, head_start,
+                                              heads_per_rank).half()
                 param.data.copy_(narrow_weight)
                 loaded_params.add(name)
             elif "q_proj" in name or "k_proj" in name or "v_proj" in name:
