@@ -231,8 +231,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         if self.quant_config.has_zp:
             w13_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                hidden_size // group_size,
                 2 * intermediate_size_per_partition // 8,
+                hidden_size // group_size,
                 dtype=torch.int32),
                                             requires_grad=False)
             layer.register_parameter("w13_qzeros", w13_qzeros)
@@ -240,8 +240,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
             w2_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                intermediate_size_per_partition // group_size,
                 hidden_size // 8,
+                intermediate_size_per_partition // group_size,
                 dtype=torch.int32),
                                            requires_grad=False)
             layer.register_parameter("w2_qzeros", w2_qzeros)
