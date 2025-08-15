@@ -19,7 +19,6 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
-from vllm.utils import round_up
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -278,8 +277,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
             layer.w13_qweight,
             layer.w2_qweight,
-            use_prepack=True,
-            #todo add w13_scale/w2_scale/w13_bias/w2_bias
+            w1_scale_inv=layer.w13_scales,
+            w2_scale_inv=layer.w2_scales,
+            w13_bias=layer.w13_bias,
+            w2_bias=layer.w2_bias,
+            is_w4a16=True,
         )
 
     def apply(
@@ -305,9 +307,14 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
-        hidden_states = layer.ipex_fusion(x, use_grouped_topk, top_k,
-                                          router_logits, renormalize,
-                                          topk_group, num_expert_group)
+        hidden_states = layer.ipex_fusion(x,
+                                          use_grouped_topk,
+                                          top_k,
+                                          router_logits,
+                                          renormalize,
+                                          topk_group,
+                                          num_expert_group,
+                                          activation="swiglu_oai")
         return hidden_states
 
     @staticmethod
