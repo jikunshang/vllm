@@ -154,6 +154,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         self.ori_hidden_size = hidden_size
         self.hidden_size = hidden_size
         hidden_size = self.hidden_size
+        self.hidden_size_pad = round_up(self.hidden_size, 256)
 
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
@@ -177,7 +178,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             torch.empty(
                 num_experts,
                 2 * intermediate_size_per_partition,
-                hidden_size // 8,  # 8 int4 store to int32
+                self.hidden_size_pad // 8,  # 8 int4 store to int32
                 dtype=torch.int32),
             requires_grad=False)
         layer.register_parameter("w13_qweight", w13_qweight)
@@ -186,7 +187,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         w13_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
             2 * intermediate_size_per_partition,
-            hidden_size // group_size,
+            self.hidden_size_pad // group_size,
             dtype=params_dtype),
                                         requires_grad=False)
         layer.register_parameter("w13_scales", w13_scales)
@@ -205,7 +206,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         w2_qweight = torch.nn.Parameter(
             torch.empty(
                 num_experts,
-                hidden_size,
+                self.hidden_size_pad,
                 intermediate_size_per_partition //
                 8,  # 8 int4 store to int32, always pack on k dim
                 dtype=torch.int32),
@@ -215,7 +216,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         w2_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
-            hidden_size,
+            self.hidden_size_pad,
             intermediate_size_per_partition // group_size,
             dtype=params_dtype),
                                        requires_grad=False)
@@ -224,7 +225,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
                                                  1,
-                                                 hidden_size,
+                                                 self.hidden_size_pad,
                                                  dtype=params_dtype),
                                      requires_grad=False)
         layer.register_parameter("w2_bias", w2_bias)
@@ -234,7 +235,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             w13_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
                 2 * intermediate_size_per_partition // 8,
-                hidden_size // group_size,
+                self.hidden_size_pad // group_size,
                 dtype=torch.int32),
                                             requires_grad=False)
             layer.register_parameter("w13_qzeros", w13_qzeros)
@@ -242,7 +243,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
             w2_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                hidden_size // 8,
+                self.hidden_size_pad // 8,
                 intermediate_size_per_partition // group_size,
                 dtype=torch.int32),
                                            requires_grad=False)
@@ -308,8 +309,11 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-
-        hidden_states = layer.ipex_fusion(x,
+        # hidden size is always 2880, let's padd to 3072
+        hidden_size = 2880
+        hidden_size_pad = round_up(hidden_size, 256)
+        x_pad = torch.nn.functional.pad(x, (0, hidden_size_pad - hidden_size))
+        hidden_states = layer.ipex_fusion(x_pad,
                                           use_grouped_topk,
                                           top_k,
                                           router_logits,
@@ -317,6 +321,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
+        hidden_states = hidden_states[...,:hidden_size]
         return hidden_states
 
     @staticmethod
