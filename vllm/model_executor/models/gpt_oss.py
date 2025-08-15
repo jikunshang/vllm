@@ -493,7 +493,7 @@ class GptOssForCausalLM(nn.Module):
         params_dict = dict(self.named_parameters())
         loaded_params: set[str] = set()
         use_ep = self.vllm_config.parallel_config.enable_expert_parallel
-        tp_rank = get_tensor_model_parallel_rank()
+        tp_rank = get_tensor_model_parallel_rank() if not use_ep else 0
         tp_size = get_tensor_model_parallel_world_size()
         intermediate_size = self.model_config.intermediate_size
 
