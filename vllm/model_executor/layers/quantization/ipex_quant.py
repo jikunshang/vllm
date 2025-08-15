@@ -19,6 +19,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
+from vllm.utils import round_up
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -156,6 +157,9 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
+        intermediate_size_per_partition = round_up(
+            intermediate_size_per_partition, 256)
+
         strategy = FusedMoeWeightScaleSupported.GROUP.value
         extra_weight_attrs.update({
             "quant_method": strategy,
@@ -200,8 +204,9 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         w2_qweight = torch.nn.Parameter(
             torch.empty(
                 num_experts,
-                intermediate_size_per_partition,
-                hidden_size // 8,  # 8 int4 store to int32
+                intermediate_size_per_partition //
+                8,  # 8 int4 store to int32, always pack on k dim
+                hidden_size,
                 dtype=torch.int32),
             requires_grad=False)
         layer.register_parameter("w2_qweight", w2_qweight)
@@ -209,18 +214,17 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         w2_scales = torch.nn.Parameter(torch.zeros(
             num_experts,
-            intermediate_size_per_partition,
-            hidden_size // group_size,
+            intermediate_size_per_partition // group_size,
+            hidden_size,
             dtype=params_dtype),
                                        requires_grad=False)
         layer.register_parameter("w2_scales", w2_scales)
         set_weight_attrs(w2_scales, extra_weight_attrs)
 
-        w2_bias = torch.nn.Parameter(torch.zeros(
-            num_experts,
-            1,
-            intermediate_size_per_partition,
-            dtype=params_dtype),
+        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                 1,
+                                                 hidden_size,
+                                                 dtype=params_dtype),
                                      requires_grad=False)
         layer.register_parameter("w2_bias", w2_bias)
         set_weight_attrs(w2_bias, extra_weight_attrs)
@@ -237,8 +241,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
             w2_qzeros = torch.nn.Parameter(torch.zeros(
                 num_experts,
-                hidden_size // group_size,
-                intermediate_size_per_partition // 8,
+                intermediate_size_per_partition // group_size,
+                hidden_size // 8,
                 dtype=torch.int32),
                                            requires_grad=False)
             layer.register_parameter("w2_qzeros", w2_qzeros)

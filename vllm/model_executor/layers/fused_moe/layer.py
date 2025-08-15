@@ -787,7 +787,7 @@ class FusedMoE(torch.nn.Module):
         assert intermediate_size % self.tp_size == 0
         self.hidden_size = hidden_size
         # fixme: need to revert back for fused_moe case
-        self.intermediate_size_per_partition = intermediate_size  # // self.tp_size
+        self.intermediate_size_per_partition = intermediate_size // self.tp_size
         self.reduce_results = reduce_results
         self.renormalize = renormalize
         self.use_grouped_topk = use_grouped_topk
