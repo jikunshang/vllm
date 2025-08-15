@@ -157,8 +157,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
-        intermediate_size_per_partition = round_up(
-            intermediate_size_per_partition, 256)
+        # intermediate_size_per_partition = round_up(
+        #     intermediate_size_per_partition, 256)
 
         strategy = FusedMoeWeightScaleSupported.GROUP.value
         extra_weight_attrs.update({
