@@ -492,7 +492,7 @@ class GptOssForCausalLM(nn.Module):
 
         params_dict = dict(self.named_parameters())
         loaded_params: set[str] = set()
-
+        use_ep = self.vllm_config.parallel_config.enable_expert_parallel
         tp_rank = get_tensor_model_parallel_rank()
         tp_size = get_tensor_model_parallel_world_size()
         intermediate_size = self.model_config.intermediate_size
@@ -500,7 +500,8 @@ class GptOssForCausalLM(nn.Module):
         hidden_size = self.model_config.hidden_size
         hidden_size_pad = round_up(hidden_size, 256)
 
-        per_rank_intermediate_size = cdiv(intermediate_size, tp_size)
+        per_rank_intermediate_size = cdiv(intermediate_size, tp_size) if not use_ep else \
+            intermediate_size
         per_rank_intermediate_size_pad = cdiv(round_up(intermediate_size, 256),
                                               tp_size)
         # Calculate common slicing bounds for current rank
@@ -515,7 +516,7 @@ class GptOssForCausalLM(nn.Module):
         heads_per_rank = self.model_config.num_attention_heads // tp_size
         head_start = tp_rank * heads_per_rank
 
-        use_ep = self.vllm_config.parallel_config.enable_expert_parallel
+        
         ep_size = get_ep_group().world_size
         ep_rank = get_ep_group().rank
         num_experts = self.model_config.num_local_experts
@@ -580,7 +581,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][..., :actual_size].copy_(narrow_bias)
+                    param[layer_index % experts_per_rank][:actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
@@ -626,7 +627,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_bias = weight
                     new_name = f"{prefix}.w2_bias"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][..., :actual_size].copy_(narrow_bias)
+                    param[layer_index % experts_per_rank][:actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:

@@ -195,7 +195,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         w13_bias = torch.nn.Parameter(torch.zeros(
             num_experts,
-            1,
             2 * intermediate_size_per_partition,
             dtype=params_dtype),
                                       requires_grad=False)
@@ -224,7 +223,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         set_weight_attrs(w2_scales, extra_weight_attrs)
 
         w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
-                                                 1,
                                                  self.hidden_size_pad,
                                                  dtype=params_dtype),
                                      requires_grad=False)
