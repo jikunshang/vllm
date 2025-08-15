@@ -19,6 +19,8 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
+from vllm.utils import round_up
+
 
 MIN_IPEX_VERSION = "2.6.0"
 
@@ -156,8 +158,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
-        # intermediate_size_per_partition = round_up(
-        #     intermediate_size_per_partition, 256)
+        intermediate_size_per_partition = round_up(
+            intermediate_size_per_partition, 256)
 
         strategy = FusedMoeWeightScaleSupported.GROUP.value
         extra_weight_attrs.update({
