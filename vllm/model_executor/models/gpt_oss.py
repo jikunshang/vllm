@@ -545,7 +545,7 @@ class GptOssForCausalLM(nn.Module):
 
                     narrow_weight = weight[:,
                                            2 * tp_rank_start:2 * tp_rank_end]
-                    narrow_weight = narrow_weight.permute(0, 1).contiguous()
+                    narrow_weight = narrow_weight.permute(1,0).contiguous()
                     new_name = f"{prefix}.w13_qweight"
 
                     param = params_dict[new_name]
@@ -554,6 +554,7 @@ class GptOssForCausalLM(nn.Module):
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".scales"))
                     narrow_scale = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
                     param[layer_index].copy_(narrow_scale)
@@ -581,7 +582,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_weight = weight[
                         tp_rank_start:tp_rank_end:,
                     ]
-                    # narrow_weight = narrow_weight.permute(1, 0).contiguous()
+                    narrow_weight = narrow_weight.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_qweight"
 
                     param = params_dict[new_name]
@@ -592,7 +593,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_scale = weight[
                         tp_rank_start:tp_rank_end:,
                     ]
-                    # narrow_scale = narrow_scale.permute(1, 0).contiguous()
+                    narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
                     param[layer_index].copy_(narrow_scale)
