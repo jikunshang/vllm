@@ -496,18 +496,20 @@ class GptOssForCausalLM(nn.Module):
         tp_rank = get_tensor_model_parallel_rank()
         tp_size = get_tensor_model_parallel_world_size()
         intermediate_size = self.model_config.intermediate_size
-        
+
         hidden_size = self.model_config.hidden_size
         hidden_size_pad = round_up(hidden_size, 256)
 
         per_rank_intermediate_size = cdiv(intermediate_size, tp_size)
-        per_rank_intermediate_size_pad = cdiv(round_up(intermediate_size, 256), tp_size)
+        per_rank_intermediate_size_pad = cdiv(round_up(intermediate_size, 256),
+                                              tp_size)
         # Calculate common slicing bounds for current rank
         tp_rank_start = tp_rank * per_rank_intermediate_size
         tp_rank_end = min((tp_rank + 1) * per_rank_intermediate_size,
                           intermediate_size)
         tp_rank_pad_start = tp_rank * per_rank_intermediate_size_pad
-        tp_rank_pad_end = min((tp_rank + 1) * per_rank_intermediate_size_pad, intermediate_size)
+        tp_rank_pad_end = min((tp_rank + 1) * per_rank_intermediate_size_pad,
+                              intermediate_size)
 
         # Attention heads per rank
         heads_per_rank = self.model_config.num_attention_heads // tp_size
@@ -551,12 +553,13 @@ class GptOssForCausalLM(nn.Module):
 
                     narrow_weight = weight[:,
                                            2 * tp_rank_start:2 * tp_rank_end]
-                    narrow_weight = narrow_weight.permute(1,0).contiguous()
+                    narrow_weight = narrow_weight.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_qweight"
 
                     param = params_dict[new_name]
-                    
-                    param[layer_index][:actual_size,:hidden_size//8].copy_(narrow_weight)
+
+                    param[layer_index][:actual_size, :hidden_size //
+                                       8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".scales"))
@@ -564,14 +567,15 @@ class GptOssForCausalLM(nn.Module):
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
-                    param[layer_index][:actual_size,hidden_size//64].copy_(narrow_scale)
+                    param[layer_index][:actual_size, :hidden_size //
+                                       64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".bias"))
                     narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
-                    param[layer_index][...,:actual_size].copy_(narrow_bias)
+                    param[layer_index][..., :actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
@@ -593,7 +597,8 @@ class GptOssForCausalLM(nn.Module):
                     new_name = f"{prefix}.w2_qweight"
 
                     param = params_dict[new_name]
-                    param[layer_index][:hidden_size,:actual_size//8].copy_(narrow_weight)
+                    param[layer_index][:hidden_size, :actual_size //
+                                       8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".scales"))
@@ -603,14 +608,15 @@ class GptOssForCausalLM(nn.Module):
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
-                    param[layer_index][:hidden_size,:actual_size//64].copy_(narrow_scale)
+                    param[layer_index][:hidden_size, :actual_size //
+                                       64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".bias"))
                     narrow_bias = weight
                     new_name = f"{prefix}.w2_bias"
                     param = params_dict[new_name]
-                    param[layer_index][:actual_size].copy_(narrow_bias)
+                    param[layer_index][..., :actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
