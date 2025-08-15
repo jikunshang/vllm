@@ -559,7 +559,7 @@ class GptOssForCausalLM(nn.Module):
 
                     param = params_dict[new_name]
 
-                    param[layer_index][:actual_size, :hidden_size //
+                    param[layer_index % experts_per_rank][:actual_size, :hidden_size //
                                        8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
@@ -570,7 +570,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
-                    param[layer_index][:actual_size, :hidden_size //
+                    param[layer_index % experts_per_rank][:actual_size, :hidden_size //
                                        64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
@@ -580,7 +580,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
-                    param[layer_index][..., :actual_size].copy_(narrow_bias)
+                    param[layer_index % experts_per_rank][..., :actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
@@ -603,7 +603,7 @@ class GptOssForCausalLM(nn.Module):
                     new_name = f"{prefix}.w2_qweight"
 
                     param = params_dict[new_name]
-                    param[layer_index][:hidden_size, :actual_size //
+                    param[layer_index % experts_per_rank][:hidden_size, :actual_size //
                                        8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
@@ -616,7 +616,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
-                    param[layer_index][:hidden_size, :actual_size //
+                    param[layer_index % experts_per_rank][:hidden_size, :actual_size //
                                        64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
@@ -626,7 +626,7 @@ class GptOssForCausalLM(nn.Module):
                     narrow_bias = weight
                     new_name = f"{prefix}.w2_bias"
                     param = params_dict[new_name]
-                    param[layer_index][..., :actual_size].copy_(narrow_bias)
+                    param[layer_index % experts_per_rank][..., :actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
