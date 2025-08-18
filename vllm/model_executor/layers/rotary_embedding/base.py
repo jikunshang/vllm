@@ -126,7 +126,6 @@ class RotaryEmbedding(CustomOp):
         key: Optional[torch.Tensor] = None,
         offsets: Optional[torch.Tensor] = None,
     ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-        from vllm._ipex_ops import ipex_ops as ops
 
         self.cos_sin_cache = self.cos_sin_cache.to(positions.device,
                                                    dtype=query.dtype)
@@ -139,12 +138,14 @@ class RotaryEmbedding(CustomOp):
             return self.forward_native(positions, query, key, offsets)
         else:
             if offsets is not None:
+                from vllm._ipex_ops import ipex_ops as ops
                 ops.batched_rotary_embedding(positions, query, key,
                                              self.head_size,
                                              self.cos_sin_cache,
                                              self.is_neox_style,
                                              self.rotary_dim, offsets)
             else:
+                from vllm import _custom_ops as ops
                 ops.rotary_embedding(positions, query, key, self.head_size,
                                      self.cos_sin_cache, self.is_neox_style)
         return query, key
