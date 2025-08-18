@@ -109,11 +109,8 @@ class MulAndSilu(CustomOp):
 
     def __init__(self):
         super().__init__()
-        if current_platform.is_cuda_alike():
+        if current_platform.is_cuda_alike() or current_platform.is_xpu():
             self.op = torch.ops._C.mul_and_silu
-        elif current_platform.is_xpu():
-            from vllm._ipex_ops import ipex_ops
-            self.op = ipex_ops.silu_and_mul
         elif current_platform.is_cpu():
             self._forward_method = self.forward_native
 
@@ -129,8 +126,8 @@ class MulAndSilu(CustomOp):
         self.op(out, x)
         return out
 
-    # TODO implement forward_xpu for MulAndSilu
-    # def forward_xpu(self, x: torch.Tensor) -> torch.Tensor:
+    def forward_xpu(self, x: torch.Tensor) -> torch.Tensor:
+        return self.forward_cuda(x)
 
 
 @CustomOp.register("gelu_and_mul_sparse")
