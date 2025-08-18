@@ -546,22 +546,26 @@ class GptOssForCausalLM(nn.Module):
 
                 prefix = get_string_prefix(name, "experts")
                 actual_size = 2 * tp_rank_end - 2 * tp_rank_start
+                start = 2 * tp_rank_pad_start
+                end = min(2 * tp_rank_pad_end, 2 * intermediate_size)
                 # process weight/scale/bias, bypass qzero
                 if ".qweight" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".qweight"))
+                    
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
+                    print(f"w13 weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}]")
                     narrow_weight = weight[:,
-                                           2 * tp_rank_start:2 * tp_rank_end]
+                                           start:end]
                     narrow_weight = narrow_weight.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_qweight"
 
                     param = params_dict[new_name]
 
                     param[layer_index %
-                          experts_per_rank][:actual_size, :hidden_size //
+                          experts_per_rank][:end - start, :hidden_size //
                                             8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
@@ -569,12 +573,13 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    narrow_scale = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
+                    print(f"w13 scale shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}]")
+                    narrow_scale = weight[:, start:end]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
                     param[layer_index %
-                          experts_per_rank][:actual_size, :hidden_size //
+                          experts_per_rank][:end-start, :hidden_size //
                                             64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
@@ -582,11 +587,11 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
+                    narrow_bias = weight[start:end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
                     param[layer_index %
-                          experts_per_rank][:actual_size].copy_(narrow_bias)
+                          experts_per_rank][:end-start].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
