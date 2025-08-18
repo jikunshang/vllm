@@ -545,7 +545,6 @@ class GptOssForCausalLM(nn.Module):
                 # Handle MLP gate and up projection weights
 
                 prefix = get_string_prefix(name, "experts")
-                actual_size = 2 * tp_rank_end - 2 * tp_rank_start
                 start = 2 * tp_rank_pad_start
                 end = min(2 * tp_rank_pad_end, 2 * intermediate_size)
                 # process weight/scale/bias, bypass qzero
@@ -556,10 +555,10 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    print(f"w13 weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}]")
                     narrow_weight = weight[:,
                                            start:end]
                     narrow_weight = narrow_weight.permute(1, 0).contiguous()
+                    print(f"w13 weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}], narrow weight shape: {narrow_weight.shape}")
                     new_name = f"{prefix}.w13_qweight"
 
                     param = params_dict[new_name]
@@ -573,9 +572,9 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    print(f"w13 scale shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}]")
                     narrow_scale = weight[:, start:end]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
+                    print(f"w13 scale shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}], narrow_scale shape: {narrow_scale.shape}")
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
                     param[layer_index %
@@ -588,6 +587,7 @@ class GptOssForCausalLM(nn.Module):
                             and layer_index < ep_rank_end):
                         continue
                     narrow_bias = weight[start:end]
+                    print(f"w13 bias shape: {narrow_bias.shape}, current tp rank is: {tp_rank}, should copy ori [{2 * tp_rank_pad_start}, {end}] to [0, {end - start}], narrow bias shape: {narrow_bias.shape}")
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
                     param[layer_index %
@@ -600,7 +600,6 @@ class GptOssForCausalLM(nn.Module):
             elif ".experts.down_projs" in name:
                 # Handle MLP down projection weights
                 prefix = get_string_prefix(name, "experts")
-                actual_size = tp_rank_end - tp_rank_start
                 # process weight/scales/bias, bypass qzero
                 if ".qweight" in name:
                     layer_index = int(
@@ -608,12 +607,12 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    # print(f"ori weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start}, {tp_rank_pad_end}] to [0, {per_rank_intermediate_size_pad}]")
                     narrow_weight = weight[
                         tp_rank_pad_start // 8:tp_rank_pad_end // 8:,
                     ]
                     narrow_weight = narrow_weight.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_qweight"
+                    print(f"W2 weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start//8}, {tp_rank_pad_end//8}] to [0, {(tp_rank_pad_end - tp_rank_pad_start)//8}], narrowed weight: {narrow_weight.shape}")
 
                     param = params_dict[new_name]
                     param[layer_index %
@@ -626,11 +625,11 @@ class GptOssForCausalLM(nn.Module):
                     if not (layer_index >= ep_rank_start
                             and layer_index < ep_rank_end):
                         continue
-                    # print(f"ori weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start //64}, {tp_rank_pad_end // 64}] to [0, {per_rank_intermediate_size_pad // 64}]")
                     narrow_scale = weight[
                         tp_rank_pad_start // 64:tp_rank_pad_end // 64:,
                     ]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
+                    print(f"ori weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start //64}, {tp_rank_pad_end // 64}] to [0, {per_rank_intermediate_size_pad // 64}], narrow_scale shape: {narrow_scale.shape}")
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
                     dim1_size = min(
@@ -647,6 +646,7 @@ class GptOssForCausalLM(nn.Module):
                         continue
                     narrow_bias = weight
                     new_name = f"{prefix}.w2_bias"
+                    print(f"W2 bias shape: {narrow_bias.shape}")
                     param = params_dict[new_name]
                     param[layer_index %
                           experts_per_rank][:hidden_size].copy_(narrow_bias)
@@ -687,6 +687,7 @@ class GptOssForCausalLM(nn.Module):
                 # Handle attention sinks (distributed across ranks)
                 name = name.replace("self_attn", "attn")
                 param = params_dict[name]
+                print(f"sinks origin shape: {weight.shape}")
                 narrow_weight = weight.narrow(0, head_start,
                                               heads_per_rank).half()
                 param.data.copy_(narrow_weight)
