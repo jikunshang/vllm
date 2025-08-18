@@ -516,7 +516,6 @@ class GptOssForCausalLM(nn.Module):
         heads_per_rank = self.model_config.num_attention_heads // tp_size
         head_start = tp_rank * heads_per_rank
 
-        
         ep_size = get_ep_group().world_size
         ep_rank = get_ep_group().rank
         num_experts = self.model_config.num_local_experts
@@ -551,7 +550,8 @@ class GptOssForCausalLM(nn.Module):
                 if ".qweight" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".qweight"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
                     narrow_weight = weight[:,
                                            2 * tp_rank_start:2 * tp_rank_end]
@@ -560,28 +560,33 @@ class GptOssForCausalLM(nn.Module):
 
                     param = params_dict[new_name]
 
-                    param[layer_index % experts_per_rank][:actual_size, :hidden_size //
-                                       8].copy_(narrow_weight)
+                    param[layer_index %
+                          experts_per_rank][:actual_size, :hidden_size //
+                                            8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".scales"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
                     narrow_scale = weight[:, 2 * tp_rank_start:2 * tp_rank_end]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][:actual_size, :hidden_size //
-                                       64].copy_(narrow_scale)
+                    param[layer_index %
+                          experts_per_rank][:actual_size, :hidden_size //
+                                            64].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".bias"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
                     narrow_bias = weight[2 * tp_rank_start:2 * tp_rank_end]
                     new_name = f"{prefix}.w13_bias"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][:actual_size].copy_(narrow_bias)
+                    param[layer_index %
+                          experts_per_rank][:actual_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
@@ -595,39 +600,51 @@ class GptOssForCausalLM(nn.Module):
                 if ".qweight" in name:
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".qweight"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
+                    # print(f"ori weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start}, {tp_rank_pad_end}] to [0, {per_rank_intermediate_size_pad}]")
                     narrow_weight = weight[
-                        tp_rank_start:tp_rank_end:,
+                        tp_rank_pad_start // 8:tp_rank_pad_end // 8:,
                     ]
                     narrow_weight = narrow_weight.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_qweight"
 
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][:hidden_size, :actual_size //
-                                       8].copy_(narrow_weight)
+                    param[layer_index %
+                          experts_per_rank][:hidden_size, :(
+                              tp_rank_pad_end - tp_rank_pad_start) //
+                                            8].copy_(narrow_weight)
                 elif ".scales" in name:
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".scales"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
+                    # print(f"ori weight shape: {weight.shape}, current tp rank is: {tp_rank}, should copy ori [{tp_rank_pad_start //64}, {tp_rank_pad_end // 64}] to [0, {per_rank_intermediate_size_pad // 64}]")
                     narrow_scale = weight[
-                        tp_rank_start:tp_rank_end:,
+                        tp_rank_pad_start // 64:tp_rank_pad_end // 64:,
                     ]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][:hidden_size, :actual_size //
-                                       64].copy_(narrow_scale)
+                    dim1_size = min(
+                        (tp_rank_pad_end - tp_rank_pad_start) // 64,
+                        narrow_scale.size(1))
+                    param[layer_index %
+                          experts_per_rank][:hidden_size, :dim1_size].copy_(
+                              narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".bias"))
-                    if not (layer_index >= ep_rank_start and layer_index < ep_rank_end):
+                    if not (layer_index >= ep_rank_start
+                            and layer_index < ep_rank_end):
                         continue
                     narrow_bias = weight
                     new_name = f"{prefix}.w2_bias"
                     param = params_dict[new_name]
-                    param[layer_index % experts_per_rank][:actual_size].copy_(narrow_bias)
+                    param[layer_index %
+                          experts_per_rank][:hidden_size].copy_(narrow_bias)
                 elif ".qzero" in name:
                     pass
                 else:
