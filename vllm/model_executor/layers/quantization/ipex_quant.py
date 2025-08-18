@@ -260,6 +260,10 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                            requires_grad=False)
                 layer.register_parameter(key, param)
                 set_weight_attrs(param, extra_weight_attrs)
+                
+        print(f"create weight done, current rank is :{get_tensor_model_parallel_rank()}, "
+              f"w13 qweight shape: {w13_qweight.shape}, w13 scales shape: {w13_scales.shape}, w13 bias shape: {w13_bias.shape}, "
+              f"w2 qweight shape: {w2_qweight.shape}, w2 scales shape: {w2_scales.shape}, w2 bias shape: {w2_bias.shape}")
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(
