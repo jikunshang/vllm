@@ -175,7 +175,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
         w13_qweight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts,
                 2 * intermediate_size_per_partition,
                 self.hidden_size_pad // 8,  # 8 int4 store to int32
@@ -203,7 +203,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
         # down_proj (row parallel)
         w2_qweight = torch.nn.Parameter(
-            torch.empty(
+            torch.zeros(
                 num_experts,
                 self.hidden_size_pad,
                 intermediate_size_per_partition //

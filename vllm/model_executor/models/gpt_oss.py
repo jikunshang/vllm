@@ -516,8 +516,8 @@ class GptOssForCausalLM(nn.Module):
         heads_per_rank = self.model_config.num_attention_heads // tp_size
         head_start = tp_rank * heads_per_rank
 
-        ep_size = get_ep_group().world_size
-        ep_rank = get_ep_group().rank
+        ep_size = get_ep_group().world_size if use_ep else 1
+        ep_rank = get_ep_group().rank if use_ep else 0
         num_experts = self.model_config.num_local_experts
         experts_per_rank = num_experts // ep_size
         ep_rank_start = ep_rank * experts_per_rank
