@@ -150,9 +150,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         layer.quant_config = self.quant_config
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
-        self.ori_hidden_size = hidden_size
         self.hidden_size = hidden_size
-        hidden_size = self.hidden_size
         self.hidden_size_pad = round_up(self.hidden_size, 256)
 
         layer.group_size = group_size
@@ -307,9 +305,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         # hidden size is always 2880, let's pad to 3072
-        hidden_size = 2880
-        hidden_size_pad = round_up(hidden_size, 256)
-        x_pad = torch.nn.functional.pad(x, (0, hidden_size_pad - hidden_size))
+        hidden_size_pad = round_up(self.hidden_size, 256)
+        x_pad = torch.nn.functional.pad(x, (0, hidden_size_pad - self.hidden_size))
         hidden_states = layer.ipex_fusion(x_pad,
                                           use_grouped_topk,
                                           top_k,
@@ -318,7 +315,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
-        hidden_states = hidden_states[..., :hidden_size]
+        hidden_states = hidden_states[..., :self.hidden_size]
         return hidden_states
 
     @staticmethod
