@@ -21,7 +21,6 @@ from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 from vllm.utils import round_up
 
-
 MIN_IPEX_VERSION = "2.6.0"
 
 
@@ -260,10 +259,6 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                            requires_grad=False)
                 layer.register_parameter(key, param)
                 set_weight_attrs(param, extra_weight_attrs)
-                
-        print(f"create weight done, current rank is :{get_tensor_model_parallel_rank()}, "
-              f"w13 qweight shape: {w13_qweight.shape}, w13 scales shape: {w13_scales.shape}, w13 bias shape: {w13_bias.shape}, "
-              f"w2 qweight shape: {w2_qweight.shape}, w2 scales shape: {w2_scales.shape}, w2 bias shape: {w2_bias.shape}")
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(
@@ -311,7 +306,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # hidden size is always 2880, let's padd to 3072
+        # hidden size is always 2880, let's pad to 3072
         hidden_size = 2880
         hidden_size_pad = round_up(hidden_size, 256)
         x_pad = torch.nn.functional.pad(x, (0, hidden_size_pad - hidden_size))
@@ -323,7 +318,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
-        hidden_states = hidden_states[...,:hidden_size]
+        hidden_states = hidden_states[..., :hidden_size]
         return hidden_states
 
     @staticmethod
