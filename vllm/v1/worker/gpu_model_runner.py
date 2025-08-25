@@ -417,7 +417,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         """Initialize attributes from torch.cuda.get_device_properties
         """
         self.device_properties = torch.cuda.get_device_properties(self.device)
-        self.num_sms = self.device_properties.multi_processor_count
+        self.num_sms = self.device_properties.multi_processor_count if hasattr(
+            self.device_properties, "multi_processor_count") else 0
 
     # Note: used for model runner override.
     def _sync_device(self) -> None:
