@@ -82,6 +82,30 @@ class XPUPlatform(Platform):
     def inference_mode(cls):
         return torch.no_grad()
 
+    def xpu_get_mem_info():
+        if XPUPlatform.is_data_center_gpu():
+            return torch.xpu.mem_get_info()
+        else:
+            _, total_gpu_memory = torch.xpu.mem_get_info()
+            # FIXME: memory_allocated() doesn't count non-torch allocations,
+            # and we don't have any API to get it. so we mark it as 128MB.
+            used_memory = torch.xpu.memory_allocated()
+            non_torch_allocations = 128 * 1024 * 1024
+            free_gpu_memory = total_gpu_memory - (used_memory +
+                                                  non_torch_allocations)
+            return free_gpu_memory, total_gpu_memory
+
+    @classmethod
+    def forward_api(cls):
+        torch.cuda.synchronize = torch.xpu.synchronize
+        torch.cuda.empty_cache = torch.xpu.empty_cache
+        torch.xpu.reset_peak_memory_stats = torch.xpu.reset_peak_memory_stats
+        torch.cuda.memory_allocated = torch.xpu.memory_allocated
+        torch.cuda.memory_stats = torch.xpu.memory_stats
+        torch.cuda.reset_peak_memory_stats = torch.xpu.reset_peak_memory_stats
+        torch.cuda.mem_get_info = cls.xpu_get_mem_info
+        torch.cuda.get_device_properties = torch.xpu.get_device_properties
+
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cache_config = vllm_config.cache_config

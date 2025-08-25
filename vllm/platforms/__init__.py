@@ -142,6 +142,7 @@ def xpu_platform_plugin() -> Optional[str]:
             logger.debug("Confirmed %s backend is available.",
                          XPUPlatform.dist_backend)
             logger.debug("Confirmed XPU platform is available.")
+            XPUPlatform.forward_api()
     except Exception as e:
         logger.debug("XPU platform is not available because: %s", str(e))
 
