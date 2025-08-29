@@ -496,6 +496,7 @@ class GptOssForCausalLM(nn.Module):
         tp_rank = get_tensor_model_parallel_rank() if not use_ep else 0
         tp_size = get_tensor_model_parallel_world_size()
         intermediate_size = self.model_config.intermediate_size
+        group_size = self.vllm_config.quant_config.group_size if self.quant_config else 1
 
         hidden_size = self.model_config.hidden_size
         hidden_size_pad = round_up(hidden_size, 256)
@@ -575,8 +576,9 @@ class GptOssForCausalLM(nn.Module):
                     new_name = f"{prefix}.w13_scales"
                     param = params_dict[new_name]
                     param[layer_index %
-                          experts_per_rank][:end - start, :hidden_size //
-                                            64].copy_(narrow_scale)
+                          experts_per_rank][:end - start, :(hidden_size +
+                                                            group_size - 1) //
+                                            group_size].copy_(narrow_scale)
                 elif ".bias" in name:
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".bias"))
@@ -621,12 +623,15 @@ class GptOssForCausalLM(nn.Module):
                             and layer_index < ep_rank_end):
                         continue
                     narrow_scale = weight[
-                        start // 64:end // 64:,
+                        (start + group_size - 1) //
+                        group_size:(end + group_size - 1) // group_size:,
                     ]
                     narrow_scale = narrow_scale.permute(1, 0).contiguous()
                     new_name = f"{prefix}.w2_scales"
                     param = params_dict[new_name]
-                    dim1_size = min((end - start) // 64, narrow_scale.size(1))
+                    dim1_size = min(
+                        (end - start + group_size - 1) // group_size,
+                        narrow_scale.size(1))
                     param[layer_index %
                           experts_per_rank][:hidden_size, :dim1_size].copy_(
                               narrow_scale)
