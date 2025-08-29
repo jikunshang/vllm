@@ -496,7 +496,7 @@ class GptOssForCausalLM(nn.Module):
         tp_rank = get_tensor_model_parallel_rank() if not use_ep else 0
         tp_size = get_tensor_model_parallel_world_size()
         intermediate_size = self.model_config.intermediate_size
-        group_size = self.vllm_config.quant_config.group_size if self.quant_config else 1
+        group_size = self.vllm_config.quant_config.group_size
 
         hidden_size = self.model_config.hidden_size
         hidden_size_pad = round_up(hidden_size, 256)

@@ -280,6 +280,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             w13_bias=layer.w13_bias,
             w2_bias=layer.w2_bias,
             is_w4a16=True,
+            use_marlin=True,
         )
 
     def apply(
@@ -306,7 +307,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
     ) -> torch.Tensor:
         # hidden size is always 2880, let's pad to 3072
         hidden_size_pad = round_up(self.hidden_size, 256)
-        x_pad = torch.nn.functional.pad(x, (0, hidden_size_pad - self.hidden_size))
+        x_pad = torch.nn.functional.pad(
+            x, (0, hidden_size_pad - self.hidden_size))
         hidden_states = layer.ipex_fusion(x_pad,
                                           use_grouped_topk,
                                           top_k,
