@@ -221,7 +221,7 @@ async def cli():
     )
     args = parser.parse_args()
 
-    base_url = os.getenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
+    base_url = os.getenv("OPENAI_BASE_URL", "http://0.0.0.0:8000/v1")
     client = openai.AsyncOpenAI(base_url=base_url, api_key="EMPTY")
     constraints = list(PARAMS) if "*" in args.constraint else list(set(args.constraint))
     model = (await client.models.list()).data[0].id
@@ -232,6 +232,7 @@ async def cli():
                 client.chat.completions.create(
                     model=model,
                     max_tokens=1024,
+                    temperature=0,
                     stream=True,
                     **PARAMS[name],
                 )
@@ -246,6 +247,7 @@ async def cli():
                 client.chat.completions.create(
                     model=model,
                     max_tokens=1024,
+                    temperature=0,
                     stream=False,
                     **PARAMS[name],
                 )
