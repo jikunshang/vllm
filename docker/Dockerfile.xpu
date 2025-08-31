@@ -62,7 +62,7 @@ FROM vllm-base AS vllm-openai
 
 # install additional dependencies for openai api server
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
+    pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] 'modelscope!=1.15.0'
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip uninstall oneccl oneccl-devel -y
