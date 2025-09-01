@@ -131,6 +131,8 @@ class XPUPlatform(Platform):
         if vllm_config.lora_config is not None:
             compilation_config.level = CompilationLevel.NO_COMPILATION
 
+        if compilation_config.compile_sizes is None:
+            compilation_config.compile_sizes = {}
         # check and update parallel config
         parallel_config = vllm_config.parallel_config
         parallel_config.worker_cls = "vllm.v1.worker.xpu_worker.XPUWorker"
