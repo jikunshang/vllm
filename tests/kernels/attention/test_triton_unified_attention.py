@@ -100,7 +100,7 @@ def test_triton_unified_attn(
     num_blocks: int,
     q_dtype: Optional[torch.dtype],
 ) -> None:
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
     if q_dtype is not None and q_dtype.itemsize < 2 and block_size < 32:
         pytest.skip("block size must be at least 32 for fp8")
