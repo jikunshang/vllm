@@ -396,10 +396,23 @@ class ipex_ops:
             assert num_token_padding is None, \
                 "padding not supported if output passed in"
             assert output.dtype == out_dtype
-        assert scale is None, "only dynamic fp8 quantization supported on XPU"
         assert not use_per_token_if_dynamic, (
             "per token dynamic fp8 quantization not supported on XPU")
-        scale = torch.zeros(1, device=input.device, dtype=torch.float32)
-        torch.ops.torch_ipex.dynamic_scaled_fp8_quant(output, input, scale)
+        if scale is None:
+            if use_per_token_if_dynamic:
+                scale = torch.empty((shape[0], 1),
+                                    device=input.device,
+                                    dtype=torch.float32)
+                torch.ops._C.dynamic_per_token_scaled_fp8_quant(
+                    output, input, scale, scale_ub)
+            else:
+                scale = torch.empty(1,
+                                    device=input.device,
+                                    dtype=torch.float32)
+                torch.ops.torch_ipex.dynamic_scaled_fp8_quant(
+                    output, input, scale)
+        else:
+            assert scale.numel() == 1, f"{scale.shape}"
+            torch.ops.torch_ipex.static_scaled_fp8_quant(output, input, scale)
 
         return output, scale

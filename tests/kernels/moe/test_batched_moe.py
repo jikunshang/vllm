@@ -70,20 +70,20 @@ class BatchedMMTensors:
     def make_tensors(config: BatchedMMConfig):
         A = torch.randn(
             (config.num_experts, config.max_tokens_per_expert, config.K),
-            device="cuda",
+            device="xpu",
             dtype=config.in_dtype) / 10
         B = torch.randn((config.num_experts, config.N, config.K),
-                        device="cuda",
+                        device="xpu",
                         dtype=config.in_dtype)
         C = torch.zeros(
             (config.num_experts, config.max_tokens_per_expert, config.N),
-            device="cuda",
+            device="xpu",
             dtype=config.out_dtype)
 
         num_expert_tokens = torch.randint(low=0,
                                           high=config.max_tokens_per_expert,
                                           size=(config.num_experts, ),
-                                          device="cuda",
+                                          device="xpu",
                                           dtype=torch.int32)
 
         return BatchedMMTensors(A, B, C, num_expert_tokens)
@@ -120,7 +120,7 @@ def test_batched_mm(num_experts: int, max_tokens_per_expert: int, K: int,
     num_expert_tokens = torch.randint(low=0,
                                       high=max_tokens_per_expert,
                                       size=(num_experts, ),
-                                      device="cuda",
+                                      device="xpu",
                                       dtype=torch.int32)
 
     A, A_q, A_scale = make_quantized_test_activations(
@@ -144,9 +144,9 @@ def test_batched_mm(num_experts: int, max_tokens_per_expert: int, K: int,
     )
 
     out_shape = (num_experts, max_tokens_per_expert, N)
-    test_output = torch.zeros(out_shape, dtype=act_dtype, device="cuda")
-    ref_output = torch.zeros(out_shape, dtype=act_dtype, device="cuda")
-    q_ref_output = torch.zeros(out_shape, dtype=act_dtype, device="cuda")
+    test_output = torch.zeros(out_shape, dtype=act_dtype, device="xpu")
+    ref_output = torch.zeros(out_shape, dtype=act_dtype, device="xpu")
+    q_ref_output = torch.zeros(out_shape, dtype=act_dtype, device="xpu")
 
     compute_tl_dtype = {
         torch.float16: tl.float16,
@@ -233,8 +233,8 @@ def test_fused_moe_batched_experts(
     if per_act_token_quant and block_shape is not None:
         pytest.skip("Skip illegal quantization test.")
 
-    a = torch.randn((m, k), device="cuda", dtype=torch.bfloat16) / 10
-    score = torch.randn((m, e), device="cuda", dtype=torch.bfloat16)
+    a = torch.randn((m, k), device="xpu", dtype=torch.bfloat16) / 10
+    score = torch.randn((m, e), device="xpu", dtype=torch.bfloat16)
 
     if dtype.itemsize == 1:
         act_dtype = torch.bfloat16
@@ -254,8 +254,8 @@ def test_fused_moe_batched_experts(
     )
 
     if input_scales and quant_dtype is not None:
-        a1_scale = torch.tensor(1, device="cuda", dtype=torch.float32)
-        a2_scale = torch.tensor(1, device="cuda", dtype=torch.float32)
+        a1_scale = torch.tensor(1, device="xpu", dtype=torch.float32)
+        a2_scale = torch.tensor(1, device="xpu", dtype=torch.float32)
     else:
         a1_scale = None
         a2_scale = None

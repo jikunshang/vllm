@@ -4,7 +4,6 @@ from typing import Optional, Union
 
 import torch
 
-import vllm._custom_ops as ops
 from tests.kernels.quant_utils import per_block_cast_to_int8
 from tests.kernels.quantization.nvfp4_utils import (FLOAT4_E2M1_MAX,
                                                     FLOAT8_E4M3_MAX)
@@ -16,8 +15,14 @@ from vllm.model_executor.layers.fused_moe.modular_kernel import (
     FusedMoEModularKernel)
 from vllm.model_executor.layers.fused_moe.utils import (
     moe_kernel_quantize_input)
+from vllm.platforms import current_platform
 from vllm.utils import round_up
 from vllm.utils.deep_gemm import per_block_cast_to_fp8
+
+if current_platform.is_xpu():
+    from vllm._ipex_ops import ipex_ops as ops
+else:
+    from vllm import _custom_ops as ops
 
 
 def triton_moe(
@@ -149,7 +154,7 @@ def make_quantized_test_activations(
     block_shape: Optional[list[int]] = None,
     per_act_token_quant: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    a = torch.randn((E, m, k), device="cuda", dtype=in_dtype) / 10
+    a = torch.randn((E, m, k), device="xpu", dtype=in_dtype) / 10
     a_q = a
     a_scale = None
 
@@ -219,7 +224,7 @@ def make_test_weight(
     per_act_token_quant: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor],
            Optional[torch.Tensor]]:
-    w_16 = torch.randn((e, rows, cols), device="cuda", dtype=in_dtype) / 15
+    w_16 = torch.randn((e, rows, cols), device="xpu", dtype=in_dtype) / 15
     w_gs = None
 
     if quant_dtype is not None:
