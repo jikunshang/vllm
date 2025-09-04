@@ -8,7 +8,7 @@ from packaging import version
 from torch.nn import Module
 from torch.nn.parameter import Parameter
 
-from vllm._ipex_ops import ipex_ops as ops
+from vllm import _custom_ops as ops
 from vllm.model_executor.layers.fused_moe import (FusedMoEMethodBase,
                                                   FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
@@ -282,8 +282,8 @@ class XPUFp8LinearMethod(Fp8LinearMethod):
               bias: Optional[torch.Tensor] = None) -> torch.Tensor:
         weight = layer.weight.data
         weight_scale = layer.weight_scale.data
-        output = torch.ops.torch_ipex.fp8_gemm_w8a16(x, weight, True,
-                                                     weight_scale, bias)
+        output = torch.ops._xpu_C.fp8_gemm_w8a16(x, weight, True, weight_scale,
+                                                 bias)
         return output
 
 
