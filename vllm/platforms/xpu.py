@@ -153,7 +153,7 @@ class XPUPlatform(Platform):
 
     @classmethod
     def fp8_dtype(cls) -> torch.dtype:
-        return torch.float8_e5m2
+        return torch.float8_e4m3fn
 
     @classmethod
     def is_data_center_gpu(cls) -> bool:

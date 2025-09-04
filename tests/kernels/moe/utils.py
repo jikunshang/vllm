@@ -234,8 +234,13 @@ def make_test_weight(
         for idx in range(e):
             w_l[idx], w_s_l[idx], w_gs_l[idx] = moe_quantize_weights(
                 w_16[idx], None, quant_dtype, per_act_token_quant, block_shape)
-
-        w = torch.stack(w_l)
+        new_shape = torch.Size((len(w_l), ) + w_l[0].shape)
+        new_w = torch.zeros(new_shape,
+                            dtype=w_l[0].dtype,
+                            device=w_l[0].device)
+        for (i, wt) in enumerate(w_l):
+            new_w[i] = wt
+        w = new_w
         w_s = torch.stack(w_s_l)
         if e > 0 and w_gs_l[0] is not None:
             w_gs = torch.stack(w_gs_l)
