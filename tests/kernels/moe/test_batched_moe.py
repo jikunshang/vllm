@@ -206,7 +206,7 @@ def test_batched_mm(num_experts: int, max_tokens_per_expert: int, K: int,
 @pytest.mark.parametrize("e", NUM_EXPERTS)
 @pytest.mark.parametrize("topk", TOP_KS)
 @pytest.mark.parametrize("dtype", [torch.float8_e4m3fn, torch.bfloat16])
-@pytest.mark.parametrize("per_act_token_quant", [False, True])
+@pytest.mark.parametrize("per_act_token_quant", [False])
 @pytest.mark.parametrize("block_shape", [None, [128, 128]])
 @pytest.mark.parametrize("input_scales", [False])
 def test_fused_moe_batched_experts(

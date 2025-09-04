@@ -1121,9 +1121,9 @@ def torch_experts(
                 # block quantized
                 assert (a_scale is not None and w1_scale is not None
                         and w2_scale is not None)
-                tmp1 = native_w8a8_block_matmul(a[mask], w1[i], a_scale[mask],
-                                                w1_scale[i], block_shape,
-                                                out.dtype)
+                tmp1 = native_w8a8_block_matmul(
+                    a.to(f32)[mask], w1[i], a_scale[mask], w1_scale[i],
+                    block_shape, out.dtype)
                 if b_bias1 is not None:
                     tmp1 = tmp1 + b_bias1[i].view(1, -1).to(tmp1.dtype)
                 tmp2 = SiluAndMul()(tmp1)
@@ -1141,8 +1141,7 @@ def torch_experts(
                 assert (a_scale is not None and w1_scale is not None
                         and w2_scale is not None)
                 scales = a_scale if a_scale.numel() == 1 else a_scale[mask]
-
-                tmp1 = a[mask].to(f32) * scales
+                tmp1 = a.to(f32)[mask] * scales
                 w1_dq = (w1[i].to(f32) * w1_scale[i]).transpose(0, 1)
                 tmp1 = (tmp1 @ w1_dq).to(out.dtype)
                 if b_bias1 is not None:

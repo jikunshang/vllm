@@ -884,12 +884,17 @@ def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
                       token_expert_indices: torch.Tensor,
                       gating_output: torch.Tensor,
                       renormalize: bool) -> tuple[torch.Tensor, ...]:
-    ops.topk_softmax(
-        topk_weights,
-        topk_indices,
-        token_expert_indices,
-        gating_output,
-    )
+    if current_platform.is_xpu():
+        score = torch.softmax(gating_output, dim=-1, dtype=torch.float32)
+        topk_weights, topk_indices = torch.topk(score,
+                                                token_expert_indices.size(1))
+    else:
+        ops.topk_softmax(
+            topk_weights,
+            topk_indices,
+            token_expert_indices,
+            gating_output,
+        )
     if renormalize:
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 

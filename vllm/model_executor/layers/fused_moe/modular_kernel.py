@@ -12,6 +12,7 @@ import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 from vllm.model_executor.layers.fused_moe.utils import (  # yapf: disable
     _resize_cache, count_expert_num_tokens)
+from vllm.platforms import current_platform
 from vllm.utils import cdiv
 
 #
@@ -406,9 +407,17 @@ class FusedMoEPermuteExpertsUnpermute(ABC):
                    input: torch.Tensor) -> None:
         assert output.size(-1) * 2 == input.size(-1)
         if activation == "silu":
-            torch.ops._C.silu_and_mul(output, input)
+            if current_platform.is_xpu():
+                from vllm._ipex_ops import ipex_ops
+                ipex_ops.silu_and_mul(output, input)
+            else:
+                torch.ops._C.silu_and_mul(output, input)
         elif activation == "gelu":
-            torch.ops._C.gelu_and_mul(output, input)
+            if current_platform.is_xpu():
+                from vllm._ipex_ops import ipex_ops
+                ipex_ops.gelu_and_mul(output, input)
+            else:
+                torch.ops._C.gelu_and_mul(output, input)
         else:
             raise ValueError(f"Unsupported FusedMoe activation: {activation}")
 
