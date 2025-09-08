@@ -30,11 +30,6 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
 RUN apt install -y libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing 
 
-RUN wget https://github.com/uxlfoundation/oneCCL/releases/download/2021.15.4/intel-oneccl-2021.15.4.11_offline.sh
-RUN bash intel-oneccl-2021.15.4.11_offline.sh -a --silent --eula accept && echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc
-SHELL ["bash", "-c"]
-CMD ["bash", "-c", "source /root/.bashrc && exec bash"]
-
 WORKDIR /workspace/vllm
 COPY requirements/xpu.txt /workspace/vllm/requirements/xpu.txt
 COPY requirements/common.txt /workspace/vllm/requirements/common.txt
@@ -67,9 +62,6 @@ FROM vllm-base AS vllm-openai
 # install additional dependencies for openai api server
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install accelerate hf_transfer pytest pytest_asyncio lm_eval[api] modelscope
-
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip uninstall oneccl oneccl-devel -y
 
 # install development dependencies (for testing)
 RUN python3 -m pip install -e tests/vllm_test_utils
