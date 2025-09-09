@@ -20,7 +20,8 @@ trap remove_docker_container EXIT
 
 # Run the image and test offline inference/tensor parallel
 docker run \
-    --device /dev/dri \
+    --device /dev/dri:/dev/dri \
+    --privileged \
     -v /dev/dri/by-path:/dev/dri/by-path \
     --entrypoint="" \
     -e "HF_TOKEN=${HF_TOKEN}" \
