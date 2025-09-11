@@ -317,7 +317,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
-        hidden_states = hidden_states[..., :self.hidden_size]
+        hidden_states = hidden_states[..., :self.hidden_size].contiguous()
         return hidden_states
 
     @staticmethod
