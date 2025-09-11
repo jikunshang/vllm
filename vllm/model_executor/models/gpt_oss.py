@@ -71,7 +71,7 @@ class OAIAttention(nn.Module):
         tp_size = get_tensor_model_parallel_world_size()
 
         attention_sink_dtype = (torch.float32 if envs.VLLM_USE_TRTLLM_ATTENTION
-                                else torch.float16)
+                                else torch.bfloat16)
         self.sinks = torch.nn.Parameter(
             torch.empty(config.num_attention_heads // tp_size,
                         dtype=attention_sink_dtype,
@@ -152,7 +152,7 @@ class MLPBlock(torch.nn.Module):
         self.norm = RMSNorm(config.hidden_size, eps=1e-5)
         self.router = torch.nn.Linear(config.hidden_size,
                                       config.num_local_experts,
-                                      dtype=torch.float16)
+                                      dtype=torch.bfloat16)
         assert config.intermediate_size % self.world_size == 0
         self.experts = FusedMoE(num_experts=config.num_local_experts,
                                 top_k=config.num_experts_per_tok,
@@ -169,7 +169,12 @@ class MLPBlock(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         t = self.norm(x)
         g = self.router(t)
+        # we use fp16 for fused moe
+        g = g.to(torch.float16)
+        t = t.to(torch.float16)
         t = self.experts(hidden_states=t, router_logits=g)
+        # we should convert gemm output to bf16 before all reduce
+        t = t.to(torch.bfloat16)
         return x + t
 
 
@@ -566,6 +571,7 @@ class GptOssForCausalLM(nn.Module):
                           experts_per_rank][:end - start, :hidden_size //
                                             8].copy_(narrow_weight)
                 elif ".scales" in name:
+                    weight = weight.to(torch.float16)
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".scales"))
                     if not (layer_index >= ep_rank_start
@@ -580,6 +586,7 @@ class GptOssForCausalLM(nn.Module):
                                                             group_size - 1) //
                                             group_size].copy_(narrow_scale)
                 elif ".bias" in name:
+                    weight = weight.to(torch.float16)
                     layer_index = int(
                         get_string_between(name, "gate_up_projs.", ".bias"))
                     if not (layer_index >= ep_rank_start
@@ -617,6 +624,7 @@ class GptOssForCausalLM(nn.Module):
                           experts_per_rank][:hidden_size, :(end - start) //
                                             8].copy_(narrow_weight)
                 elif ".scales" in name:
+                    weight = weight.to(torch.float16)
                     layer_index = int(
                         get_string_between(name, "down_projs.", ".scales"))
                     if not (layer_index >= ep_rank_start
@@ -636,6 +644,7 @@ class GptOssForCausalLM(nn.Module):
                           experts_per_rank][:hidden_size, :dim1_size].copy_(
                               narrow_scale)
                 elif ".bias" in name:
+                    weight = weight.to(torch.float16)
                     # only add w2 bias on rank 0
                     if tp_rank != 0:
                         continue
