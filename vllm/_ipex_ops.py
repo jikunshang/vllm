@@ -4,6 +4,7 @@
 from typing import Optional
 
 import torch
+from vllm_xpu_kernels.flash_attn_interface import flash_attn_varlen_func
 
 from vllm.logger import init_logger
 
@@ -16,12 +17,6 @@ except ImportError as e:
 
 
 class ipex_ops:
-    @staticmethod
-    def rms_norm(
-        input: torch.Tensor, weight: torch.Tensor, epsilon: float
-    ) -> torch.Tensor:
-        return ipex.llm.functional.rms_norm(input, weight, epsilon)
-
     @staticmethod
     def reshape_and_cache_flash(
         key: torch.Tensor,
@@ -88,25 +83,21 @@ class ipex_ops:
             real_window_size = (-1, -1)
         else:
             assert len(window_size) == 2
-            real_window_size = (window_size[0], window_size[1])
-        return ipex.llm.modules.PagedAttention.flash_attn_varlen_func(
-            out,
-            q.contiguous(),
-            k,
-            v,
-            cu_seqlens_q,
-            cu_seqlens_k,
-            max_seqlen_q,
-            max_seqlen_k,
-            softmax_scale,
-            causal,
-            block_table,
-            alibi_slopes,
-            softcap=softcap,
-            window_size_left=real_window_size[0],
-            window_size_right=real_window_size[1],
-            k_scale=1.0,
-            v_scale=1.0,
+            real_window_size = (window_size[0], window_size[1])  # noqa: F841
+        return flash_attn_varlen_func(
+            out=out,
+            q=q.contiguous(),
+            k=k,
+            v=v,
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_k=cu_seqlens_k,
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_k=max_seqlen_k,
+            softmax_scale=softmax_scale,
+            causal=causal,
+            block_table=block_table,
+            # alibi_slopes = alibi_slopes,
+            # softcap=softcap,
         )
 
     @staticmethod
