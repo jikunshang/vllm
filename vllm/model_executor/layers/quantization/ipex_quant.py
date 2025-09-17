@@ -140,13 +140,16 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
 
     def __init__(self, quant_config: IPEXConfig):
         self.quant_config = quant_config
-        self.out_dtype = torch.get_default_dtype()
+        # force use half for moe now.
+        self.out_dtype = torch.float16
         self.alpha = 1.702
         self.limit = 7.0
 
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
+        # force use half for moe now.
+        params_dtype = torch.float16
         layer.quant_config = self.quant_config
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
@@ -318,6 +321,8 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                                           num_expert_group,
                                           activation="swiglu_oai")
         hidden_states = hidden_states[..., :self.hidden_size].contiguous()
+        # convert back to bf16 ,maybe can keep all reuce acc
+        hidden_states = hidden_states.to(torch.bfloat16)
         return hidden_states
 
     @staticmethod
