@@ -49,7 +49,7 @@ def test_dynamic_scaled_int8_quant(num_tokens: int, hidden_size: int,
                                    dtype: torch.dtype, seed: int) -> None:
     current_platform.seed_everything(seed)
 
-    x = torch.rand(num_tokens, hidden_size, dtype=dtype, device="cuda") * 1000
+    x = torch.rand(num_tokens, hidden_size, dtype=dtype, device="xpu") * 1000
 
     # reference
     ref_out, ref_scales = ref_dynamic_per_token_quant(x, torch.int8)

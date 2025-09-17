@@ -11,11 +11,6 @@ from tests.kernels.quant_utils import native_w8a8_block_matmul
 from vllm.config import VllmConfig
 from vllm.model_executor.layers.quantization.utils.int8_utils import (
     w8a8_block_int8_matmul)
-from vllm.platforms import current_platform
-
-if current_platform.get_device_capability() < (7, 0):
-    pytest.skip("INT8 Triton requires CUDA 7.0 or higher",
-                allow_module_level=True)
 
 vllm_config = VllmConfig()
 vllm_config.scheduler_config.max_num_seqs = 128
@@ -33,7 +28,7 @@ SEEDS = [0]
 @pytest.fixture(autouse=True, scope="module")
 def setup_cuda():
     """Sets the default CUDA device for all tests in this module."""
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
 
 @pytest.mark.parametrize("M,N,K,block_size,out_dtype,seed",
