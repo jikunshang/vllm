@@ -10,11 +10,6 @@ from tests.kernels.quant_utils import (native_per_token_group_quant_int8,
 from vllm.config import VllmConfig, set_current_vllm_config
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import fused_moe
-from vllm.platforms import current_platform
-
-if current_platform.get_device_capability() < (7, 0):
-    pytest.skip("INT8 Triton requires CUDA 7.0 or higher",
-                allow_module_level=True)
 
 vllm_config = VllmConfig()
 vllm_config.scheduler_config.max_num_seqs = 128
@@ -100,7 +95,7 @@ def torch_w8a8_block_int8_moe(a, w1, w2, w1_s, w2_s, score, topk, block_shape):
 @pytest.fixture(autouse=True, scope="module")
 def setup_cuda():
     """Sets the default CUDA device for all tests in this module."""
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
 
 @pytest.mark.parametrize(("M", "N", "K"), MNK_FACTORS)
