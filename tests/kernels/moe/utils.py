@@ -7,6 +7,7 @@ import torch
 from tests.kernels.quant_utils import per_block_cast_to_int8
 from tests.kernels.quantization.nvfp4_utils import (FLOAT4_E2M1_MAX,
                                                     FLOAT8_E4M3_MAX)
+from vllm import _custom_ops as ops
 from vllm.model_executor.layers.activation import SiluAndMul
 from vllm.model_executor.layers.fused_moe import fused_experts
 from vllm.model_executor.layers.fused_moe.fused_batched_moe import (
@@ -15,14 +16,8 @@ from vllm.model_executor.layers.fused_moe.modular_kernel import (
     FusedMoEModularKernel)
 from vllm.model_executor.layers.fused_moe.utils import (
     moe_kernel_quantize_input)
-from vllm.platforms import current_platform
 from vllm.utils import round_up
 from vllm.utils.deep_gemm import per_block_cast_to_fp8
-
-if current_platform.is_xpu():
-    from vllm._ipex_ops import ipex_ops as ops
-else:
-    from vllm import _custom_ops as ops
 
 
 def triton_moe(

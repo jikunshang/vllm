@@ -5,6 +5,7 @@ from typing import Optional, Union
 
 import torch
 
+from vllm import _custom_ops as ops
 from vllm.model_executor.layers.quantization.utils.fp8_utils import (
     per_token_group_quant_fp8)
 from vllm.model_executor.layers.quantization.utils.int8_utils import (
@@ -17,11 +18,6 @@ from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.utils import cdiv
 from vllm.utils.flashinfer import fp4_quantize
-
-if current_platform.is_xpu():
-    from vllm._ipex_ops import ipex_ops as ops
-else:
-    from vllm import _custom_ops as ops
 
 
 @triton.jit
