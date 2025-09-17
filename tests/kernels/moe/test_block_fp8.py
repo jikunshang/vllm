@@ -14,7 +14,6 @@ from vllm.model_executor.layers.fused_moe.deep_gemm_moe import (
     _valid_deep_gemm_shape, deep_gemm_moe_fp8)
 from vllm.model_executor.layers.fused_moe.fused_moe import (
     fused_topk, modular_triton_fused_moe)
-from vllm.platforms import current_platform
 from vllm.utils import has_deep_gemm
 from vllm.utils.deep_gemm import is_deep_gemm_e8m0_used
 
@@ -22,10 +21,6 @@ dg_available = has_deep_gemm()
 
 if dg_available:
     from deep_gemm import get_m_alignment_for_contiguous_layout
-
-if current_platform.get_device_capability() < (9, 0):
-    pytest.skip("FP8 Triton requires CUDA 9.0 or higher",
-                allow_module_level=True)
 
 vllm_config = VllmConfig()
 vllm_config.scheduler_config.max_num_seqs = 128
@@ -133,13 +128,9 @@ def torch_w8a8_block_fp8_moe(a, w1, w2, w1_s, w2_s, topk_weight, topk_ids,
             topk_weight.view(B, -1, 1).to(out.dtype)).sum(dim=1)
 
 
-# Skip all tests if CUDA is not available
-pytest.importorskip("torch.cuda")
-
-
 @pytest.fixture(autouse=True)
 def setup_cuda():
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
 
 @pytest.mark.parametrize(("M", "N", "K"), MNK_FACTORS)
@@ -262,9 +253,6 @@ def test_w8a8_block_fp8_deep_gemm_fused_moe(M, N, K, E, topk, seed,
     # setup code in case we are able to revisit this later.
     use_compile = False
 
-    use_cudagraph = (chunk_size < M and N >= 1024 and K >= 1024
-                     and current_platform.is_cuda_alike())
-
     topk_weights, topk_ids, _ = fused_topk(a, score.float(), topk, False)
 
     # Set the context to avoid lots of warning spam.
@@ -284,16 +272,5 @@ def test_w8a8_block_fp8_deep_gemm_fused_moe(M, N, K, E, topk, seed,
 
         out = deep_gemm_moe_fp8_fn(a, w1, w2, w1_s, w2_s, topk_weights,
                                    topk_ids)
-
-        if use_cudagraph:
-            out.fill_(0)
-            stream = torch.cuda.Stream()
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, stream=stream):
-                out = deep_gemm_moe_fp8_fn(a, w1, w2, w1_s, w2_s, topk_weights,
-                                           topk_ids)
-            torch.cuda.synchronize()
-            graph.replay()
-            torch.cuda.synchronize()
 
     torch.testing.assert_close(out, ref_out, atol=0.035, rtol=0.035)
