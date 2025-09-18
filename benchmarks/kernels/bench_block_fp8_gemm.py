@@ -6,12 +6,7 @@ import torch
 from vllm.model_executor.layers.quantization.utils.fp8_utils import (
     w8a8_block_fp8_matmul,
 )
-from vllm.platforms import current_platform
 from vllm.triton_utils import triton as vllm_triton
-
-assert current_platform.is_cuda(), (
-    "Only support benchmarking w8a8 block fp8 kernel on CUDA device."
-)
 
 # DeepSeek-V3 weight shapes
 DEEPSEEK_V3_SHAPES = [
@@ -75,19 +70,19 @@ def build_w8a8_block_fp8_runner(M, N, K, block_size, device):
 )
 def benchmark_tflops(batch_size, provider, N, K, block_size=(128, 128)):
     M = batch_size
-    device = "cuda"
+    device = "xpu"
 
     quantiles = [0.5, 0.2, 0.8]
 
     if provider == "torch-bf16":
         a = torch.randn((M, K), device=device, dtype=torch.bfloat16)
         b = torch.randn((N, K), device=device, dtype=torch.bfloat16)
-        ms, min_ms, max_ms = vllm_triton.testing.do_bench_cudagraph(
+        ms, min_ms, max_ms = vllm_triton.testing.do_bench(
             lambda: torch.nn.functional.linear(a, b), quantiles=quantiles
         )
     else:  # w8a8-block-fp8
         run_w8a8 = build_w8a8_block_fp8_runner(M, N, K, block_size, device)
-        ms, min_ms, max_ms = vllm_triton.testing.do_bench_cudagraph(
+        ms, min_ms, max_ms = vllm_triton.testing.do_bench(
             lambda: run_w8a8(), quantiles=quantiles
         )
 

@@ -174,35 +174,28 @@ def benchmark_config(
 
     # JIT compilation & warmup
     run()
-    torch.cuda.synchronize()
+    torch.xpu.synchronize()
 
-    # Capture 10 invocations with CUDA graph
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        for _ in range(10):
-            run()
-    torch.cuda.synchronize()
+    for _ in range(10):
+        run()
+    torch.xpu.synchronize()
 
-    # Warmup
-    for _ in range(5):
-        graph.replay()
-    torch.cuda.synchronize()
+    torch.xpu.synchronize()
 
-    start_event = torch.cuda.Event(enable_timing=True)
-    end_event = torch.cuda.Event(enable_timing=True)
+    start_event = torch.xpu.Event(enable_timing=True)
+    end_event = torch.xpu.Event(enable_timing=True)
 
     latencies: list[float] = []
     for i in range(num_iters):
         prepare(i)
-        torch.cuda.synchronize()
+        torch.xpu.synchronize()
 
         start_event.record()
-        graph.replay()
+        run()
         end_event.record()
         end_event.synchronize()
         latencies.append(start_event.elapsed_time(end_event))
     avg = sum(latencies) / (num_iters * 10) * 1000  # us
-    graph.reset()
     return avg
 
 
@@ -392,8 +385,8 @@ def merge_unique_dicts(list1, list2):
 @ray.remote(num_gpus=1)
 class BenchmarkWorker:
     def __init__(self, seed: int) -> None:
-        torch.set_default_device("cuda")
-        current_platform.seed_everything(seed)
+        torch.set_default_device("xpu")
+        # current_platform.seed_everything(seed)
         self.seed = seed
         # Get the device ID to allocate tensors and kernels
         # on the respective GPU. This is required for Ray to work
@@ -413,7 +406,7 @@ class BenchmarkWorker:
         block_quant_shape: list[int] = None,
         use_deep_gemm: bool = False,
     ) -> tuple[dict[str, int], float]:
-        current_platform.seed_everything(self.seed)
+        # current_platform.seed_everything(self.seed)
         dtype_str = get_config_dtype_str(
             dtype, use_int8_w8a16=use_int8_w8a16, use_fp8_w8a8=use_fp8_w8a8
         )
@@ -468,24 +461,10 @@ class BenchmarkWorker:
     ) -> dict[str, int]:
         best_config = None
         best_time = float("inf")
-        if current_platform.is_rocm():
-            is_fp16 = not (use_fp8_w8a8 or use_int8_w8a16)
-            search_space = prune_rocm_search_space(
-                num_tokens,
-                shard_intermediate_size,
-                hidden_size,
-                search_space,
-                is_fp16,
-                topk,
-            )
 
         need_device_guard = False
-        if current_platform.is_rocm():
-            visible_device = os.environ.get("ROCR_VISIBLE_DEVICES", None)
-            if visible_device != f"{self.device_id}":
-                need_device_guard = True
 
-        with torch.cuda.device(self.device_id) if need_device_guard else nullcontext():
+        with torch.xpu.device(self.device_id) if need_device_guard else nullcontext():
             for config in tqdm(search_space):
                 try:
                     kernel_time = benchmark_config(
@@ -618,7 +597,7 @@ def main(args: argparse.Namespace):
         ensure_divisibility(intermediate_size, args.tp_size, "intermediate_size")
         shard_intermediate_size = 2 * intermediate_size // args.tp_size
     hidden_size = config.hidden_size
-    dtype = torch.float16 if current_platform.is_rocm() else config.torch_dtype
+    dtype = config.torch_dtype
     use_fp8_w8a8 = args.dtype == "fp8_w8a8"
     use_int8_w8a16 = args.dtype == "int8_w8a16"
     block_quant_shape = get_weight_block_size_safety(config)
@@ -649,15 +628,15 @@ def main(args: argparse.Namespace):
 
     use_deep_gemm = bool(args.use_deep_gemm)
 
-    if current_platform.is_rocm() and "HIP_VISIBLE_DEVICES" in os.environ:
-        # Ray will set ROCR_VISIBLE_DEVICES for device visibility
-        logger.warning(
-            "Ray uses ROCR_VISIBLE_DEVICES to control device accessibility."
-            "Replacing HIP_VISIBLE_DEVICES with ROCR_VISIBLE_DEVICES."
-        )
-        val = os.environ["HIP_VISIBLE_DEVICES"]
-        os.environ["ROCR_VISIBLE_DEVICES"] = val
-        del os.environ["HIP_VISIBLE_DEVICES"]
+    # if current_platform.is_rocm() and "HIP_VISIBLE_DEVICES" in os.environ:
+    #     # Ray will set ROCR_VISIBLE_DEVICES for device visibility
+    #     logger.warning(
+    #         "Ray uses ROCR_VISIBLE_DEVICES to control device accessibility."
+    #         "Replacing HIP_VISIBLE_DEVICES with ROCR_VISIBLE_DEVICES."
+    #     )
+    #     val = os.environ["HIP_VISIBLE_DEVICES"]
+    #     os.environ["ROCR_VISIBLE_DEVICES"] = val
+    #     del os.environ["HIP_VISIBLE_DEVICES"]
 
     ray.init()
     num_gpus = int(ray.available_resources()["GPU"])

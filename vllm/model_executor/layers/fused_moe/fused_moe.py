@@ -1133,14 +1133,13 @@ def inplace_fused_experts_fake(hidden_states: torch.Tensor,
     pass
 
 
-direct_register_custom_op(
-    op_name="inplace_fused_experts",
-    op_func=inplace_fused_experts,
-    mutates_args=["hidden_states"],
-    fake_impl=inplace_fused_experts_fake,
-    tags=(() if is_torch_equal_or_newer("2.7.0") else
-          (torch.Tag.needs_fixed_stride_order, )),
-)
+direct_register_custom_op(op_name="inplace_fused_experts",
+                          op_func=inplace_fused_experts,
+                          mutates_args=["hidden_states"],
+                          fake_impl=inplace_fused_experts_fake,
+                          tags=(() if is_torch_equal_or_newer("2.7.0") else
+                                (torch.Tag.needs_fixed_stride_order, )),
+                          dispatch_key="XPU")
 
 
 def flashinfer_fused_moe_blockscale_fp8(
