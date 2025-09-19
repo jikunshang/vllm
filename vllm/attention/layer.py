@@ -25,6 +25,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from vllm.model_executor.layers.quantization.kv_cache import BaseKVCacheMethod
 from vllm.platforms import _Backend, current_platform
 from vllm.utils import direct_register_custom_op
+from vllm._ipex_ops import ipex_ops
 
 logger = init_logger(__name__)
 USE_XFORMERS_OPS = None
@@ -399,6 +400,61 @@ class MultiHeadAttention(nn.Module):
                                                           key,
                                                           value,
                                                           scale=self.scale)
+        elif self.attn_backend == _Backend.IPEX:
+            cu_seqlens_q = torch.arange(0, (bsz + 1) * q_len,
+                                        step=q_len,
+                                        dtype=torch.int32,
+                                        device=query.device)
+            cu_seqlens_k = torch.arange(0, (bsz + 1) * kv_len,
+                                        step=kv_len,
+                                        dtype=torch.int32,
+                                        device=key.device)
+
+            print(cu_seqlens_q)
+            print(cu_seqlens_k)
+            print(query.shape)
+            out = torch.empty(
+                query.shape,
+                dtype=query.dtype,
+                device=query.device)
+            ipex_ops.varlen_attention(
+                    query.flatten(0, 1),
+                    key.flatten(0, 1),
+                    value.flatten(0, 1),
+                    #query,
+                    #key,
+                    #value,
+                    out,
+                    cu_seqlens_q,
+                    cu_seqlens_k,
+                    None,
+                    q_len,
+                    kv_len,
+                    pdropout=0.0,
+                    softmax_scale=self.scale,
+                    zero_tensors=False,
+                    is_causal=True,
+                    return_softmax=False,
+                    gen_=None,
+                    window_size_left=-1,
+                    window_size_right=-1,
+                    logits_soft_cap=-1,
+            )
+            #print("!!!!!out shape:", out.shape)
+            #print(out)
+            '''
+            out = self._flash_attn_varlen_func(
+                query.flatten(0, 1),
+                key.flatten(0, 1),
+                value.flatten(0, 1),
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=q_len,
+                max_seqlen_k=kv_len,
+                softmax_scale=self.scale,
+            )
+            '''
+            out = out.transpose(1, 2)
         elif (self.attn_backend == _Backend.TORCH_SDPA
               or self.attn_backend == _Backend.TORCH_SDPA_VLLM_V1
               or self.attn_backend == _Backend.IPEX):
