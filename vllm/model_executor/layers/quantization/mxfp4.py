@@ -198,17 +198,14 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         # hidden_size_pad = round_up(self.hidden_size, 256)
         # x_pad = torch.nn.functional.pad(
         #     x, (0, hidden_size_pad - self.hidden_size))
-        hidden_states = layer.ipex_fusion(
-            x,
-            use_grouped_topk,
-            top_k,
-            router_logits,
-            renormalize,
-            topk_group,
-            num_expert_group,
-        )
-        #FIXME: add this back!!
-        #   activation="swiglu_oai")
+        hidden_states = layer.ipex_fusion(x,
+                                          use_grouped_topk,
+                                          top_k,
+                                          router_logits,
+                                          renormalize,
+                                          topk_group,
+                                          num_expert_group,
+                                          activation="swiglu_oai")
         # hidden_states = hidden_states[..., :self.hidden_size].contiguous()
         # convert back to bf16 ,maybe can keep all reuce acc
         hidden_states = hidden_states.to(torch.bfloat16)

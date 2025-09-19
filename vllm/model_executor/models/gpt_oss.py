@@ -170,11 +170,8 @@ class MLPBlock(torch.nn.Module):
         t = self.norm(x)
         g = self.router(t)
         # we use fp16 for fused moe
-        g = g.to(torch.float16)
-        t = t.to(torch.float16)
         t = self.experts(hidden_states=t, router_logits=g)
         # we should convert gemm output to bf16 before all reduce
-        t = t.to(torch.bfloat16)
         return x + t
 
 
