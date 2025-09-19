@@ -96,6 +96,9 @@ def parse_args():
         "--quantization",
         type=str,
     )
+    parser.add_argument(
+        "--enable-expert-parallel", action="store_true", help="Enable expert parallel."
+    )
     return parser.parse_args()
 
 
@@ -162,7 +165,7 @@ def main(
         model=model,
         tensor_parallel_size=GPUs_per_dp_rank,
         enforce_eager=enforce_eager,
-        enable_expert_parallel=True,
+        enable_expert_parallel=args.enable_expert_parallel,
         trust_remote_code=trust_remote_code,
         max_num_seqs=max_num_seqs,
         max_model_len=max_model_len,
