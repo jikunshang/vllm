@@ -265,6 +265,7 @@ class Glm4vVisionAttention(nn.Module):
                 _Backend.FLASH_ATTN,
                 _Backend.TORCH_SDPA,
                 _Backend.XFORMERS,
+                _Backend.IPEX,
         }:
             raise RuntimeError(
                 f"GLM-4V does not support {self.attn_backend} backend now.")
