@@ -12,7 +12,7 @@ import torch
 
 from vllm.platforms import current_platform
 
-device = "cuda"
+device = "xpu"
 
 triton_scaled_mm_module = importlib.import_module(
     "vllm.model_executor.layers.quantization.compressed_tensors."
