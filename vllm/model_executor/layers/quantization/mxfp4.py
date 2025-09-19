@@ -78,8 +78,8 @@ class Mxfp4Config(QuantizationConfig):
 
 class IpexFp4MoeMethod(FusedMoEMethodBase):
 
-    def __init__(self, quant_config: FusedMoEConfig):
-        self.quant_config = quant_config
+    def __init__(self, moe_config: FusedMoEConfig):
+        self.moe_config = moe_config
         self.alpha = 1.702
         self.limit = 7.0
 
@@ -87,9 +87,7 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
         # force use half for moe now.
-        # params_dtype = torch.float16
-        layer.quant_config = self.quant_config
-        group_size = self.quant_config.group_size
+        group_size = 32
         group_size_div_factor = 1
         self.hidden_size = hidden_size
         self.hidden_size_pad = hidden_size  #round_up(self.hidden_size, 256)
@@ -150,37 +148,6 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         layer.register_parameter("w2_bias", w2_bias)
         set_weight_attrs(w2_bias, extra_weight_attrs)
 
-        if self.quant_config.has_zp:
-            w13_qzeros = torch.nn.Parameter(torch.zeros(
-                num_experts,
-                2 * intermediate_size_per_partition // 8,
-                self.hidden_size_pad // group_size,
-                dtype=torch.int32),
-                                            requires_grad=False)
-            layer.register_parameter("w13_qzeros", w13_qzeros)
-            set_weight_attrs(w13_qzeros, extra_weight_attrs)
-
-            w2_qzeros = torch.nn.Parameter(torch.zeros(
-                num_experts,
-                self.hidden_size_pad // 8,
-                intermediate_size_per_partition // group_size,
-                dtype=torch.int32),
-                                           requires_grad=False)
-            layer.register_parameter("w2_qzeros", w2_qzeros)
-            set_weight_attrs(w2_qzeros, extra_weight_attrs)
-
-        if True:  # self.quant_config.quant_method == "gptq":
-            # some param are unused, but we need to init them in order to
-            # load weights
-            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
-            if not self.quant_config.has_zp:
-                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
-            for key in invalid_param_keys:
-                param = torch.nn.Parameter(torch.empty((0, ),
-                                                       dtype=torch.int32),
-                                           requires_grad=False)
-                layer.register_parameter(key, param)
-                set_weight_attrs(param, extra_weight_attrs)
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(

@@ -405,6 +405,8 @@ class FusedMoEConfig:
     def use_flashinfer_cutlass_kernels(self):
         return self.moe_parallel_config.use_flashinfer_cutlass_kernels
 
+    
+
     @staticmethod
     def make(
         num_experts: int,
