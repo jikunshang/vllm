@@ -149,18 +149,18 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
         # force use half for moe now.
-        params_dtype = torch.float16
+        # params_dtype = torch.float16
         layer.quant_config = self.quant_config
         group_size = self.quant_config.group_size
         group_size_div_factor = 1
         self.hidden_size = hidden_size
-        self.hidden_size_pad = round_up(self.hidden_size, 256)
+        self.hidden_size_pad = hidden_size  #round_up(self.hidden_size, 256)
 
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
 
-        intermediate_size_per_partition = round_up(
-            intermediate_size_per_partition, 256)
+        # intermediate_size_per_partition = round_up(
+        #     intermediate_size_per_partition, 256)
 
         strategy = FusedMoeWeightScaleSupported.GROUP.value
         extra_weight_attrs.update({
@@ -174,13 +174,12 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             layer, weight_loader)
         extra_weight_attrs['weight_loader'] = wrapped_weight_loader
 
-        w13_qweight = torch.nn.Parameter(
-            torch.zeros(
-                num_experts,
-                2 * intermediate_size_per_partition,
-                self.hidden_size_pad // 8,  # 8 int4 store to int32
-                dtype=torch.int32),
-            requires_grad=False)
+        w13_qweight = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            self.hidden_size_pad // 2,
+            dtype=torch.uint8),
+                                         requires_grad=False)
         layer.register_parameter("w13_qweight", w13_qweight)
         set_weight_attrs(w13_qweight, extra_weight_attrs)
 
@@ -188,7 +187,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             num_experts,
             2 * intermediate_size_per_partition,
             self.hidden_size_pad // group_size,
-            dtype=params_dtype),
+            dtype=torch.uint8),
                                         requires_grad=False)
         layer.register_parameter("w13_scales", w13_scales)
         set_weight_attrs(w13_scales, extra_weight_attrs)
@@ -202,14 +201,12 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
         set_weight_attrs(w13_bias, extra_weight_attrs)
 
         # down_proj (row parallel)
-        w2_qweight = torch.nn.Parameter(
-            torch.zeros(
-                num_experts,
-                self.hidden_size_pad,
-                intermediate_size_per_partition //
-                8,  # 8 int4 store to int32, always pack on k dim
-                dtype=torch.int32),
-            requires_grad=False)
+        w2_qweight = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            self.hidden_size_pad,
+            intermediate_size_per_partition // 2,
+            dtype=torch.uint8),
+                                        requires_grad=False)
         layer.register_parameter("w2_qweight", w2_qweight)
         set_weight_attrs(w2_qweight, extra_weight_attrs)
 
@@ -217,7 +214,7 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
             num_experts,
             self.hidden_size_pad,
             intermediate_size_per_partition // group_size,
-            dtype=params_dtype),
+            dtype=torch.uint8),
                                        requires_grad=False)
         layer.register_parameter("w2_scales", w2_scales)
         set_weight_attrs(w2_scales, extra_weight_attrs)
@@ -276,14 +273,13 @@ class IPEXAutoRoundFusedMoEMethod(FusedMoEMethodBase):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         import intel_extension_for_pytorch as ipex
         layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-            layer.w13_qweight,
-            layer.w2_qweight,
+            layer.w13_qweight.view(torch.int32),
+            layer.w2_qweight.view(torch.int32),
             w1_scale_inv=layer.w13_scales,
             w2_scale_inv=layer.w2_scales,
             w13_bias=layer.w13_bias,
             w2_bias=layer.w2_bias,
-            is_w4a16=True,
-            use_marlin=True,
+            is_mxfp4=True,
         )
 
     def apply(
