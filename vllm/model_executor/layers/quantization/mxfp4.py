@@ -76,6 +76,7 @@ class Mxfp4Config(QuantizationConfig):
                 "Mxfp4 attention layer is not implemented")
         return None
 
+
 class IpexFp4MoeMethod(FusedMoEMethodBase):
 
     def __init__(self, moe_config: FusedMoEConfig):
@@ -94,14 +95,13 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
 
         layer.group_size = group_size
         layer.group_size_div_factor = group_size_div_factor
- 
 
         w13_weight = torch.nn.Parameter(torch.zeros(
             num_experts,
             2 * intermediate_size_per_partition,
             self.hidden_size_pad // 2,
             dtype=torch.uint8),
-                                         requires_grad=False)
+                                        requires_grad=False)
         layer.register_parameter("w13_weight", w13_weight)
         set_weight_attrs(w13_weight, extra_weight_attrs)
 
@@ -110,7 +110,7 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
             2 * intermediate_size_per_partition,
             self.hidden_size_pad // group_size,
             dtype=torch.uint8),
-                                        requires_grad=False)
+                                              requires_grad=False)
         layer.register_parameter("w13_weight_scale", w13_weight_scale)
         set_weight_attrs(w13_weight_scale, extra_weight_attrs)
 
@@ -128,7 +128,7 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
             self.hidden_size_pad,
             intermediate_size_per_partition // 2,
             dtype=torch.uint8),
-                                        requires_grad=False)
+                                       requires_grad=False)
         layer.register_parameter("w2_weight", w2_weight)
         set_weight_attrs(w2_weight, extra_weight_attrs)
 
@@ -137,7 +137,7 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
             self.hidden_size_pad,
             intermediate_size_per_partition // group_size,
             dtype=torch.uint8),
-                                       requires_grad=False)
+                                             requires_grad=False)
         layer.register_parameter("w2_weight_scale", w2_weight_scale)
         set_weight_attrs(w2_weight_scale, extra_weight_attrs)
 
@@ -147,7 +147,6 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
                                      requires_grad=False)
         layer.register_parameter("w2_bias", w2_bias)
         set_weight_attrs(w2_bias, extra_weight_attrs)
-
 
     def topk(self, router_logits, top_k: int):
         router_top_value, router_indices = torch.topk(
@@ -199,14 +198,17 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         # hidden_size_pad = round_up(self.hidden_size, 256)
         # x_pad = torch.nn.functional.pad(
         #     x, (0, hidden_size_pad - self.hidden_size))
-        hidden_states = layer.ipex_fusion(x,
-                                          use_grouped_topk,
-                                          top_k,
-                                          router_logits,
-                                          renormalize,
-                                          topk_group,
-                                          num_expert_group,
-                                          activation="swiglu_oai")
+        hidden_states = layer.ipex_fusion(
+            x,
+            use_grouped_topk,
+            top_k,
+            router_logits,
+            renormalize,
+            topk_group,
+            num_expert_group,
+        )
+        #FIXME: add this back!!
+        #   activation="swiglu_oai")
         # hidden_states = hidden_states[..., :self.hidden_size].contiguous()
         # convert back to bf16 ,maybe can keep all reuce acc
         hidden_states = hidden_states.to(torch.bfloat16)
