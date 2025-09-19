@@ -958,10 +958,9 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         max_seq_len = self.seq_lens.np[:num_reqs].max().item()
 
         # for xpu
-        seq_lens = (self.input_batch.num_computed_tokens_cpu[:num_reqs] +
-                    num_scheduled_tokens)
         self.seq_start_loc_np[0] = 0
-        np.cumsum(seq_lens, out=self.seq_start_loc_np[1:num_reqs + 1])
+        np.cumsum(self.seq_lens.np[:num_reqs],
+                  out=self.seq_start_loc_np[1:num_reqs + 1])
         self.seq_start_loc[:num_reqs + 1].copy_(
             self.seq_start_loc_cpu[:num_reqs + 1], non_blocking=True)
 
