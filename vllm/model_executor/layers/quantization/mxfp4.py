@@ -67,12 +67,249 @@ class Mxfp4Config(QuantizationConfig):
                     fused_mapping=self.packed_modules_mapping):
                 return UnquantizedLinearMethod()
             raise NotImplementedError("Mxfp4 linear layer is not implemented")
+        elif current_platform.is_xpu():
+            return IpexFp4MoeMethod(layer.moe_config)
         elif isinstance(layer, FusedMoE):
             return Mxfp4MoEMethod(layer.moe_config)
         elif isinstance(layer, Attention):
             raise NotImplementedError(
                 "Mxfp4 attention layer is not implemented")
         return None
+
+class IpexFp4MoeMethod(FusedMoEMethodBase):
+
+    def __init__(self, quant_config: FusedMoEConfig):
+        self.quant_config = quant_config
+        self.alpha = 1.702
+        self.limit = 7.0
+
+    def create_weights(self, layer: torch.nn.Module, num_experts: int,
+                       hidden_size: int, intermediate_size_per_partition: int,
+                       params_dtype: torch.dtype, **extra_weight_attrs):
+        # force use half for moe now.
+        # params_dtype = torch.float16
+        layer.quant_config = self.quant_config
+        group_size = self.quant_config.group_size
+        group_size_div_factor = 1
+        self.hidden_size = hidden_size
+        self.hidden_size_pad = hidden_size  #round_up(self.hidden_size, 256)
+
+        layer.group_size = group_size
+        layer.group_size_div_factor = group_size_div_factor
+ 
+
+        w13_qweight = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            self.hidden_size_pad // 2,
+            dtype=torch.uint8),
+                                         requires_grad=False)
+        layer.register_parameter("w13_qweight", w13_qweight)
+        set_weight_attrs(w13_qweight, extra_weight_attrs)
+
+        w13_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            self.hidden_size_pad // group_size,
+            dtype=torch.uint8),
+                                        requires_grad=False)
+        layer.register_parameter("w13_scales", w13_scales)
+        set_weight_attrs(w13_scales, extra_weight_attrs)
+
+        w13_bias = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            2 * intermediate_size_per_partition,
+            dtype=params_dtype),
+                                      requires_grad=False)
+        layer.register_parameter("w13_bias", w13_bias)
+        set_weight_attrs(w13_bias, extra_weight_attrs)
+
+        # down_proj (row parallel)
+        w2_qweight = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            self.hidden_size_pad,
+            intermediate_size_per_partition // 2,
+            dtype=torch.uint8),
+                                        requires_grad=False)
+        layer.register_parameter("w2_qweight", w2_qweight)
+        set_weight_attrs(w2_qweight, extra_weight_attrs)
+
+        w2_scales = torch.nn.Parameter(torch.zeros(
+            num_experts,
+            self.hidden_size_pad,
+            intermediate_size_per_partition // group_size,
+            dtype=torch.uint8),
+                                       requires_grad=False)
+        layer.register_parameter("w2_scales", w2_scales)
+        set_weight_attrs(w2_scales, extra_weight_attrs)
+
+        w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                 self.hidden_size_pad,
+                                                 dtype=params_dtype),
+                                     requires_grad=False)
+        layer.register_parameter("w2_bias", w2_bias)
+        set_weight_attrs(w2_bias, extra_weight_attrs)
+
+        if self.quant_config.has_zp:
+            w13_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                2 * intermediate_size_per_partition // 8,
+                self.hidden_size_pad // group_size,
+                dtype=torch.int32),
+                                            requires_grad=False)
+            layer.register_parameter("w13_qzeros", w13_qzeros)
+            set_weight_attrs(w13_qzeros, extra_weight_attrs)
+
+            w2_qzeros = torch.nn.Parameter(torch.zeros(
+                num_experts,
+                self.hidden_size_pad // 8,
+                intermediate_size_per_partition // group_size,
+                dtype=torch.int32),
+                                           requires_grad=False)
+            layer.register_parameter("w2_qzeros", w2_qzeros)
+            set_weight_attrs(w2_qzeros, extra_weight_attrs)
+
+        if True:  # self.quant_config.quant_method == "gptq":
+            # some param are unused, but we need to init them in order to
+            # load weights
+            invalid_param_keys = ["w13_g_idx", "w2_g_idx"]
+            if not self.quant_config.has_zp:
+                invalid_param_keys += ["w13_qzeros", "w2_qzeros"]
+            for key in invalid_param_keys:
+                param = torch.nn.Parameter(torch.empty((0, ),
+                                                       dtype=torch.int32),
+                                           requires_grad=False)
+                layer.register_parameter(key, param)
+                set_weight_attrs(param, extra_weight_attrs)
+
+    def topk(self, router_logits, top_k: int):
+        router_top_value, router_indices = torch.topk(
+            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
+
+        router_top_value = torch.nn.functional.softmax(
+            router_top_value, dim=-1, dtype=router_top_value.dtype)
+
+        router_scores = torch.zeros_like(router_logits).scatter_(
+            dim=1, index=router_indices, src=router_top_value)
+
+        return router_scores, router_indices
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        import intel_extension_for_pytorch as ipex
+        layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
+            layer.w13_qweight.view(torch.int32),
+            layer.w2_qweight.view(torch.int32),
+            w1_scale_inv=layer.w13_scales,
+            w2_scale_inv=layer.w2_scales,
+            w13_bias=layer.w13_bias,
+            w2_bias=layer.w2_bias,
+            is_mxfp4=True,
+        )
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        # hidden size is always 2880, let's pad to 3072
+        # hidden_size_pad = round_up(self.hidden_size, 256)
+        # x_pad = torch.nn.functional.pad(
+        #     x, (0, hidden_size_pad - self.hidden_size))
+        hidden_states = layer.ipex_fusion(x,
+                                          use_grouped_topk,
+                                          top_k,
+                                          router_logits,
+                                          renormalize,
+                                          topk_group,
+                                          num_expert_group,
+                                          activation="swiglu_oai")
+        # hidden_states = hidden_states[..., :self.hidden_size].contiguous()
+        # convert back to bf16 ,maybe can keep all reuce acc
+        hidden_states = hidden_states.to(torch.bfloat16)
+        return hidden_states
+
+    @staticmethod
+    def get_weight_loader(layer, weight_loader):
+
+        def convert_gptq_int4_qzeros(tensor):
+            tensor = tensor.view(torch.uint8)
+            shifter = torch.tensor([0, 4],
+                                   dtype=torch.uint8,
+                                   device=tensor.device)
+            tensor = (tensor[:, :, None] >> shifter) & 0xF
+            tensor = tensor + 1
+            tensor = tensor[:, :, 0] + tensor[:, :, 1] * 16
+            return tensor
+
+        def moe_wna16_weight_loader(param: torch.nn.Parameter,
+                                    loaded_weight: torch.Tensor,
+                                    weight_name: str, shard_id: str,
+                                    expert_id: int):
+            if "g_idx" in weight_name:
+                return
+            if not layer.quant_config.has_zp and "qzeros" in weight_name:
+                return
+
+            device = get_tp_group().device
+            tp_rank = get_tensor_model_parallel_rank()
+            loaded_weight = loaded_weight.to(device)
+            shard_size = layer.intermediate_size_per_partition
+
+            # convert gptq and awq weight to a standard format
+            if layer.quant_config.linear_quant_method == "gptq":
+                assert layer.quant_config.weight_bits in [4, 8]
+                if "weight" in weight_name:
+                    loaded_weight = loaded_weight.T.contiguous().view(
+                        torch.uint8)
+                elif "zeros" in weight_name:
+                    # add 1 to gptq qzeros to align with awq
+                    loaded_weight = loaded_weight.view(torch.uint8)
+                    if layer.quant_config.weight_bits == 4:
+                        loaded_weight = convert_gptq_int4_qzeros(
+                            loaded_weight).T
+                    else:
+                        loaded_weight = loaded_weight.T + 1
+                else:
+                    loaded_weight = loaded_weight.T
+
+            # repeat the qzeros/scales to fit new group size
+            if layer.group_size_div_factor > 1 and \
+                    "qzeros" in weight_name or "scales" in weight_name:
+                loaded_weight = loaded_weight.repeat_interleave(
+                    layer.group_size_div_factor, 1)
+
+            if "w13_qzeros" in weight_name:
+                tensor = loaded_weight.view(layer.tp_size, -1,
+                                            loaded_weight.size(1))[tp_rank]
+                if shard_id == "w1":
+                    param.data[expert_id, :shard_size // 2] = tensor
+                else:
+                    param.data[expert_id, shard_size // 2:] = tensor
+            elif "w2_qzeros" in weight_name:
+                param.data[expert_id] = loaded_weight.view(
+                    loaded_weight.size(0), layer.tp_size, -1)[:, tp_rank]
+            else:
+                weight_loader(param, loaded_weight, weight_name, shard_id,
+                              expert_id)
+
+        return moe_wna16_weight_loader
 
 
 class Mxfp4MoEMethod(FusedMoEMethodBase):

@@ -131,7 +131,7 @@ class IPEXConfig(QuantizationConfig):
                 return IPEXAWQLinearMethod(self)
             if self.method == "gptq" or self.method == "auto-round":
                 return IPEXGPTQLinearMethod(self)
-        if isinstance(layer, FusedMoE) and self.method == "auto-round":
+        if isinstance(layer, FusedMoE):
             return IPEXAutoRoundFusedMoEMethod(self)
         return None
 
