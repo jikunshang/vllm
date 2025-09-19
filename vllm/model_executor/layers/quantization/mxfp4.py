@@ -96,23 +96,23 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         layer.group_size_div_factor = group_size_div_factor
  
 
-        w13_qweight = torch.nn.Parameter(torch.zeros(
+        w13_weight = torch.nn.Parameter(torch.zeros(
             num_experts,
             2 * intermediate_size_per_partition,
             self.hidden_size_pad // 2,
             dtype=torch.uint8),
                                          requires_grad=False)
-        layer.register_parameter("w13_qweight", w13_qweight)
-        set_weight_attrs(w13_qweight, extra_weight_attrs)
+        layer.register_parameter("w13_weight", w13_weight)
+        set_weight_attrs(w13_weight, extra_weight_attrs)
 
-        w13_scales = torch.nn.Parameter(torch.zeros(
+        w13_weight_scale = torch.nn.Parameter(torch.zeros(
             num_experts,
             2 * intermediate_size_per_partition,
             self.hidden_size_pad // group_size,
             dtype=torch.uint8),
                                         requires_grad=False)
-        layer.register_parameter("w13_scales", w13_scales)
-        set_weight_attrs(w13_scales, extra_weight_attrs)
+        layer.register_parameter("w13_weight_scale", w13_weight_scale)
+        set_weight_attrs(w13_weight_scale, extra_weight_attrs)
 
         w13_bias = torch.nn.Parameter(torch.zeros(
             num_experts,
@@ -123,23 +123,23 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         set_weight_attrs(w13_bias, extra_weight_attrs)
 
         # down_proj (row parallel)
-        w2_qweight = torch.nn.Parameter(torch.zeros(
+        w2_weight = torch.nn.Parameter(torch.zeros(
             num_experts,
             self.hidden_size_pad,
             intermediate_size_per_partition // 2,
             dtype=torch.uint8),
                                         requires_grad=False)
-        layer.register_parameter("w2_qweight", w2_qweight)
-        set_weight_attrs(w2_qweight, extra_weight_attrs)
+        layer.register_parameter("w2_weight", w2_weight)
+        set_weight_attrs(w2_weight, extra_weight_attrs)
 
-        w2_scales = torch.nn.Parameter(torch.zeros(
+        w2_weight_scale = torch.nn.Parameter(torch.zeros(
             num_experts,
             self.hidden_size_pad,
             intermediate_size_per_partition // group_size,
             dtype=torch.uint8),
                                        requires_grad=False)
-        layer.register_parameter("w2_scales", w2_scales)
-        set_weight_attrs(w2_scales, extra_weight_attrs)
+        layer.register_parameter("w2_weight_scale", w2_weight_scale)
+        set_weight_attrs(w2_weight_scale, extra_weight_attrs)
 
         w2_bias = torch.nn.Parameter(torch.zeros(num_experts,
                                                  self.hidden_size_pad,
@@ -164,10 +164,10 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         import intel_extension_for_pytorch as ipex
         layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-            layer.w13_qweight.view(torch.int32),
-            layer.w2_qweight.view(torch.int32),
-            w1_scale_inv=layer.w13_scales,
-            w2_scale_inv=layer.w2_scales,
+            layer.w13_weight.view(torch.int32),
+            layer.w2_weight.view(torch.int32),
+            w1_scale_inv=layer.w13_weight_scale,
+            w2_scale_inv=layer.w2_weight_scale,
             w13_bias=layer.w13_bias,
             w2_bias=layer.w2_bias,
             is_mxfp4=True,
