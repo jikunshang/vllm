@@ -95,6 +95,9 @@ def get_mxfp4_backend():
         else:
             logger.info_once("Using Triton backend")
             return Mxfp4Backend.TRITON
+    elif current_platform.is_xpu():
+        logger.info_once("Using ipex marlin backend on XPU")
+        return Mxfp4Backend.MARLIN
     elif current_platform.is_rocm() and has_triton_kernels():
         logger.info_once("Using Triton backend")
         return Mxfp4Backend.TRITON
