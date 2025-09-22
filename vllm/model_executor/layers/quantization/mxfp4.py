@@ -162,9 +162,11 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         import intel_extension_for_pytorch as ipex
+        layer.w13_weight.data = layer.w13_weight.data.view(torch.int32)
+        layer.w2_weight.data = layer.w2_weight.data.view(torch.int32)
         layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-            layer.w13_weight.view(torch.int32),
-            layer.w2_weight.view(torch.int32),
+            layer.w13_weight,
+            layer.w2_weight,
             w1_scale_inv=layer.w13_weight_scale,
             w2_scale_inv=layer.w2_weight_scale,
             w13_bias=layer.w13_bias,
@@ -194,10 +196,6 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # hidden size is always 2880, let's pad to 3072
-        # hidden_size_pad = round_up(self.hidden_size, 256)
-        # x_pad = torch.nn.functional.pad(
-        #     x, (0, hidden_size_pad - self.hidden_size))
         hidden_states = layer.ipex_fusion(x,
                                           use_grouped_topk,
                                           top_k,
@@ -206,9 +204,6 @@ class IpexFp4MoeMethod(FusedMoEMethodBase):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
-        # hidden_states = hidden_states[..., :self.hidden_size].contiguous()
-        # convert back to bf16 ,maybe can keep all reuce acc
-        hidden_states = hidden_states.to(torch.bfloat16)
         return hidden_states
 
     @staticmethod
