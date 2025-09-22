@@ -142,10 +142,11 @@ class Mxfp4Config(QuantizationConfig):
                     fused_mapping=self.packed_modules_mapping):
                 return UnquantizedLinearMethod()
             raise NotImplementedError("Mxfp4 linear layer is not implemented")
-        elif current_platform.is_xpu():
-            return IpexFp4MoeMethod(layer.moe_config)
         elif isinstance(layer, FusedMoE):
-            return Mxfp4MoEMethod(layer.moe_config)
+            if current_platform.is_xpu():
+                return IpexFp4MoeMethod(layer.moe_config)
+            else:
+                return Mxfp4MoEMethod(layer.moe_config)
         elif isinstance(layer, Attention):
             raise NotImplementedError(
                 "Mxfp4 attention layer is not implemented")
@@ -963,18 +964,6 @@ class IpexFp4MoeMethod(Mxfp4MoEMethod):
         self.moe_config = moe_config
         self.alpha = 1.702
         self.limit = 7.0
-
-    def topk(self, router_logits, top_k: int):
-        router_top_value, router_indices = torch.topk(
-            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
-
-        router_top_value = torch.nn.functional.softmax(
-            router_top_value, dim=-1, dtype=router_top_value.dtype)
-
-        router_scores = torch.zeros_like(router_logits).scatter_(
-            dim=1, index=router_indices, src=router_top_value)
-
-        return router_scores, router_indices
 
     def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
         import intel_extension_for_pytorch as ipex
