@@ -77,73 +77,6 @@ class Mxfp4Config(QuantizationConfig):
         return None
 
 
-class IpexFp4MoeMethod(Mxfp4MoEMethod):
-
-    def __init__(self, moe_config: FusedMoEConfig):
-        self.moe_config = moe_config
-        self.alpha = 1.702
-        self.limit = 7.0
-
-    def topk(self, router_logits, top_k: int):
-        router_top_value, router_indices = torch.topk(
-            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
-
-        router_top_value = torch.nn.functional.softmax(
-            router_top_value, dim=-1, dtype=router_top_value.dtype)
-
-        router_scores = torch.zeros_like(router_logits).scatter_(
-            dim=1, index=router_indices, src=router_top_value)
-
-        return router_scores, router_indices
-
-    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
-        import intel_extension_for_pytorch as ipex
-        layer.w13_weight.data = layer.w13_weight.data.view(torch.int32)
-        layer.w2_weight.data = layer.w2_weight.data.view(torch.int32)
-        layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-            layer.w13_weight,
-            layer.w2_weight,
-            w1_scale_inv=layer.w13_weight_scale,
-            w2_scale_inv=layer.w2_weight_scale,
-            w13_bias=layer.w13_bias,
-            w2_bias=layer.w2_bias,
-            is_mxfp4=True,
-        )
-
-    def apply(
-        self,
-        layer: torch.nn.Module,
-        x: torch.Tensor,
-        router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: Optional[int] = None,
-        num_expert_group: Optional[int] = None,
-        global_num_experts: int = -1,
-        expert_map: Optional[torch.Tensor] = None,
-        custom_routing_function: Optional[Callable] = None,
-        scoring_func: str = "softmax",
-        e_score_correction_bias: Optional[torch.Tensor] = None,
-        apply_router_weight_on_input: bool = False,
-        activation: str = "silu",
-        enable_eplb: bool = False,
-        expert_load_view: Optional[torch.Tensor] = None,
-        logical_to_physical_map: Optional[torch.Tensor] = None,
-        logical_replica_count: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
-        hidden_states = layer.ipex_fusion(x,
-                                          use_grouped_topk,
-                                          top_k,
-                                          router_logits,
-                                          renormalize,
-                                          topk_group,
-                                          num_expert_group,
-                                          activation="swiglu_oai")
-        return hidden_states
-
-
-
 class Mxfp4MoEMethod(FusedMoEMethodBase):
 
     def __init__(self, moe: FusedMoEConfig):
@@ -533,3 +466,69 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
                 w2_precision=self.w2_precision_config,
                 apply_router_weight_on_input=apply_router_weight_on_input,
             )
+
+class IpexFp4MoeMethod(Mxfp4MoEMethod):
+
+    def __init__(self, moe_config: FusedMoEConfig):
+        self.moe_config = moe_config
+        self.alpha = 1.702
+        self.limit = 7.0
+
+    def topk(self, router_logits, top_k: int):
+        router_top_value, router_indices = torch.topk(
+            router_logits, top_k, dim=-1)  # (num_tokens, top_k)
+
+        router_top_value = torch.nn.functional.softmax(
+            router_top_value, dim=-1, dtype=router_top_value.dtype)
+
+        router_scores = torch.zeros_like(router_logits).scatter_(
+            dim=1, index=router_indices, src=router_top_value)
+
+        return router_scores, router_indices
+
+    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
+        import intel_extension_for_pytorch as ipex
+        layer.w13_weight.data = layer.w13_weight.data.view(torch.int32)
+        layer.w2_weight.data = layer.w2_weight.data.view(torch.int32)
+        layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
+            layer.w13_weight,
+            layer.w2_weight,
+            w1_scale_inv=layer.w13_weight_scale,
+            w2_scale_inv=layer.w2_weight_scale,
+            w13_bias=layer.w13_bias,
+            w2_bias=layer.w2_bias,
+            is_mxfp4=True,
+        )
+
+    def apply(
+        self,
+        layer: torch.nn.Module,
+        x: torch.Tensor,
+        router_logits: torch.Tensor,
+        top_k: int,
+        renormalize: bool,
+        use_grouped_topk: bool = False,
+        topk_group: Optional[int] = None,
+        num_expert_group: Optional[int] = None,
+        global_num_experts: int = -1,
+        expert_map: Optional[torch.Tensor] = None,
+        custom_routing_function: Optional[Callable] = None,
+        scoring_func: str = "softmax",
+        e_score_correction_bias: Optional[torch.Tensor] = None,
+        apply_router_weight_on_input: bool = False,
+        activation: str = "silu",
+        enable_eplb: bool = False,
+        expert_load_view: Optional[torch.Tensor] = None,
+        logical_to_physical_map: Optional[torch.Tensor] = None,
+        logical_replica_count: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        hidden_states = layer.ipex_fusion(x,
+                                          use_grouped_topk,
+                                          top_k,
+                                          router_logits,
+                                          renormalize,
+                                          topk_group,
+                                          num_expert_group,
+                                          activation="swiglu_oai")
+        return hidden_states
+
