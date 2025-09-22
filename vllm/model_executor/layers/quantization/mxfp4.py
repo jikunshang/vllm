@@ -959,6 +959,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
 class IpexFp4MoeMethod(Mxfp4MoEMethod):
 
     def __init__(self, moe_config: FusedMoEConfig):
+        super().__init__(moe_config)
         self.moe_config = moe_config
         self.alpha = 1.702
         self.limit = 7.0
