@@ -199,7 +199,10 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
             #    k = intermediate_size_per_partition_after_pad
             intermediate_size_per_partition_after_pad = round_up(
                 intermediate_size_per_partition, 128)
-            hidden_size = round_up(hidden_size, 256)
+            if current_platform.is_xpu(): 
+                hidden_size = round_up(hidden_size, 128) 
+            else:
+                hidden_size = round_up(hidden_size, 256) 
 
             layer.params_dtype = params_dtype
             layer.num_experts = num_experts
@@ -214,7 +217,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
             intermediate_size_per_partition_after_pad = round_up(
                 intermediate_size_per_partition, 256)
             hidden_size = round_up(hidden_size, 256)
-        elif current_platform.is_rocm() or current_platform.is_xpu() or (
+        elif current_platform.is_rocm() or (
                 self.mxfp4_backend == Mxfp4Backend.SM100_FI_MXFP4_MXFP8_CUTLASS
                 or self.mxfp4_backend == Mxfp4Backend.SM90_FI_MXFP4_BF16):
             intermediate_size_per_partition_after_pad = round_up(
@@ -1014,5 +1017,5 @@ class IpexFp4MoeMethod(Mxfp4MoEMethod):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
-        hidden_states = hidden_states[..., :original_hidden_size].contiguous()
+        hidden_states = hidden_states[..., :self.original_hidden_size].contiguous()
         return hidden_states
