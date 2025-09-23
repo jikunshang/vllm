@@ -171,6 +171,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
     def create_weights(self, layer: torch.nn.Module, num_experts: int,
                        hidden_size: int, intermediate_size_per_partition: int,
                        params_dtype: torch.dtype, **extra_weight_attrs):
+        self.original_hidden_size = hidden_size
         self.num_experts = num_experts
         weight_dtype = torch.uint8
         scale_dtype = torch.uint8
@@ -213,7 +214,7 @@ class Mxfp4MoEMethod(FusedMoEMethodBase):
             intermediate_size_per_partition_after_pad = round_up(
                 intermediate_size_per_partition, 256)
             hidden_size = round_up(hidden_size, 256)
-        elif current_platform.is_rocm() or (
+        elif current_platform.is_rocm() or current_platform.is_xpu() or (
                 self.mxfp4_backend == Mxfp4Backend.SM100_FI_MXFP4_MXFP8_CUTLASS
                 or self.mxfp4_backend == Mxfp4Backend.SM90_FI_MXFP4_BF16):
             intermediate_size_per_partition_after_pad = round_up(
@@ -1002,7 +1003,10 @@ class IpexFp4MoeMethod(Mxfp4MoEMethod):
         logical_to_physical_map: Optional[torch.Tensor] = None,
         logical_replica_count: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        hidden_states = layer.ipex_fusion(x,
+        hidden_size_pad = round_up(self.original_hidden_size, 128)
+        x_pad = torch.nn.functional.pad(
+            x, (0, hidden_size_pad - x.size(-1)))
+        hidden_states = layer.ipex_fusion(x_pad,
                                           use_grouped_topk,
                                           top_k,
                                           router_logits,
@@ -1010,4 +1014,5 @@ class IpexFp4MoeMethod(Mxfp4MoEMethod):
                                           topk_group,
                                           num_expert_group,
                                           activation="swiglu_oai")
+        hidden_states = hidden_states[..., :original_hidden_size].contiguous()
         return hidden_states
