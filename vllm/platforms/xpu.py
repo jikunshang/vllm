@@ -12,6 +12,9 @@ from vllm.utils import DEFAULT_MAX_NUM_BATCHED_TOKENS
 
 from .interface import DeviceCapability, Platform, PlatformEnum, _Backend
 
+import vllm_xpu_kernels._C
+
+
 if TYPE_CHECKING:
     from vllm.config import ModelConfig, VllmConfig
 else:
