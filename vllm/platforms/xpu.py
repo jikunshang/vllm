@@ -250,3 +250,7 @@ class XPUPlatform(Platform):
         """Copy blocks from XPU to host (CPU)."""
         _src_cache = src_cache[:, src_block_indices]
         dst_cache[:, dst_block_indices] = _src_cache.cpu()
+
+    @classmethod
+    def support_hybrid_kv_cache(cls) -> bool:
+        return True
