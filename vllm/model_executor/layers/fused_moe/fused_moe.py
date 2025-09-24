@@ -47,6 +47,11 @@ from .rocm_aiter_fused_moe import is_rocm_aiter_moe_enabled
 logger = init_logger(__name__)
 
 
+def torch_moe_sum(input: torch.Tensor) -> torch.Tensor:
+    output = input.sum(dim=1)
+    return output
+
+
 @triton.jit
 def write_zeros_to_output(c_ptr, stride_cm, stride_cn, pid_n, N, offs_token,
                           token_mask, BLOCK_SIZE_M, BLOCK_SIZE_N,
@@ -884,12 +889,17 @@ def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
                       token_expert_indices: torch.Tensor,
                       gating_output: torch.Tensor,
                       renormalize: bool) -> tuple[torch.Tensor, ...]:
-    ops.topk_softmax(
-        topk_weights,
-        topk_indices,
-        token_expert_indices,
-        gating_output,
-    )
+    if current_platform.is_xpu():
+        score = torch.softmax(gating_output, dim=-1, dtype=torch.float32)
+        topk_weights, topk_indices = torch.topk(score,
+                                                token_expert_indices.size(1))
+    else:   
+        ops.topk_softmax(
+            topk_weights,
+            topk_indices,
+            token_expert_indices,
+            gating_output,
+        )
     if renormalize:
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
@@ -1135,6 +1145,7 @@ direct_register_custom_op(
     fake_impl=inplace_fused_experts_fake,
     tags=(() if is_torch_equal_or_newer("2.7.0") else
           (torch.Tag.needs_fixed_stride_order, )),
+    dispatch_key="XPU",
 )
 
 
@@ -1377,6 +1388,7 @@ direct_register_custom_op(
     fake_impl=outplace_fused_experts_fake,
     tags=(() if is_torch_equal_or_newer("2.7.0") else
           (torch.Tag.needs_fixed_stride_order, )),
+    dispatch_key="XPU",
 )
 
 
@@ -1714,8 +1726,11 @@ def fused_experts_impl(
                                 per_channel_quant=per_channel_quant,
                                 block_shape=block_shape,
                                 B_bias=w2_bias)
-
-        ops.moe_sum(intermediate_cache3.view(*intermediate_cache3.size()),
+        if current_platform.is_xpu():
+            out_hidden_states[begin_chunk_idx:end_chunk_idx] = \
+            torch_moe_sum(intermediate_cache3.view(*intermediate_cache3.size()))
+        else:
+            ops.moe_sum(intermediate_cache3.view(*intermediate_cache3.size()),
                     out_hidden_states[begin_chunk_idx:end_chunk_idx])
 
     return out_hidden_states
@@ -2054,8 +2069,10 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
             block_shape=self.block_shape,
             B_bias=None  # TODO support B_bias
         )
-
-        ops.moe_sum(intermediate_cache3, output)
+        if current_platform.is_xpu():
+            output = torch_moe_sum(intermediate_cache3)
+        else:
+            ops.moe_sum(intermediate_cache3, output)
 
 
 def modular_triton_fused_moe(

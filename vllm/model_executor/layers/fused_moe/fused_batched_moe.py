@@ -728,8 +728,7 @@ class NaiveBatchedExperts(mk.FusedMoEPermuteExpertsUnpermute):
 
         for expert in range(num_local_experts):
             # Indexing expert_num_tokens doesn't work w/cudagraphs or inductor
-            if (torch.compiler.is_compiling()
-                    or torch.cuda.is_current_stream_capturing()):
+            if False:
                 num = hidden_states.shape[1]
             else:
                 num = int(expert_num_tokens[expert].item())
@@ -771,8 +770,7 @@ def batched_moe_kernel_quantize_input(
     per_act_token_quant: bool,
     block_shape: Optional[list[int]] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
-    if (torch.compiler.is_compiling()
-            or torch.cuda.is_current_stream_capturing()):
+    if False:
         # Note: this does a bunch of extra work because expert_num_tokens is
         # ignored but it does support torch.compile + cudagraphs.
         hidden_dim = A.size(-1)
