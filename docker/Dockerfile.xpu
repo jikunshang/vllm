@@ -28,7 +28,7 @@ RUN apt clean && apt-get update -y && \
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
 
-RUN apt install -y libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing 
+RUN apt install -y libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing intel-ocloc
 
 WORKDIR /workspace/vllm
 COPY requirements/xpu.txt /workspace/vllm/requirements/xpu.txt
