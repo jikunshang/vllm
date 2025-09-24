@@ -97,7 +97,7 @@ def input_guard(
                     break
 
         if tensor is not None:
-            ctx = torch.cuda.device(tensor.device.index)
+            ctx = torch.xpu.device(tensor.device.index)
         else:
             ctx = contextlib.nullcontext()
 
