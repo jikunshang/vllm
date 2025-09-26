@@ -165,8 +165,8 @@ class Fp8Config(QuantizationConfig):
                          prefix: str) -> Optional["QuantizeMethodBase"]:
         from vllm.attention.layer import Attention  # Avoid circular import
 
-        if current_platform.is_xpu():
-            return self.get_xpu_quant_method(layer, prefix)
+        # if current_platform.is_xpu():
+        #     return self.get_xpu_quant_method(layer, prefix)
         if isinstance(layer, LinearBase):
             if is_layer_skipped(prefix=prefix,
                                 ignored_layers=self.ignored_layers,
@@ -228,7 +228,7 @@ class Fp8LinearMethod(LinearMethodBase):
         self.use_marlin = (not current_platform.has_device_capability(89)
                            or envs.VLLM_TEST_FORCE_FP8_MARLIN)
         # Disable marlin for rocm
-        if current_platform.is_rocm():
+        if current_platform.is_rocm() or current_platform.is_xpu():
             self.use_marlin = False
 
         # AITER is only supported on ROCm and only for FP8_FNUZ
@@ -545,7 +545,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         self.use_marlin = (not current_platform.has_device_capability(89)
                            or envs.VLLM_TEST_FORCE_FP8_MARLIN)
         # Disable marlin for rocm
-        if current_platform.is_rocm():
+        if current_platform.is_rocm() or current_platform.is_xpu():
             self.use_marlin = False
 
         # Check for DeepGemm support.
