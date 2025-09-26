@@ -1004,6 +1004,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             logits_indices = spec_decode_metadata.logits_indices
             self.num_draft_tokens.np[:num_reqs] = num_draft_tokens
             self.num_draft_tokens.np[num_reqs:].fill(0)
+            if self.num_draft_tokens.gpu is None:
+                self.num_draft_tokens.gpu = self.num_draft_tokens.cpu.to(self.device)
             self.num_draft_tokens.copy_to_gpu()
 
         logits_indices_padded = None
@@ -1023,6 +1025,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             self.num_accepted_tokens.np[:num_reqs] = (
                 self.input_batch.num_accepted_tokens_cpu[:num_reqs])
             self.num_accepted_tokens.np[num_reqs:].fill(1)
+            if self.num_accepted_tokens.gpu is None:
+                self.num_accepted_tokens.gpu = self.num_accepted_tokens.cpu.to(self.device)
             self.num_accepted_tokens.copy_to_gpu()
 
         # Prepare the attention metadata for each KV cache group and make layers
