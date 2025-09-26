@@ -72,6 +72,7 @@ else:
     fused_experts = None  # type: ignore
     FusedMoEPermuteExpertsUnpermute = None  # type: ignore
     FusedMoEPrepareAndFinalize = None  # type: ignore
+    from vllm_xpu_kernels.fused_moe_interface import cutlass_fused_moe
 
     def _eplb_map_to_physical_and_record(
         topk_ids: torch.Tensor,
@@ -484,15 +485,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             w13_weight_swapped = torch.cat([w3_w, w1_w], dim=1)
             layer.w13_weight.data = w13_weight_swapped.contiguous()
 
-        if current_platform.is_xpu():
-            import intel_extension_for_pytorch as ipex
-
-            layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-                layer.w13_weight,
-                layer.w2_weight,
-                use_prepack=True,
-            )
-        elif current_platform.is_cpu():
+        if current_platform.is_cpu():
             from vllm.model_executor.layers.fused_moe import cpu_fused_moe
 
             if current_platform.get_cpu_architecture() == CpuArchEnum.X86:
@@ -776,15 +769,40 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             or logical_replica_count is not None
         ):
             raise NotImplementedError("Expert load balancing is not supported for XPU.")
-        assert custom_routing_function is None
-        return layer.ipex_fusion(
-            x,
-            use_grouped_topk,
-            top_k,
-            router_logits,
-            renormalize,
-            topk_group,
-            num_expert_group,
+        M, _ = x.size()
+        routing_weights = torch.empty(M, top_k, dtype=torch.float32, device=x.device)
+        selected_experts = torch.empty(M, top_k, dtype=torch.int32, device=x.device)
+        token_expert_indices = torch.empty(M, top_k, dtype=torch.int32, device=x.device)
+        if not use_grouped_topk:
+            torch.ops._moe_C.topk_softmax(
+                routing_weights,
+                selected_experts,
+                token_expert_indices,
+                router_logits,
+                False,
+            )
+        elif use_grouped_topk:
+            routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
+                x,
+                router_logits,
+                top_k,
+                False,  # renormalize will be handled in moe_gather
+                n_expert_group=num_expert_group,
+                n_topk_group=topk_group,
+                scoring_func=scoring_func,
+                routed_scaling_factor=routed_scaling_factor,
+                bias=e_score_correction_bias,
+            )
+
+        return cutlass_fused_moe(
+            hidden_states=x,
+            w13=layer.w13_weight,
+            w2=layer.w2_weight,
+            topk_weights=routing_weights.view(-1, 1),
+            topk_ids=selected_experts.view(-1),
+            n_experts_per_token=top_k,
+            activation=activation,
+            num_experts=global_num_experts,
         )
 
     def forward_tpu(
