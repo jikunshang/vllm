@@ -9,6 +9,7 @@ from torch.nn import Module
 from torch.nn.parameter import Parameter
 
 from vllm._ipex_ops import ipex_ops as ops
+import vllm.envs as envs
 from vllm.model_executor.layers.fused_moe import (FusedMoEMethodBase,
                                                   FusedMoeWeightScaleSupported)
 from vllm.model_executor.layers.linear import (LinearBase, LinearMethodBase,
@@ -313,7 +314,8 @@ class XPUFp8MoEMethod(FusedMoEMethodBase):
             num_experts,
             2 * intermediate_size_per_partition,
             hidden_size,
-            dtype=params_dtype),
+            dtype=params_dtype,
+            device="cpu" if envs.VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT else None),
                                         requires_grad=False)
         layer.register_parameter("w13_weight", w13_weight)
         set_weight_attrs(w13_weight, extra_weight_attrs)
@@ -322,7 +324,8 @@ class XPUFp8MoEMethod(FusedMoEMethodBase):
             num_experts,
             hidden_size,
             intermediate_size_per_partition,
-            dtype=params_dtype),
+            dtype=params_dtype,
+            device="cpu" if envs.VLLM_OFFLOAD_WEIGHTS_BEFORE_QUANT else None),
                                        requires_grad=False)
         layer.register_parameter("w2_weight", w2_weight)
         set_weight_attrs(w2_weight, extra_weight_attrs)
