@@ -26,7 +26,7 @@ from vllm.model_executor.layers.fused_moe.cutlass_moe import (
 from vllm.model_executor.layers.fused_moe.deep_gemm_moe import (
     _valid_deep_gemm, deep_gemm_moe_fp8)
 from vllm.model_executor.layers.fused_moe.moe_align_block_size import (
-    moe_align_block_size)
+    moe_align_block_size, moe_align_block_size_triton)
 from vllm.model_executor.layers.fused_moe.prepare_finalize import (
     MoEPrepareAndFinalizeNoEP)
 from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
@@ -889,17 +889,12 @@ def vllm_topk_softmax(topk_weights: torch.Tensor, topk_indices: torch.Tensor,
                       token_expert_indices: torch.Tensor,
                       gating_output: torch.Tensor,
                       renormalize: bool) -> tuple[torch.Tensor, ...]:
-    if current_platform.is_xpu():
-        score = torch.softmax(gating_output, dim=-1, dtype=torch.float32)
-        topk_weights, topk_indices = torch.topk(score,
-                                                token_expert_indices.size(1))
-    else:   
-        ops.topk_softmax(
-            topk_weights,
-            topk_indices,
-            token_expert_indices,
-            gating_output,
-        )
+    ops.topk_softmax(
+        topk_weights,
+        topk_indices,
+        token_expert_indices,
+        gating_output,
+    )
     if renormalize:
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
