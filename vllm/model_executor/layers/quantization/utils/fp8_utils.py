@@ -210,6 +210,7 @@ if not current_platform.is_cpu():
         op_func=apply_w8a8_block_fp8_linear,
         mutates_args=[],
         fake_impl=apply_w8a8_block_fp8_linear_fake,
+        dispatch_key="XPU",
     )
 
 
