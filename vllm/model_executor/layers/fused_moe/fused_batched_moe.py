@@ -21,8 +21,8 @@ from vllm.triton_utils import tl, triton
 
 @triton.jit
 def moe_mmk(
-    a_ptrs,
-    b_ptrs,
+    a_desc,
+    b_desc,
     K,
     expert_id,
     a_scale_ptr,
@@ -31,9 +31,6 @@ def moe_mmk(
     # moving by 1 element in a particular dimension. E.g. `stride_am` is
     # how much to increase `a_ptr` by to get the element one row down
     # (A has M rows).
-    stride_ak: tl.int64,
-    stride_bk: tl.int64,
-    stride_ase: tl.int64,
     stride_asm: tl.int64,
     stride_ask: tl.int64,
     stride_bse: tl.int64,
@@ -47,6 +44,8 @@ def moe_mmk(
     # Block size for block-wise quantization
     group_n: tl.constexpr,
     group_k: tl.constexpr,
+    pid_m,
+    pid_n,
     # Meta-parameters
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
@@ -56,8 +55,6 @@ def moe_mmk(
     use_w8a16: tl.constexpr,
     per_act_token_quant: tl.constexpr,
 ):
-
-    offs_k = tl.arange(0, BLOCK_K)
 
     if use_w8a16:
         b_scale_ptrs = b_scale_ptr + expert_id * stride_bse + offs_n[
@@ -92,12 +89,10 @@ def moe_mmk(
     # `accumulator` will be converted back to fp16 after the loop.
     accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
     for k in range(0, tl.cdiv(K, BLOCK_K)):
-        # Load the next block of A and B, generate a mask by checking the
-        # K dimension.
-        a = tl.load(a_ptrs,
-                    mask=mask_m[:, None] & (offs_k[None, :] < K - k * BLOCK_K),
-                    other=0.0)
-        b = tl.load(b_ptrs, mask=offs_k[:, None] < K - k * BLOCK_K, other=0.0)
+        # Load the next block of A and B using tensor descriptors
+        a = a_desc.load([pid_m * BLOCK_M, k * BLOCK_K])
+        b = b_desc.load([k * BLOCK_K, pid_n * BLOCK_N])
+        
         # We accumulate along the K dimension.
         if use_w8a16:
             accumulator = tl.dot(a, b.to(compute_type), acc=accumulator)
@@ -118,10 +113,6 @@ def moe_mmk(
         else:
             accumulator += tl.dot(a, b)
 
-        # Advance the ptrs to the next K block.
-        a_ptrs += BLOCK_K * stride_ak
-        b_ptrs += BLOCK_K * stride_bk
-
     if use_w8a16:
         accumulator = (accumulator * b_scale).to(compute_type)
     elif use_w8a8:
@@ -137,9 +128,9 @@ def moe_mmk(
 
 @triton.jit
 def expert_triton_kernel(
-    a_ptr,  #[max_tokens, K]
-    b_ptr,  #[K, N]
-    c_ptr,  #[max_tokens, N]
+    a_desc,  #[max_tokens, K]
+    b_desc,  #[K, N]
+    c_desc,  #[max_tokens, N]
     expert_id,
     compute_type: tl.constexpr,
     # Dimensions
@@ -149,14 +140,9 @@ def expert_triton_kernel(
     # Quantization data
     a_scale_ptr,
     b_scale_ptr,
-    b_zp_ptr,
     # strides
-    stride_am: tl.int64,
     stride_ak: tl.int64,
     stride_bk: tl.int64,
-    stride_bn: tl.int64,
-    stride_cm: tl.int64,
-    stride_cn: tl.int64,
     stride_ase: tl.int64,
     stride_asm: tl.int64,
     stride_ask: tl.int64,
@@ -168,6 +154,8 @@ def expert_triton_kernel(
     # Blockwise quantization data
     group_n,
     group_k,
+    pid_m,
+    pid_n,
     # Quantization schemes
     use_fp8_w8a8: tl.constexpr,
     use_int8_w8a16: tl.constexpr,
@@ -183,13 +171,9 @@ def expert_triton_kernel(
     offs_k = tl.arange(0, BLOCK_K)
     mask_m = offs_m < M
 
-    # Make grids of a + b pointers
-    a_ptrs = a_ptr + offs_m[:, None] * stride_am + offs_k[None, :] * stride_ak
-    b_ptrs = b_ptr + offs_k[:, None] * stride_bk + offs_n[None, :] * stride_bn
-
     accumulator = moe_mmk(
-        a_ptrs,
-        b_ptrs,
+        a_desc,
+        b_desc,
         K,
         expert_id,
         a_scale_ptr,
@@ -198,9 +182,6 @@ def expert_triton_kernel(
         # moving by 1 element in a particular dimension. E.g. `stride_am` is
         # how much to increase `a_ptr` by to get the element one row down
         # (A has M rows).
-        stride_ak,
-        stride_bk,
-        stride_ase,
         stride_asm,
         stride_ask,
         stride_bse,
@@ -214,6 +195,8 @@ def expert_triton_kernel(
         # Block size for block-wise quantization
         group_n,
         group_k,
+        pid_m,
+        pid_n,
         # Meta-parameters
         BLOCK_M,
         BLOCK_N,
@@ -224,10 +207,11 @@ def expert_triton_kernel(
         per_act_token_quant)
 
     # store in C
-    offs_cn = tl.arange(0, BLOCK_N)
-    c_ptrs = c_ptr + offs_m[:, None] * stride_cm + offs_cn[None, :] * stride_cn
-    c_mask = mask_m[:, None] & (offs_cn[None, :] < N)
-    tl.store(c_ptrs, accumulator, mask=c_mask)
+    # offs_cn = tl.arange(0, BLOCK_N)
+    # c_ptrs = c_ptr + offs_m[:, None] * stride_cm + offs_cn[None, :] * stride_cn
+    # c_mask = mask_m[:, None] & (offs_cn[None, :] < N)
+    c_desc.store([pid_m * BLOCK_M, pid_n * BLOCK_N], accumulator)
+    # tl.store(c_ptrs, accumulator, mask=c_mask)
 
 
 @triton.jit
@@ -239,8 +223,8 @@ def batched_triton_kernel(
     compute_type: tl.constexpr,
     # Dimensions
     max_num_tokens,
-    K,
-    N,
+    K: tl.constexpr,
+    N: tl.constexpr,
     # Quantization data
     a_scale_ptr,
     b_scale_ptr,
@@ -249,21 +233,21 @@ def batched_triton_kernel(
     # moving by 1 element in a particular dimension. E.g. `stride_am` is
     # how much to increase `a_ptr` by to get the element one row down
     # (A has M rows).
-    stride_ae: tl.int64,
-    stride_am: tl.int64,
-    stride_ak: tl.int64,
-    stride_be: tl.int64,
-    stride_bk: tl.int64,
-    stride_bn: tl.int64,
-    stride_ce: tl.int64,
-    stride_cm: tl.int64,
-    stride_cn: tl.int64,
-    stride_ase: tl.int64,
-    stride_asm: tl.int64,
-    stride_ask: tl.int64,
-    stride_bse: tl.int64,
-    stride_bsk: tl.int64,
-    stride_bsn: tl.int64,
+    stride_ae: tl.constexpr,
+    stride_am: tl.constexpr,
+    stride_ak: tl.constexpr,
+    stride_be: tl.constexpr,
+    stride_bk: tl.constexpr,
+    stride_bn: tl.constexpr,
+    stride_ce: tl.constexpr,
+    stride_cm: tl.constexpr,
+    stride_cn: tl.constexpr,
+    stride_ase: tl.constexpr,
+    stride_asm: tl.constexpr,
+    stride_ask: tl.constexpr,
+    stride_bse: tl.constexpr,
+    stride_bsk: tl.constexpr,
+    stride_bsn: tl.constexpr,
     # Blockwise quantization data
     group_n: tl.constexpr,
     group_k: tl.constexpr,
@@ -298,10 +282,21 @@ def batched_triton_kernel(
     cta_m_size = min(BLOCK_M, e_num_tokens - cta_m_start)
     cta_n_size = min(BLOCK_N, N - cta_n_start)
 
-    a_ptr = a_ptr + expert_id * stride_ae + cta_m_start * stride_am
-    b_ptr = b_ptr + expert_id * stride_be + cta_n_start * stride_bn
-    c_ptr = (c_ptr + expert_id * stride_ce + cta_m_start * stride_cm +
-             cta_n_start * stride_cn)
+    
+    # M = M
+    a_desc = tl.make_tensor_descriptor(base=a_ptr + expert_id * stride_ae, shape=(e_num_tokens, K), strides=(stride_am, stride_ak),
+                                       block_shape=(BLOCK_M, BLOCK_K))
+    # b_desc = tl.make_tensor_descriptor(base=b_ptr + expert_id * stride_be, shape=(N, K), strides=(stride_bn, stride_bk),
+    #                                    block_shape=(BLOCK_N, BLOCK_K))
+    b_desc = tl.make_tensor_descriptor(base=b_ptr + expert_id * stride_be, shape=(K, N), strides=(stride_bk, stride_bn),
+                                       block_shape=(BLOCK_K, BLOCK_N))
+    c_desc = tl.make_tensor_descriptor(base=c_ptr + expert_id * stride_ce, shape=(e_num_tokens, N), strides=(stride_cm, stride_cn),
+                                       block_shape=(BLOCK_M, BLOCK_N))
+
+    # a_ptr = a_ptr + expert_id * stride_ae + cta_m_start * stride_am
+    # b_ptr = b_ptr + expert_id * stride_be + cta_n_start * stride_bn
+    # c_ptr = (c_ptr + expert_id * stride_ce + cta_m_start * stride_cm +
+    #          cta_n_start * stride_cn)
 
     offs_bn = (pid_n * BLOCK_N + tl.arange(0, BLOCK_N).to(tl.int64)) % N
 
@@ -314,9 +309,9 @@ def batched_triton_kernel(
             a_scale_ptr = a_scale_ptr + cta_m_start * stride_asm
 
     expert_triton_kernel(
-        a_ptr,
-        b_ptr,
-        c_ptr,
+        a_desc,
+        b_desc,
+        c_desc,
         expert_id,
         compute_type,
         cta_m_size,  # M
@@ -324,14 +319,9 @@ def batched_triton_kernel(
         K,  # K
         a_scale_ptr,
         b_scale_ptr,
-        b_zp_ptr,
         # Strides
-        stride_am,
         stride_ak,
         stride_bk,
-        stride_bn,
-        stride_cm,
-        stride_cn,
         stride_ase,
         stride_asm,
         stride_ask,
@@ -343,6 +333,8 @@ def batched_triton_kernel(
         # Blockwise quantization data
         group_n,
         group_k,
+        pid_m,
+        pid_n,
         # Quantization schemes
         use_fp8_w8a8,
         use_int8_w8a16,
@@ -355,7 +347,7 @@ def batched_triton_kernel(
 
 def invoke_moe_batched_triton_kernel(
         A: torch.Tensor,  # [E, max_tokens, K]
-        B: torch.Tensor,  # [E, K, N]
+        B: torch.Tensor,  # [E, N, K]
         C: torch.Tensor,  # [E, max_tokens, N]
         expert_num_tokens: torch.Tensor,  # [E]
         compute_type: tl.dtype,
@@ -379,6 +371,10 @@ def invoke_moe_batched_triton_kernel(
     BLOCK_M = config['BLOCK_SIZE_M']
     BLOCK_N = config['BLOCK_SIZE_N']
     BLOCK_K = config['BLOCK_SIZE_K']
+    BLOCK_M = 256
+    BLOCK_N = 128
+    BLOCK_K = 32
+    num_warps = 64
 
     grid = (expert_num_tokens.size(0), triton.cdiv(max_num_tokens, BLOCK_M) *
             triton.cdiv(B.size(1), BLOCK_N))
@@ -459,7 +455,9 @@ def invoke_moe_batched_triton_kernel(
         # Kernel config
         BLOCK_M=BLOCK_M,
         BLOCK_N=BLOCK_N,
-        BLOCK_K=BLOCK_K)
+        BLOCK_K=BLOCK_K,
+        num_warps=num_warps,
+        )
 
 
 class BatchedPrepareAndFinalize(mk.FusedMoEPrepareAndFinalize):
@@ -728,6 +726,8 @@ class NaiveBatchedExperts(mk.FusedMoEPermuteExpertsUnpermute):
 
         for expert in range(num_local_experts):
             # Indexing expert_num_tokens doesn't work w/cudagraphs or inductor
+            # if (torch.compiler.is_compiling()
+            #         or torch.cuda.is_current_stream_capturing()):
             if False:
                 num = hidden_states.shape[1]
             else:
@@ -770,6 +770,8 @@ def batched_moe_kernel_quantize_input(
     per_act_token_quant: bool,
     block_shape: Optional[list[int]] = None,
 ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
+    # if (torch.compiler.is_compiling()
+    #         or torch.cuda.is_current_stream_capturing()):
     if False:
         # Note: this does a bunch of extra work because expert_num_tokens is
         # ignored but it does support torch.compile + cudagraphs.
