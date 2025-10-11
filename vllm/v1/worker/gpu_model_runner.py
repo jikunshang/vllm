@@ -117,6 +117,7 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
     ):
         self._model_runner_output = model_runner_output
         self._invalid_req_indices = invalid_req_indices
+        self.async_output_copy_stream = async_output_copy_stream
 
         # Event on the copy stream so we can synchronize the non-blocking copy.
         self._async_copy_ready_event = torch.cuda.Event()
@@ -138,7 +139,8 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
         
         This function blocks until the copy is finished.
         """
-        self._async_copy_ready_event.synchronize()
+        # self._async_copy_ready_event.synchronize()
+        self.async_output_copy_stream.synchronize()
 
         # Release the device tensor once the copy has completed
         del self._sampled_token_ids
