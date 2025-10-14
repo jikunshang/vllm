@@ -119,7 +119,7 @@ class TritonMLAImpl(MLACommonImpl[MLACommonMetadata]):
         self, q, k, v, return_softmax_lse=False, softmax_scale=None, **kwargs
     ):
         if (
-            current_platform.is_rocm()
+            (current_platform.is_rocm() or current_platform.is_xpu())
             and self.use_triton_flash_attn
             and not return_softmax_lse
         ):

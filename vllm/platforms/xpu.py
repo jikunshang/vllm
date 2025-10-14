@@ -76,6 +76,10 @@ class XPUPlatform(Platform):
             raise ValueError("XPU backend only supports V1.")
         TRITON_ATTN = "vllm.v1.attention.backends.triton_attn.TritonAttentionBackend"  # noqa: E501
         FLASH_ATTN = "vllm.v1.attention.backends.flash_attn.FlashAttentionBackend"  # noqa: E501
+        TRITON_ATTN_MLA = "vllm.v1.attention.backends.mla.triton_mla.TritonMLABackend"  # noqa: E501
+        if use_mla:
+            logger.info_once("Using Triton MLA backend on V1 engine.")
+            return TRITON_ATTN_MLA
         if selected_backend == _Backend.TRITON_ATTN:
             logger.info_once("Using Triton backend on V1 engine.")
             return TRITON_ATTN
@@ -225,7 +229,7 @@ class XPUPlatform(Platform):
 
     @classmethod
     def fp8_dtype(cls) -> torch.dtype:
-        return torch.float8_e5m2
+        return torch.float8_e4m3fn
 
     @classmethod
     def is_data_center_gpu(cls) -> bool:
