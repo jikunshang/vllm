@@ -138,7 +138,7 @@ def get_fp8_moe_backend(block_quant: bool) -> Fp8MoeBackend:
         not current_platform.has_device_capability(89)
         or envs.VLLM_TEST_FORCE_FP8_MARLIN
     )
-    if current_platform.is_rocm():
+    if current_platform.is_rocm() or current_platform.is_xpu():
         use_marlin = False
     if use_marlin:
         logger.info_once("Using Marlin backend for FP8 MoE")
@@ -276,8 +276,8 @@ class Fp8Config(QuantizationConfig):
     ) -> Optional["QuantizeMethodBase"]:
         from vllm.attention.layer import Attention  # Avoid circular import
 
-        if current_platform.is_xpu():
-            return self.get_xpu_quant_method(layer, prefix)
+        # if current_platform.is_xpu():
+        #     return self.get_xpu_quant_method(layer, prefix)
         if isinstance(layer, LinearBase):
             if is_layer_skipped(
                 prefix=prefix,
@@ -348,8 +348,8 @@ class Fp8LinearMethod(LinearMethodBase):
             not current_platform.has_device_capability(89)
             or envs.VLLM_TEST_FORCE_FP8_MARLIN
         )
-        # Disable marlin for rocm
-        if current_platform.is_rocm():
+        # Disable marlin for rocm and xpu
+        if current_platform.is_rocm() or current_platform.is_xpu():
             self.use_marlin = False
 
         self.use_aiter_and_is_supported = check_aiter_fp8_linear_support()
