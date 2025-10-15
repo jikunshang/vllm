@@ -9,37 +9,8 @@ from vllm.logger import init_logger
 
 logger = init_logger(__name__)
 
-try:
-    import intel_extension_for_pytorch as ipex
-except ImportError as e:
-    logger.debug("Import error msg: %s", e.msg)
-
 
 class ipex_ops:
-    @staticmethod
-    def reshape_and_cache_flash(
-        key: torch.Tensor,
-        value: torch.Tensor,
-        key_cache: torch.Tensor,
-        value_cache: torch.Tensor,
-        slot_mapping: torch.Tensor,
-        kv_cache_dtype: str,
-        k_scale: torch.Tensor | None = None,
-        v_scale: torch.Tensor | None = None,
-        k_scale_float: float = 1.0,
-        v_scale_float: float = 1.0,
-    ) -> None:
-        ipex.llm.modules.PagedAttention.reshape_and_cache_flash(
-            key,
-            value,
-            key_cache,
-            value_cache,
-            slot_mapping,
-            kv_cache_dtype,
-            k_scale_float,
-            v_scale_float,
-        )
-
     @staticmethod
     def flash_attn_varlen_func(
         q: torch.Tensor,
