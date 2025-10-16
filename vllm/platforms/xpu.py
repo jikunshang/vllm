@@ -149,6 +149,8 @@ class XPUPlatform(Platform):
         compilation_config = vllm_config.compilation_config
         if compilation_config.compile_sizes is None:
             compilation_config.compile_sizes = []
+        if compilation_config.max_capture_size is None:
+            compilation_config.max_capture_size = 8
 
         assert compilation_config.cudagraph_mode == CUDAGraphMode.NONE, (
             "CUDA graph mode should be NONE on XPU"
