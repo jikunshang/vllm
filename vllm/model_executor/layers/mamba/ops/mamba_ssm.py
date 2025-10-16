@@ -306,7 +306,7 @@ def selective_state_update(
         and dt.stride(-1) == 0
         and dt_bias.stride(-1) == 0
     )
-    with torch.cuda.device(x.device.index):
+    with torch.xpu.device(x.device.index):
         _selective_scan_update_kernel[grid](
             state,
             x,

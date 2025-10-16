@@ -315,8 +315,8 @@ class ipex_ops:
         return ipex.llm.modules.PagedAttention.flash_attn_varlen_func(
             out,
             q.contiguous(),
-            k,
-            v,
+            k.contiguous(),
+            v.contiguous(),
             cu_seqlens_q,
             cu_seqlens_k,
             max_seqlen_q,
