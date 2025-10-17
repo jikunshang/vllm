@@ -117,10 +117,9 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
     ):
         self._model_runner_output = model_runner_output
         self._invalid_req_indices = invalid_req_indices
-        self.async_output_copy_stream = async_output_copy_stream
 
         # Event on the copy stream so we can synchronize the non-blocking copy.
-        self._async_copy_ready_event = torch.cuda.Event()
+        self._async_copy_ready_event = torch.Event()
 
         # Keep a reference to the device tensor to avoid it being
         # deallocated until we finish copying it to the host.
@@ -139,8 +138,7 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
         
         This function blocks until the copy is finished.
         """
-        # self._async_copy_ready_event.synchronize()
-        self.async_output_copy_stream.synchronize()
+        self._async_copy_ready_event.synchronize()
 
         # Release the device tensor once the copy has completed
         del self._sampled_token_ids
@@ -351,9 +349,9 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
 
         # CUDA event to synchronize use of reused CPU tensors between steps
         # when async scheduling is enabled.
-        self.prepare_inputs_event: Optional[torch.cuda.Event] = None
+        self.prepare_inputs_event: Optional[torch.Event] = None
         if self.use_async_scheduling:
-            self.prepare_inputs_event = torch.cuda.Event()
+            self.prepare_inputs_event = torch.Event()
             # Start in a completed state.
             self.prepare_inputs_event.record(torch.cuda.default_stream())
 
@@ -411,7 +409,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         # Cached outputs.
         self._draft_token_ids: Optional[Union[list[list[int]],
                                               torch.Tensor]] = None
-        self.transfer_event = torch.cuda.Event()
+        self.transfer_event = torch.Event()
         self.sampled_token_ids_pinned_cpu = torch.empty(
             (self.max_model_len, 1),
             dtype=torch.int64,
@@ -1007,7 +1005,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
             self.num_draft_tokens.np[:num_reqs] = num_draft_tokens
             self.num_draft_tokens.np[num_reqs:].fill(0)
             if self.num_draft_tokens.gpu is None:
-                self.num_draft_tokens.gpu = self.num_draft_tokens.cpu.to(self.device)
+                self.num_draft_tokens.gpu = self.num_draft_tokens.cpu.to(
+                    self.device)
             self.num_draft_tokens.copy_to_gpu()
 
         logits_indices_padded = None
@@ -1028,7 +1027,8 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 self.input_batch.num_accepted_tokens_cpu[:num_reqs])
             self.num_accepted_tokens.np[num_reqs:].fill(1)
             if self.num_accepted_tokens.gpu is None:
-                self.num_accepted_tokens.gpu = self.num_accepted_tokens.cpu.to(self.device)
+                self.num_accepted_tokens.gpu = self.num_accepted_tokens.cpu.to(
+                    self.device)
             self.num_accepted_tokens.copy_to_gpu()
 
         # Prepare the attention metadata for each KV cache group and make layers
