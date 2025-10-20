@@ -81,7 +81,7 @@ def ssd_minimal_discrete(X, A, B, C, block_len, initial_states=None):
     return Y, final_state
 
 
-def generate_random_inputs(batch_size, seqlen, n_heads, d_head, itype, device="cuda"):
+def generate_random_inputs(batch_size, seqlen, n_heads, d_head, itype, device="xpu"):
     current_platform.seed_everything(0)
     A = -torch.exp(torch.rand(n_heads, dtype=itype, device=device))
     dt = F.softplus(
@@ -103,7 +103,7 @@ def generate_continuous_batched_examples(
     n_heads,
     d_head,
     itype,
-    device="cuda",
+    device="xpu",
     return_naive_ref=True,
 ):
     # this function generates a random examples of certain length
@@ -215,7 +215,7 @@ def test_mamba_chunk_scan_single_example(d_head, n_heads, seq_len_chunk_size, it
         X * dt.unsqueeze(-1), A * dt, B, C, chunk_size
     )
 
-    cu_seqlens = torch.tensor((0, seqlen), device="cuda").cumsum(dim=0)
+    cu_seqlens = torch.tensor((0, seqlen), device="xpu").cumsum(dim=0)
     cu_chunk_seqlens, last_chunk_indices, seq_idx_chunks = (
         compute_varlen_chunk_metadata(cu_seqlens, chunk_size)
     )

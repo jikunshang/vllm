@@ -33,14 +33,14 @@ def test_mixer2_gated_norm_multi_gpu(
     seq_len: int,
     hidden_size_n_groups: tuple[int, int],
     dtype: torch.dtype,
-    device: str = "cuda",
+    device: str = "xpu",
 ):
     hidden_size, n_groups = hidden_size_n_groups
     num_processes = 2
 
     def run_torch_spawn(fn, nprocs):
         # need to use torch.mp.spawn otherwise will have problems with
-        # torch.distributed and cuda
+        # torch.distributed and xpu
         torch.multiprocessing.spawn(
             fn,
             args=(
@@ -70,8 +70,8 @@ def mixer2_gated_norm_tensor_parallel(
 ):
     current_platform.seed_everything(0)
 
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
+    device = torch.device(f"xpu:{local_rank}")
+    torch.xpu.set_device(device)
     torch.set_default_device(device)
     torch.set_default_dtype(dtype)
 

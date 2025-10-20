@@ -254,7 +254,7 @@ def test_selective_scan(
 ):
     if varBC_groups > 1 and (not is_variable_B or not is_variable_C):
         pytest.skip()  # This config is not applicable
-    device = "cuda"
+    device = "xpu"
     rtol, atol = (6e-4, 2e-3) if itype == torch.float32 else (3e-3, 5e-3)
     if itype == torch.bfloat16:
         rtol, atol = 3e-2, 5e-2
@@ -380,7 +380,7 @@ def test_selective_scan(
 @pytest.mark.parametrize("dstate", [16, 64])
 @pytest.mark.parametrize("dim", [2048, 2048 + 16, 4096])
 def test_selective_state_update(dim, dstate, has_z, itype):
-    device = "cuda"
+    device = "xpu"
     rtol, atol = (3e-4, 1e-3) if itype == torch.float32 else (5e-3, 1e-2)
     if itype == torch.bfloat16:
         rtol, atol = 1e-2, 5e-2
@@ -440,7 +440,7 @@ def test_selective_scan_varlen(
 ):
     if varBC_groups > 1 and (not is_variable_B or not is_variable_C):
         pytest.skip()  # This config is not applicable
-    device = "cuda"
+    device = "xpu"
     rtol, atol = (6e-4, 2e-3) if itype == torch.float32 else (3e-3, 5e-3)
     if itype == torch.bfloat16:
         rtol, atol = 3e-2, 5e-2
@@ -473,7 +473,7 @@ def test_selective_scan_varlen(
 
     total_entries = batch_size * 10
     cumsum = torch.cumsum(torch.tensor(seqlens[0]), dim=0).to(torch.int32)
-    cumsum = torch.concat([torch.tensor([0], dtype=torch.int32), cumsum], dim=0).cuda()
+    cumsum = torch.concat([torch.tensor([0], dtype=torch.int32), cumsum], dim=0).xpu()
 
     dim = 4
     dstate = 8
@@ -598,7 +598,7 @@ def test_selective_scan_varlen(
 def test_selective_state_update_with_batch_indices(
     with_padding, dim, dstate, has_z, itype
 ):
-    device = "cuda"
+    device = "xpu"
     rtol, atol = (3e-4, 1e-3) if itype == torch.float32 else (5e-3, 1e-2)
     if itype == torch.bfloat16:
         rtol, atol = 1e-1, 1e-1
@@ -688,7 +688,7 @@ def test_selective_state_update_with_batch_indices(
 def test_selective_state_update_with_heads_with_batch_indices(
     dim, dstate, ngroups, has_z, tie_hdim, itype
 ):
-    device = "cuda"
+    device = "xpu"
     rtol, atol = (3e-4, 1e-3) if itype == torch.float32 else (5e-3, 3e-2)
     if itype == torch.bfloat16:
         rtol, atol = 1e-1, 1e-1
