@@ -27,6 +27,7 @@ QuantizationMethods = Literal[
     "hqq",
     "experts_int8",
     "ipex",
+    "xpu_int4",
     "quark",
     "moe_wna16",
     "torchao",
@@ -120,6 +121,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
     from .rtn import RTNConfig
     from .torchao import TorchAOConfig
     from .tpu_int8 import Int8TpuConfig
+    from .xpu_int4 import XPUInt4Config
 
     method_to_config: dict[str, type[QuantizationConfig]] = {
         "awq": AWQConfig,
@@ -143,6 +145,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
         "hqq": HQQMarlinConfig,
         "experts_int8": ExpertsInt8Config,
         "ipex": IPEXConfig,
+        "xpu_int4": XPUInt4Config,
         "quark": QuarkConfig,
         "moe_wna16": MoeWNA16Config,
         "torchao": TorchAOConfig,

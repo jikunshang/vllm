@@ -260,7 +260,7 @@ class Fp8Config(QuantizationConfig):
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["QuantizeMethodBase"]:
         from vllm.attention.layer import Attention
-        from vllm.model_executor.layers.quantization.ipex_quant import (
+        from vllm.model_executor.layers.quantization.xpu_fp8 import (
             XPUFp8LinearMethod,
             XPUFp8MoEMethod,
         )
