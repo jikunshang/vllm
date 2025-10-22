@@ -4618,10 +4618,15 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                             attention_chunk_size=self.attention_chunk_size,
                         )
                     else:
+                        head_size = (
+                            256
+                            if envs.VLLM_XPU_ATTN_HEAD_SIZE_PAD
+                            else attn_module.head_size
+                        )
                         kv_cache_spec[layer_name] = FullAttentionSpec(
                             block_size=block_size,
                             num_kv_heads=attn_module.num_kv_heads,
-                            head_size=attn_module.head_size,
+                            head_size=head_size,
                             dtype=self.kv_cache_dtype,
                         )
                 elif attn_module.attn_type == AttentionType.ENCODER_DECODER:

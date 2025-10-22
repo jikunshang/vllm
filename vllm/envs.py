@@ -209,6 +209,7 @@ if TYPE_CHECKING:
     VLLM_NCCL_INCLUDE_PATH: Optional[str] = None
     VLLM_USE_FBGEMM: bool = False
     VLLM_GC_DEBUG: str = ""
+    VLLM_XPU_ATTN_HEAD_SIZE_PAD: bool = False
 
 
 def get_default_cache_root():
@@ -1391,6 +1392,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # - VLLM_GC_DEBUG='{"top_objects":5}': enable GC debugger with
     #                                      top 5 collected objects
     "VLLM_GC_DEBUG": lambda: os.getenv("VLLM_GC_DEBUG", ""),
+    "VLLM_XPU_ATTN_HEAD_SIZE_PAD": lambda: bool(
+        int(os.getenv("VLLM_XPU_ATTN_HEAD_SIZE_PAD", "0"))
+    ),
 }
 
 # --8<-- [end:env-vars-definition]
@@ -1489,6 +1493,7 @@ def compute_hash() -> str:
         "VLLM_ENABLE_INDUCTOR_MAX_AUTOTUNE",
         "VLLM_ENABLE_INDUCTOR_COORDINATE_DESCENT_TUNING",
         "VLLM_USE_FBGEMM",
+        "VLLM_XPU_ATTN_HEAD_SIZE_PAD",
     ]
     for key in environment_variables_to_hash:
         # if this goes out of sync with environment_variables,

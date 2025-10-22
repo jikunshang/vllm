@@ -491,6 +491,31 @@ class FlashAttentionImpl(AttentionImpl):
             return output
 
         attn_type = self.attn_type
+        output_may_pad = output  # default
+
+        if envs.VLLM_XPU_ATTN_HEAD_SIZE_PAD:
+            logger.warning_once(
+                "VLLM_XPU_ATTN_HEAD_SIZE_PAD is enabled. "
+                "Padding head size to 256 for FlashAttention."
+            )
+            # due to attention head size limitations in current flash attention
+            # kernel(which support 64/128/256 only), we will pad the head size
+            # to 256 for deepseek model.
+            orig_head_size = query.shape[-1]
+            new_shape = query.shape[:-1] + (256,)
+
+            query_pad = query.new_zeros(new_shape)
+            query_pad[..., : query.shape[-1]] = query
+            key_pad = key.new_zeros(new_shape)
+            key_pad[..., : key.shape[-1]] = key
+            value_pad = value.new_zeros(new_shape)
+            value_pad[..., : value.shape[-1]] = value
+            # for output, it's inplace?
+            output_may_pad = output.new_zeros(new_shape)
+
+            query = query_pad
+            key = key_pad
+            value = value_pad
 
         # IMPORTANT!
         # NOTE(woosuk): With piece-wise CUDA graphs, this method is executed in
@@ -567,7 +592,7 @@ class FlashAttentionImpl(AttentionImpl):
                 q=query[:num_actual_tokens],
                 k=key_cache,
                 v=value_cache,
-                out=output[:num_actual_tokens],
+                out=output_may_pad[:num_actual_tokens],
                 cu_seqlens_q=cu_seqlens_q,
                 max_seqlen_q=max_seqlen_q,
                 seqused_k=seqused_k,
@@ -586,6 +611,11 @@ class FlashAttentionImpl(AttentionImpl):
                 num_splits=attn_metadata.max_num_splits,
                 s_aux=self.sinks,
             )
+            if envs.VLLM_XPU_ATTN_HEAD_SIZE_PAD:
+                # it's inplace, we should not replace.
+                output[:num_actual_tokens] = output_may_pad[
+                    :num_actual_tokens, :, :orig_head_size
+                ]
             return output
 
         # Cascade attention (rare case).
