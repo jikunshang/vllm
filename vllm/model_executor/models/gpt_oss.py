@@ -612,8 +612,7 @@ class GptOssForCausalLM(nn.Module):
                 positions: torch.Tensor,
                 intermediate_tensors: Optional[IntermediateTensors] = None,
                 inputs_embeds: Optional[torch.Tensor] = None) -> torch.Tensor:
-        return self.model(input_ids, positions, intermediate_tensors,
-                          inputs_embeds)
+        return self.model(input_ids, positions)
 
     def compute_logits(self, hidden_states: torch.Tensor,
                        sampling_metadata: SamplingMetadata) -> torch.Tensor:
