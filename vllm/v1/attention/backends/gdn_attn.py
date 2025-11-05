@@ -85,9 +85,15 @@ class GDNAttentionMetadataBuilder(AttentionMetadataBuilder[GDNAttentionMetadata]
         self.use_full_cuda_graph = (
             self.compilation_config.cudagraph_mode.has_full_cudagraphs()
         )
+        if self.compilation_config.max_cudagraph_capture_size is None:
+            max_cudagraph_capture_size = 0
+        else:
+            max_cudagraph_capture_size = (
+                self.compilation_config.max_cudagraph_capture_size
+            )
         self.decode_cudagraph_max_bs = min(
             self.vllm_config.scheduler_config.max_num_seqs * (self.num_spec + 1),
-            self.compilation_config.max_cudagraph_capture_size,
+            max_cudagraph_capture_size,
         )
 
         self.spec_state_indices_tensor = torch.empty(
