@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from typing import TYPE_CHECKING
 
 import torch
 from vllm_xpu_kernels.flash_attn_interface import flash_attn_varlen_func
@@ -8,6 +9,29 @@ from vllm_xpu_kernels.flash_attn_interface import flash_attn_varlen_func
 from vllm.logger import init_logger
 
 logger = init_logger(__name__)
+
+if TYPE_CHECKING:
+
+    def register_fake(fn):
+        return lambda name: fn
+else:
+    try:
+        from torch.library import register_fake
+    except ImportError:
+        from torch.library import impl_abstract as register_fake
+
+if hasattr(torch.ops._xpu_C, "fp8_gemm_w8a16"):
+
+    @register_fake("_xpu_C::fp8_gemm_w8a16")
+    def _fp8_gemm_w8a16_fake(
+        input: torch.Tensor,
+        q_weight: torch.Tensor,
+        transpose: bool,
+        weight_scale: torch.Tensor,
+        bias: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        N = q_weight.size(0) if transpose else q_weight.size(1)
+        return torch.empty((input.size(0), N), dtype=input.dtype, device=input.device)
 
 
 class ipex_ops:
