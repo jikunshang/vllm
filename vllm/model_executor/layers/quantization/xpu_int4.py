@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Any, Optional
+from typing import Any
 
 import torch
 from torch.nn.parameter import Parameter
@@ -19,10 +19,10 @@ from vllm.model_executor.layers.linear import (
 from vllm.model_executor.layers.quantization import QuantizationMethods
 from vllm.model_executor.layers.quantization.awq import (
     AWQLinearMethod,
-    is_layer_skipped_awq,
 )
 from vllm.model_executor.layers.quantization.base_config import QuantizationConfig
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
+from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
 from vllm.platforms import current_platform
 
 
@@ -37,9 +37,9 @@ class XPUInt4Config(QuantizationConfig):
         weight_bits: int,
         group_size: int,
         sym: bool = True,
-        modules_to_not_convert: Optional[list[str]] = None,
-        desc_act: Optional[bool] = None,
-        lm_head_quantized: Optional[bool] = None,
+        modules_to_not_convert: list[str] | None = None,
+        desc_act: bool | None = None,
+        lm_head_quantized: bool | None = None,
     ) -> None:
         super().__init__()
         self.method = method
@@ -124,7 +124,7 @@ class XPUInt4Config(QuantizationConfig):
     @classmethod
     def override_quantization_method(
         cls, hf_quant_cfg, user_quant
-    ) -> Optional[QuantizationMethods]:
+    ) -> QuantizationMethods | None:
         if not current_platform.is_xpu():
             return None
 
@@ -137,10 +137,10 @@ class XPUInt4Config(QuantizationConfig):
 
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
-    ) -> Optional["LinearMethodBase"]:
+    ) -> LinearMethodBase | None:
         if isinstance(layer, LinearBase):
             if self.method == "awq":
-                if is_layer_skipped_awq(prefix, self.modules_to_not_convert):
+                if is_layer_skipped(prefix, self.modules_to_not_convert):
                     return UnquantizedLinearMethod()
                 return XPUAWQLinearMethod(self)
             if self.method == "gptq":
@@ -173,7 +173,7 @@ class XPUGPTQLinearMethod(GPTQLinearMethod):
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
-        bias: Optional[torch.Tensor] = None,
+        bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         reshaped_x = x.reshape(-1, x.shape[-1])
         out = torch.ops._xpu_C.int4_gemm_w4a16(
@@ -211,7 +211,7 @@ class XPUAWQLinearMethod(AWQLinearMethod):
         self,
         layer: torch.nn.Module,
         x: torch.Tensor,
-        bias: Optional[torch.Tensor] = None,
+        bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
         reshaped_x = x.reshape(-1, x.shape[-1])
         out = torch.ops._xpu_C.int4_gemm_w4a16(
