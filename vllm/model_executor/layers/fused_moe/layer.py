@@ -80,7 +80,7 @@ else:
     fused_experts = None  # type: ignore
     FusedMoEPermuteExpertsUnpermute = object  # type: ignore
     FusedMoEPrepareAndFinalize = object  # type: ignore
-    from vllm_xpu_kernels.fused_moe_interface import cutlass_fused_moe
+    from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 
     def _eplb_map_to_physical_and_record(
         topk_ids: torch.Tensor,
@@ -933,12 +933,12 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 bias=e_score_correction_bias,
             )
 
-        return cutlass_fused_moe(
+        return xpu_fused_moe(
             hidden_states=x,
             w13=layer.w13_weight,
             w2=layer.w2_weight,
-            topk_weights=routing_weights.view(-1, 1),
-            topk_ids=selected_experts.view(-1),
+            topk_weights=routing_weights,
+            topk_ids=selected_experts,
             n_experts_per_token=top_k,
             activation=activation,
             num_experts=global_num_experts,
