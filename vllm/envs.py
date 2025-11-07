@@ -223,6 +223,7 @@ if TYPE_CHECKING:
     VLLM_DISABLE_SHARED_EXPERTS_STREAM: bool = False
     VLLM_COMPILE_CACHE_SAVE_FORMAT: Literal["binary", "unpacked"] = "binary"
     VLLM_FLATTEN_LOGPROBS: bool = False
+    VLLM_XPU_USE_W8A8_GEMM: bool = False
 
 
 def get_default_cache_root():
@@ -1481,6 +1482,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # After enabled, PromptLogprobs and SampleLogprobs would populated as
     # FlattenLogprobs.
     "VLLM_FLATTEN_LOGPROBS": lambda: bool(int(os.getenv("VLLM_FLATTEN_LOGPROBS", "0"))),
+    # If set to true, use onednn wf8af8 gemm on xpu.
+    "VLLM_XPU_USE_W8A8_GEMM": lambda: bool(
+        int(os.getenv("VLLM_XPU_USE_W8A8_GEMM", "0"))
+    ),
 }
 
 # --8<-- [end:env-vars-definition]
@@ -1607,6 +1612,7 @@ def compute_hash() -> str:
         "VLLM_USE_FBGEMM",
         "VLLM_DEEPEP_HIGH_THROUGHPUT_FORCE_INTRA_NODE",
         "VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL",
+        "VLLM_XPU_USE_W8A8_GEMM",
     ]
     for key in environment_variables_to_hash:
         # if this goes out of sync with environment_variables,

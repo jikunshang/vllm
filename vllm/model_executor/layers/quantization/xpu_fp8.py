@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import Callable, Union
+from collections.abc import Callable
 
 import torch
 from torch.nn import Module
-from torch.nn.parameter import Parameter
 
+import vllm.envs as envs
 from vllm import _custom_ops as ops
 from vllm.model_executor.layers.fused_moe import (
     FusedMoEMethodBase,
@@ -21,21 +21,7 @@ from vllm.platforms import current_platform
 class XPUFp8LinearMethod(Fp8LinearMethod):
     def __init__(self, quant_config: Fp8Config):
         super().__init__(quant_config)
-
-    def process_weights_after_loading(self, layer: Module) -> None:
-        # TODO: when XPU supports wf8af8 gemm, remove this assert
-        assert not self.quant_config.is_checkpoint_fp8_serialized, (
-            "XPU doesn't support models with fp8 weights yet."
-        )
-        shape: Union[tuple[int, int], torch.Size] = layer.weight.shape
-        out_dtype: torch.dtype = current_platform.fp8_dtype()
-        qweight = torch.empty(shape, device=layer.weight.device, dtype=out_dtype)
-        weight_scale = torch.zeros(1, device=layer.weight.device, dtype=torch.float32)
-        torch.ops._C.dynamic_scaled_fp8_quant(qweight, layer.weight, scale=weight_scale)
-        # Update the layer with the new values.
-        layer.weight = Parameter(qweight, requires_grad=False)
-        layer.weight_scale = Parameter(weight_scale, requires_grad=False)
-        layer.input_scale = None
+        self.use_w8a8_gemm = envs.VLLM_XPU_USE_W8A8_GEMM
 
     def apply(
         self,
@@ -43,10 +29,26 @@ class XPUFp8LinearMethod(Fp8LinearMethod):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        weight = layer.weight.data
-        weight_scale = layer.weight_scale.data
-        output = torch.ops._xpu_C.fp8_gemm_w8a16(x, weight, True, weight_scale, bias)
-        return output
+        weight = layer.weight
+        weight_scale = layer.weight_scale
+
+        if self.use_w8a8_gemm:
+            out_dtype = self.out_dtype if self.out_dtype is not None else x.dtype
+            output_shape = [*x.shape[:-1], weight.shape[1]]
+            input_2d = x.view(-1, x.shape[-1])
+            if input_2d.dtype != current_platform.fp8_dtype():
+                qinput, x_scale = self.fp8_linear.quant_fp8(
+                    input_2d,
+                    layer.input_scale,
+                )
+            else:
+                qinput, x_scale = input_2d, layer.input_scale
+            output = torch.ops._xpu_C.fp8_gemm(
+                qinput, weight, out_dtype, x_scale, weight_scale, bias
+            )
+            return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
+        else:
+            return torch.ops._xpu_C.fp8_gemm_w8a16(x, weight, weight_scale, bias)
 
 
 class XPUFp8MoEMethod(FusedMoEMethodBase):

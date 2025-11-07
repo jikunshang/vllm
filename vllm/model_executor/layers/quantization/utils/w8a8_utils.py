@@ -408,6 +408,8 @@ class Fp8LinearOp:
                 self.preferred_backend = "flashinfer"
             else:
                 self.preferred_backend = "cutlass"
+        elif current_platform.is_xpu():
+            self.preferred_backend = "xpu"
         else:
             self.preferred_backend = "torch"
 
