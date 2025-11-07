@@ -341,7 +341,19 @@ def get_rdna_autotune_configs():
     ], ["IS_CAUSAL", "dropout_p", "BLOCK_DMODEL", "USE_FP8"]
 
 
+def get_xpu_autotune_configs():
+    return [
+        triton.Config(
+            {"BLOCK_M": 32, "BLOCK_N": 32, "PRE_LOAD_V": False},
+            num_stages=1,
+            num_warps=2,
+        ),
+    ], ["IS_CAUSAL", "dropout_p", "BLOCK_DMODEL", "USE_FP8"]
+
+
 def get_autotune_configs():
+    if current_platform.is_xpu():
+        return get_xpu_autotune_configs()
     if on_gfx1x():
         return get_rdna_autotune_configs()
     else:

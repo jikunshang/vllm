@@ -62,6 +62,7 @@ class ipex_ops:
         k_descale=None,
         v_descale=None,
         num_splits=0,
+        return_softmax_lse: bool | None = False,
         s_aux: torch.Tensor | None = None,
     ):
         if out is None:
@@ -97,6 +98,7 @@ class ipex_ops:
             window_size=real_window_size,
             # alibi_slopes = alibi_slopes,
             # softcap=softcap,
+            return_softmax_lse=return_softmax_lse,
         )
 
     @staticmethod

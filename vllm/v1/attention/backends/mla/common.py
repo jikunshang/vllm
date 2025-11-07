@@ -251,7 +251,7 @@ class QueryLenSupport(Enum):
 
 
 try:
-    from vllm.vllm_flash_attn import flash_attn_varlen_func
+    from vllm.attention.utils.fa_utils import flash_attn_varlen_func
 
     is_vllm_fa = True
 except ImportError:

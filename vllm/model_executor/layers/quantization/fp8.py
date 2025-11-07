@@ -153,7 +153,7 @@ def get_fp8_moe_backend(block_quant: bool) -> Fp8MoeBackend:
         not current_platform.has_device_capability(89)
         or envs.VLLM_TEST_FORCE_FP8_MARLIN
     )
-    if current_platform.is_rocm():
+    if current_platform.is_rocm() or current_platform.is_xpu():
         use_marlin = False
     if use_marlin:
         logger.info_once("Using Marlin backend for FP8 MoE")
@@ -284,7 +284,9 @@ class Fp8Config(QuantizationConfig):
     ) -> Optional["QuantizeMethodBase"]:
         from vllm.attention.layer import Attention  # Avoid circular import
 
-        if current_platform.is_xpu():
+        # for non-block quant on xpu, we use the xpu fp8 method,
+        # otherwise use triton
+        if current_platform.is_xpu() and self.weight_block_size is None:
             return self.get_xpu_quant_method(layer, prefix)
         if isinstance(layer, LinearBase):
             if is_layer_skipped(

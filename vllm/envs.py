@@ -224,6 +224,7 @@ if TYPE_CHECKING:
     VLLM_COMPILE_CACHE_SAVE_FORMAT: Literal["binary", "unpacked"] = "binary"
     VLLM_FLATTEN_LOGPROBS: bool = False
     VLLM_XPU_USE_W8A8_GEMM: bool = False
+    VLLM_XPU_ATTN_HEAD_SIZE_PAD: bool = False
 
 
 def get_default_cache_root():
@@ -1486,6 +1487,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_XPU_USE_W8A8_GEMM": lambda: bool(
         int(os.getenv("VLLM_XPU_USE_W8A8_GEMM", "0"))
     ),
+    "VLLM_XPU_ATTN_HEAD_SIZE_PAD": lambda: bool(
+        int(os.getenv("VLLM_XPU_ATTN_HEAD_SIZE_PAD", "0"))
+    ),
 }
 
 # --8<-- [end:env-vars-definition]
@@ -1613,6 +1617,7 @@ def compute_hash() -> str:
         "VLLM_DEEPEP_HIGH_THROUGHPUT_FORCE_INTRA_NODE",
         "VLLM_DEEPEP_LOW_LATENCY_USE_MNNVL",
         "VLLM_XPU_USE_W8A8_GEMM",
+        "VLLM_XPU_ATTN_HEAD_SIZE_PAD",
     ]
     for key in environment_variables_to_hash:
         # if this goes out of sync with environment_variables,
