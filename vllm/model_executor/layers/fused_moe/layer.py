@@ -78,8 +78,15 @@ if current_platform.is_cuda_alike():
         )
 else:
     fused_experts = None  # type: ignore
+
     FusedMoEPermuteExpertsUnpermute = object  # type: ignore
     FusedMoEPrepareAndFinalize = object  # type: ignore
+    if envs.VLLM_XPU_MOE_USE_TRITON:
+        from .fused_moe import (
+            TritonExperts,
+            eplb_map_to_physical_and_record,
+            fused_experts,
+        )
     from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 
     def _eplb_map_to_physical_and_record(
@@ -908,6 +915,26 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             or logical_replica_count is not None
         ):
             raise NotImplementedError("Expert load balancing is not supported for XPU.")
+        if envs.VLLM_XPU_MOE_USE_TRITON:
+            return self.forward_cuda(
+                layer,
+                x,
+                use_grouped_topk,
+                top_k,
+                router_logits,
+                renormalize,
+                topk_group,
+                num_expert_group,
+                global_num_experts,
+                expert_map,
+                custom_routing_function,
+                scoring_func,
+                routed_scaling_factor,
+                e_score_correction_bias,
+                apply_router_weight_on_input,
+                activation,
+            )
+
         M, _ = x.size()
         routing_weights = torch.empty(M, top_k, dtype=torch.float32, device=x.device)
         selected_experts = torch.empty(M, top_k, dtype=torch.int32, device=x.device)
@@ -1009,7 +1036,9 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     elif current_platform.is_cpu():
         forward_native = forward_cpu
     elif current_platform.is_xpu():
-        forward_native = forward_xpu
+        forward_native = (
+            forward_xpu if not envs.VLLM_XPU_MOE_USE_TRITON else forward_cuda
+        )
     else:
         forward_native = forward_cuda
 
