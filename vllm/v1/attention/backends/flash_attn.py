@@ -108,6 +108,8 @@ class FlashAttentionBackend(AttentionBackend):
     ) -> tuple[int, ...]:
         if block_size % 16 != 0:
             raise ValueError("Block size must be a multiple of 16.")
+        if envs.VLLM_XPU_ATTN_HEAD_SIZE_PAD:
+            head_size = (head_size + 255) // 256 * 256
         return (2, num_blocks, block_size, num_kv_heads, head_size)
 
     @staticmethod

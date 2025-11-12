@@ -8,6 +8,7 @@ from math import prod
 import torch
 from typing_extensions import Self
 
+import vllm.envs as envs
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.utils.math_utils import cdiv
@@ -69,11 +70,15 @@ class AttentionSpec(KVCacheSpec):
 
     @property
     def page_size_bytes(self) -> int:
+        if envs.VLLM_XPU_ATTN_HEAD_SIZE_PAD:
+            head_size = (self.head_size + 255) // 256 * 256
+        else:
+            head_size = self.head_size
         return (
             2
             * self.block_size
             * self.num_kv_heads
-            * self.head_size
+            * head_size
             * get_dtype_size(self.dtype)
         )
 
