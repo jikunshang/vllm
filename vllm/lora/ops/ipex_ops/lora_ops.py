@@ -16,7 +16,7 @@ def bgmv_shrink(
     scaling: float = 1.0,
 ) -> None:
     torch.ops._xpu_C.bgmv_shrink(
-        inputs, lora_a_weights, output_tensor, lora_indices_tensor, scaling
+        output_tensor, inputs, lora_a_weights, lora_indices_tensor, scaling
     )
 
 
@@ -28,7 +28,7 @@ def bgmv_expand(
     add_inputs: bool = True,
 ) -> None:
     torch.ops._xpu_C.bgmv_expand(
-        inputs, lora_b_weights, output_tensor, lora_indices_tensor, add_inputs
+        output_tensor, inputs, lora_b_weights, lora_indices_tensor, add_inputs
     )
 
 
@@ -41,12 +41,14 @@ def bgmv_expand_slice(
     slice_size: int,
     add_inputs: bool = True,
 ) -> None:
+    # slice_size only used for validation, no use for kernel
+    assert slice_size == lora_b_weights.size(-2)
+    assert slice_offset + slice_size <= output_tensor.size(1)
     torch.ops._xpu_C.bgmv_expand_slice(
+        output_tensor,
         inputs,
         lora_b_weights,
-        output_tensor,
         lora_indices_tensor,
         slice_offset,
-        slice_size,
         add_inputs,
     )

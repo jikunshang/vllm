@@ -209,11 +209,9 @@ class PunicaWrapperXPU(PunicaWrapperBase):
 
         if buffer is None:
             r = lora_b_stacked[0].size(-1)
-            # We set the buffer to be float32 by default, refer to:
-            # https://github.com/triton-lang/triton/issues/1387
             buffer = torch.zeros(  # type: ignore
                 (len(output_slices), x.size(0), r),
-                dtype=torch.float32,
+                dtype=x.dtype,
                 device=x.device,
             )
         self.add_shrink(
@@ -270,9 +268,7 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         x = x.view(-1, x.shape[-1])
         r = lora_b_stacked.size(-1)
         if buffer is None:
-            # We set the buffer to be float32 by default, refer to:
-            # https://github.com/triton-lang/triton/issues/1387
-            buffer = torch.zeros((x.size(0), r), dtype=torch.float32, device=x.device)
+            buffer = torch.zeros((x.size(0), r), dtype=x.dtype, device=x.device)
         sampler_indices = torch.narrow(self._sampler_indices, 0, 0, x.size(0))
         bgmv_shrink(x, lora_a_stacked, buffer, sampler_indices, scale)
         bgmv_expand(buffer, lora_b_stacked, y, sampler_indices, add_inputs=True)
