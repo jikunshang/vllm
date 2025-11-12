@@ -78,17 +78,3 @@ class Llama4VisionRotaryEmbedding(RotaryEmbeddingBase):
         key: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         return self.forward_native(query, key)
-
-    def forward_xpu(  # type: ignore[override]
-       self,
-        query: torch.Tensor,
-        key: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        return self.forward_native(query, key)
-
-    def forward_xpu(  # type: ignore[override]
-        self,
-        query: torch.Tensor,
-        key: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        return self.forward_native(query, key)
