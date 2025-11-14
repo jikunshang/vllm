@@ -945,14 +945,14 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                 selected_experts,
                 token_expert_indices,
                 router_logits,
-                False,
+                renormalize,
             )
         elif use_grouped_topk:
             routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
                 x,
                 router_logits,
                 top_k,
-                False,  # renormalize will be handled in moe_gather
+                renormalize,
                 n_expert_group=num_expert_group,
                 n_topk_group=topk_group,
                 scoring_func=scoring_func,
