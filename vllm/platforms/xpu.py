@@ -125,7 +125,9 @@ class XPUPlatform(Platform):
     def get_vit_attn_backend(cls, head_size: int, dtype: torch.dtype) -> _Backend:
         from vllm.attention.backends.registry import _Backend
 
-        return _Backend.FLASH_ATTN
+        # TODO: revert back when flash_varlen_attn_func supports none block table case
+        # return _Backend.FLASH_ATTN
+        return _Backend.TORCH_SDPA
 
     @classmethod
     def inference_mode(cls):
