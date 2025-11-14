@@ -12,9 +12,9 @@ datasets # for benchmark scripts
 numba == 0.60.0 # v0.61 doesn't support Python 3.9. Required for N-gram speculative decoding
 nixl==0.3.0 # for PD disaggregation
 
-torch==2.8.0+xpu
+--extra-index-url=https://download.pytorch.org/whl/xpu
+torch==2.9.0+xpu
 torchaudio
 torchvision
---extra-index-url=https://download.pytorch.org/whl/xpu
 
-intel-extension-for-pytorch @ https://intel-extension-for-pytorch.s3.us-east-1.amazonaws.com/ipex_dev/xpu/intel_extension_for_pytorch-2.8.10.post1%2Bxpu-cp312-cp312-linux_x86_64.whl
+intel-extension-for-pytorch @ https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu/new/validation/IPEX/weekly/PVC/2025/ww44_Stock_test/py312/intel_extension_for_pytorch-2.9.10+xpu-cp312-cp312-linux_x86_64.whl
