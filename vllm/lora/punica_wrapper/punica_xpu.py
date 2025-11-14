@@ -14,6 +14,16 @@ import torch
 from vllm.lora.layers import LoRAMapping
 from vllm.lora.ops.ipex_ops import bgmv_expand, bgmv_expand_slice, bgmv_shrink
 
+from vllm.utils.math_utils import round_up
+from vllm.triton_utils import HAS_TRITON, triton
+if HAS_TRITON:
+    from vllm.lora.ops.triton_ops import (
+        LoRAKernelMeta,
+        fused_moe_lora,
+    )
+
+from vllm import _custom_ops as ops
+
 from .punica_base import PunicaWrapperBase
 
 
@@ -37,6 +47,11 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         torch._dynamo.mark_dynamic(self._embeddings_indices, 1)
         torch._dynamo.mark_dynamic(self._sampler_indices_padded, 0)
 
+        self.max_loras = kwargs["max_loras"]
+        self.token_mapping_meta = LoRAKernelMeta.make(
+            self.max_loras, max_num_batched_tokens, device=device
+        )
+
     def update_metadata(
         self,
         mapping: LoRAMapping,
@@ -50,6 +65,7 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         self._update_base_metadata(
             mapping, lora_index_to_id, max_loras, vocab_size, extra_vocab_size
         )
+        self.token_mapping_meta.prepare_tensors(self.token_lora_indices)
 
     def _get_token_lora_indices(self, x: torch.Tensor) -> torch.IntTensor:
         return torch.narrow(self._token_lora_indices, 0, 0, x.size(0))
@@ -273,3 +289,111 @@ class PunicaWrapperXPU(PunicaWrapperBase):
         bgmv_shrink(x, lora_a_stacked, buffer, sampler_indices, scale)
         bgmv_expand(buffer, lora_b_stacked, y, sampler_indices, add_inputs=True)
         return y.view_as(y_org)
+
+    def moe_lora_align_block_size(
+        self,
+        topk_ids: torch.Tensor,
+        num_tokens: int,
+        block_size: int,
+        num_experts: int,
+        max_loras: int,
+        adapter_enabled: torch.Tensor,
+        expert_map: torch.Tensor | None = None,
+        pad_sorted_ids: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Aligns tokens and experts into block-sized chunks for LoRA-based
+        mixture-of-experts (MoE) execution.
+        """
+        max_num_tokens_padded = topk_ids.numel() + num_experts * (block_size - 1)
+        if pad_sorted_ids:
+            max_num_tokens_padded = round_up(max_num_tokens_padded, block_size)
+        sorted_ids = torch.empty(
+            (max_loras * max_num_tokens_padded,),
+            dtype=torch.int32,
+            device=topk_ids.device,
+        )
+        max_num_m_blocks = triton.cdiv(max_num_tokens_padded, block_size)
+        # Expert ids must be set default to -1 to prevent a blank block
+        expert_ids = torch.empty(
+            (max_loras * max_num_m_blocks,),
+            dtype=torch.int32,
+            device=topk_ids.device,
+        )
+        num_tokens_post_pad = torch.empty(
+            (max_loras), dtype=torch.int32, device=topk_ids.device
+        )
+
+        (token_lora_mapping, _, _, _, lora_ids, _) = self.token_mapping_meta.meta_args(
+            num_tokens
+        )
+
+        ops.moe_lora_align_block_size(
+            topk_ids,
+            token_lora_mapping,
+            num_experts,
+            block_size,
+            max_loras,
+            max_num_tokens_padded,
+            max_num_m_blocks,
+            sorted_ids,
+            expert_ids,
+            num_tokens_post_pad,
+            adapter_enabled,
+            lora_ids,
+        )
+        if expert_map is not None:
+            expert_ids = expert_map[expert_ids]
+
+        return sorted_ids, expert_ids, num_tokens_post_pad
+
+    def add_lora_fused_moe(
+        self,
+        y: torch.Tensor,
+        x: torch.Tensor,
+        lora_a_stacked: list[torch.Tensor],
+        lora_b_stacked: list[torch.Tensor],
+        topk_weights: torch.Tensor,
+        sorted_token_ids: torch.Tensor,
+        expert_ids: torch.Tensor,
+        num_tokens_post_padded: torch.Tensor,
+        max_lora_rank: int,
+        top_k_num: int,
+        shrink_config,
+        expand_config,
+        adapter_enabled: torch.Tensor,
+        mul_routed_weight=False,
+    ):
+        """
+        Performs a fused forward computation for LoRA of Mixture-of-Experts (MoE) layer.
+        """
+        (_, _, _, _, lora_ids, _) = self.token_mapping_meta.meta_args(x.size(0))
+        fused_moe_lora(
+            y,
+            x,
+            lora_a_stacked,
+            lora_b_stacked,
+            topk_weights,
+            sorted_token_ids,
+            expert_ids,
+            num_tokens_post_padded,
+            max_lora_rank,
+            top_k_num,
+            lora_ids,
+            adapter_enabled,
+            shrink_config.get("BLOCK_SIZE_M", 64),
+            shrink_config.get("BLOCK_SIZE_N", 64),
+            shrink_config.get("BLOCK_SIZE_K", 32),
+            shrink_config.get("GROUP_SIZE_M", 8),
+            shrink_config.get("NUM_WARPS", 4),
+            shrink_config.get("NUM_STAGES", 3),
+            shrink_config.get("SPLIT_K", 1),
+            expand_config.get("BLOCK_SIZE_M", 64),
+            expand_config.get("BLOCK_SIZE_N", 64),
+            expand_config.get("BLOCK_SIZE_K", 32),
+            expand_config.get("GROUP_SIZE_M", 8),
+            expand_config.get("NUM_WARPS", 4),
+            expand_config.get("NUM_STAGES", 3),
+            expand_config.get("SPLIT_K", 1),
+            mul_routed_weight,
+        )

@@ -79,7 +79,7 @@ def get_mxfp4_backend_with_lora() -> Mxfp4Backend:
     Not all MXFP4 backends support LoRA. Select backends that are known to
     have LoRA support.
     """
-    if not current_platform.is_cuda():
+    if not current_platform.is_cuda() or not current_platform.is_xpu():
         return Mxfp4Backend.NONE
 
     logger.info_once("[get_mxfp4_backend_with_lora] Using Marlin backend")
