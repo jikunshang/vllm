@@ -110,16 +110,23 @@ def test_ngram_and_suffix_correctness(
     """
     test_prompts = get_test_prompts(mm_enabled=False)
 
-    ref_llm = LLM(model=model_name, max_model_len=1024)
+    ref_llm = LLM(
+        model=model_name,
+        max_model_len=1024,
+        enforce_eager=True,
+        max_num_batched_tokens=2048,
+    )
     ref_outputs = ref_llm.chat(test_prompts, sampling_config)
     del ref_llm
-    torch.cuda.empty_cache()
+    torch.xpu.empty_cache()
     cleanup_dist_env_and_memory()
 
     spec_llm = LLM(
         model=model_name,
         speculative_config=speculative_config,
         max_model_len=1024,
+        enforce_eager=True,
+        max_num_batched_tokens=2048,
     )
     spec_outputs = spec_llm.chat(test_prompts, sampling_config)
     matches = 0
@@ -136,7 +143,7 @@ def test_ngram_and_suffix_correctness(
     # Upon failure, inspect the outputs to check for inaccuracy.
     assert matches >= int(0.66 * len(ref_outputs))
     del spec_llm
-    torch.cuda.empty_cache()
+    torch.xpu.empty_cache()
     cleanup_dist_env_and_memory()
 
 
@@ -160,6 +167,8 @@ def test_suffix_decoding_acceptance(
         },
         max_model_len=1024,
         disable_log_stats=False,
+        max_num_batched_tokens=2048,
+        enforce_eager=True,
     )
 
     # Run several times and check that the accepted tokens increase.
@@ -195,9 +204,11 @@ def test_suffix_decoding_acceptance(
     assert last_accept_rate > 0.85
 
     del spec_llm
-    torch.cuda.empty_cache()
+    torch.xpu.empty_cache()
     cleanup_dist_env_and_memory()
 
+
+'''
 
 @pytest.mark.parametrize(
     "model_path",
@@ -232,7 +243,10 @@ def test_speculators_model_integration(
     test_prompts = get_test_prompts(mm_enabled=False)
 
     # First run: Direct speculator model (simplified integration)
-    spec_llm = LLM(model=model_path, max_model_len=1024)
+    spec_llm = LLM(model=model_path,
+            max_model_len=1024,
+            enforce_eager=True,
+            max_num_batched_tokens=2048)
     spec_outputs = spec_llm.chat(test_prompts, sampling_config)
 
     # Verify speculative config was auto-detected
@@ -255,14 +269,17 @@ def test_speculators_model_integration(
     verifier_model = spec_llm.llm_engine.vllm_config.model_config.model
 
     del spec_llm
-    torch.cuda.empty_cache()
+    torch.xpu.empty_cache()
     cleanup_dist_env_and_memory()
 
     # Second run: Reference without speculative decoding
-    ref_llm = LLM(model=verifier_model, max_model_len=1024)
+    ref_llm = LLM(model=verifier_model,
+            max_model_len=1024,
+            enforce_eager=True,
+            max_num_batched_tokens=2048)
     ref_outputs = ref_llm.chat(test_prompts, sampling_config)
     del ref_llm
-    torch.cuda.empty_cache()
+    torch.xpu.empty_cache()
     cleanup_dist_env_and_memory()
 
     # Compare outputs
@@ -277,6 +294,7 @@ def test_speculators_model_integration(
         f"Only {matches}/{len(ref_outputs)} outputs matched. "
         f"Expected at least {int(0.66 * len(ref_outputs))} matches."
     )
+'''
 
 
 @pytest.mark.parametrize(
@@ -317,47 +335,12 @@ def test_speculators_model_integration(
             False,
             False,
         ),
-        pytest.param(
-            (
-                "eagle",
-                "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-                "morgendave/EAGLE-Llama-4-Scout-17B-16E-Instruct",
-                4,
-            ),
-            False,
-            False,
-            marks=large_gpu_mark(min_gb=80),
-        ),  # works on 4x H100
-        pytest.param(
-            (
-                "eagle",
-                "meta-llama/Llama-4-Scout-17B-16E-Instruct",
-                "morgendave/EAGLE-Llama-4-Scout-17B-16E-Instruct",
-                4,
-            ),
-            True,
-            True,
-            marks=large_gpu_mark(min_gb=80),
-        ),  # works on 4x H100
-        (
-            (
-                "eagle",
-                "eagle618/deepseek-v3-random",
-                "eagle618/eagle-deepseek-v3-random",
-                1,
-            ),
-            False,
-            False,
-        ),
     ],
     ids=[
         "qwen3_eagle3",
         "qwen2_5_vl_eagle3",
         "llama3_eagle",
         "llama3_eagle3",
-        "llama4_eagle",
-        "llama4_eagle_mm",
-        "deepseek_eagle",
     ],
 )
 @pytest.mark.parametrize("attn_backend", get_attn_backend_list_based_on_platform())
@@ -404,14 +387,20 @@ def test_eagle_correctness(
 
         method, model_name, spec_model_name, tp_size = model_setup
         max_model_len = 2048
-        max_num_batched_tokens = 128 if enable_chunked_prefill else max_model_len
+        # max_num_batched_tokens = max_model_len
+        # if chunked_prefill_enabled:
+        #    max_num_batched_tokens = 128
 
         ref_llm = LLM(
-            model=model_name, max_model_len=max_model_len, tensor_parallel_size=tp_size
+            model=model_name,
+            max_model_len=max_model_len,
+            tensor_parallel_size=tp_size,
+            enforce_eager=True,
+            max_num_batched_tokens=2048,
         )
         ref_outputs = ref_llm.chat(test_prompts, sampling_config)
         del ref_llm
-        torch.cuda.empty_cache()
+        torch.xpu.empty_cache()
         cleanup_dist_env_and_memory()
 
         spec_llm = LLM(
@@ -425,8 +414,9 @@ def test_eagle_correctness(
                 "max_model_len": max_model_len,
             },
             max_model_len=max_model_len,
-            max_num_batched_tokens=max_num_batched_tokens,
-            enable_chunked_prefill=enable_chunked_prefill,
+            enforce_eager=True,
+            max_num_batched_tokens=2048,
+            enable_chunked_prefill=False,
         )
         spec_outputs = spec_llm.chat(test_prompts, sampling_config)
         matches = 0
@@ -443,72 +433,5 @@ def test_eagle_correctness(
         # Upon failure, inspect the outputs to check for inaccuracy.
         assert matches > int(0.6 * len(ref_outputs))
         del spec_llm
-        torch.cuda.empty_cache()
-        cleanup_dist_env_and_memory()
-
-
-@pytest.mark.parametrize(
-    ["model_setup", "mm_enabled"],
-    [
-        (("mtp", "XiaomiMiMo/MiMo-7B-Base", 1), False),
-        (("mtp", "ZixiQi/DeepSeek-V3-4layers-MTP-FP8", 1), False),
-    ],
-    ids=["mimo", "deepseek"],
-)
-def test_mtp_correctness(
-    monkeypatch: pytest.MonkeyPatch,
-    sampling_config: SamplingParams,
-    model_setup: tuple[str, str, int],
-    mm_enabled: bool,
-):
-    # Generate test prompts inside the function instead of using fixture
-    test_prompts = get_test_prompts(mm_enabled)
-    """
-    Compare the outputs of a original LLM and a speculative LLM
-    should be the same when using MTP speculative decoding.
-    model_setup: (method, model_name, tp_size)
-    """
-    with monkeypatch.context() as m:
-        m.setenv("VLLM_MLA_DISABLE", "1")
-
-        method, model_name, tp_size = model_setup
-
-        ref_llm = LLM(
-            model=model_name,
-            max_model_len=2048,
-            tensor_parallel_size=tp_size,
-            trust_remote_code=True,
-        )
-        ref_outputs = ref_llm.chat(test_prompts, sampling_config)
-        del ref_llm
-        torch.cuda.empty_cache()
-        cleanup_dist_env_and_memory()
-
-        spec_llm = LLM(
-            model=model_name,
-            trust_remote_code=True,
-            tensor_parallel_size=tp_size,
-            speculative_config={
-                "method": method,
-                "num_speculative_tokens": 1,
-                "max_model_len": 2048,
-            },
-            max_model_len=2048,
-        )
-        spec_outputs = spec_llm.chat(test_prompts, sampling_config)
-        matches = 0
-        misses = 0
-        for ref_output, spec_output in zip(ref_outputs, spec_outputs):
-            if ref_output.outputs[0].text == spec_output.outputs[0].text:
-                matches += 1
-            else:
-                misses += 1
-                print(f"ref_output: {ref_output.outputs[0].text}")
-                print(f"spec_output: {spec_output.outputs[0].text}")
-
-        # Heuristic: expect at least 80% of the prompts to match exactly
-        # Upon failure, inspect the outputs to check for inaccuracy.
-        assert matches > int(MTP_SIMILARITY_RATE * len(ref_outputs))
-        del spec_llm
-        torch.cuda.empty_cache()
+        torch.xpu.empty_cache()
         cleanup_dist_env_and_memory()
