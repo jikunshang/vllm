@@ -17,4 +17,4 @@ torch==2.9.0+xpu
 torchaudio
 torchvision
 
-intel-extension-for-pytorch @ https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local/gpu/new/validation/IPEX/weekly/PVC/2025/ww44_Stock_test/py312/intel_extension_for_pytorch-2.9.10+xpu-cp312-cp312-linux_x86_64.whl
+intel-extension-for-pytorch @ https://ubit-artifactory-ba.intel.com/artifactory/aipc_releases-ba-local//gpu/new/validation/IPEX/nightly/PVC/UBUNTU/VLLM_nightly/20251113/1ec7b272e/intel_extension_for_pytorch-2.9.10.post0+xpu-cp312-cp312-linux_x86_64.whl

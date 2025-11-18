@@ -127,7 +127,7 @@ jobs:
           --net=host \
           --ipc=host \
           --privileged \
-          -v $HOME/actions-runner/_work/vllm-xpu/vllm-xpu/qa_ci_code:/WORKSPACE \
+          -v $HOME/actions-runner/_work/applications.ai.gpu.vllm-xpu/applications.ai.gpu.vllm-xpu/qa_ci_code:/WORKSPACE \
           -v /dev/dri/by-path:/dev/dri/by-path \
           -v /mnt/data3:/root/.cache/ \
           -e http_proxy=${http_proxy:-"http://proxy-dmz.intel.com:912"} \
@@ -138,30 +138,30 @@ jobs:
           --entrypoint='' \
           --mount type=bind,source="$HOME/.secrets/my_token",target=/run/secrets/my_token,readonly \
           $image_name \
-          bash -c "IPEX_FMHA_V3=0 bash /WORKSPACE/.buildkite/nightly-benchmarks/scripts/CI_run_server_benchmarks.sh "PVC" || true; chown -R \$(id -u):\$(id -g) /WORKSPACE"
+          bash -c "bash /WORKSPACE/.buildkite/nightly-benchmarks/scripts/CI_run_server_benchmarks.sh "PVC" || true; chown -R \$(id -u):\$(id -g) /WORKSPACE"
 
     - name: Validate server benchmark results
       run: |
-        python3 $HOME/actions-runner/_work/vllm-xpu/vllm-xpu/qa_ci_code/.buildkite/nightly-benchmarks/scripts/analyze_benchmark_results_final.py --test-selector "PVC"
-        cat $HOME/actions-runner/_work/vllm-xpu/vllm-xpu/qa_ci_code/benchmarks/results/benchmark_analysis_final.json
+        python3 $HOME/actions-runner/_work/applications.ai.gpu.vllm-xpu/applications.ai.gpu.vllm-xpu/qa_ci_code/.buildkite/nightly-benchmarks/scripts/analyze_benchmark_results_final.py --test-selector "PVC"
+        cat $HOME/actions-runner/_work/applications.ai.gpu.vllm-xpu/applications.ai.gpu.vllm-xpu/qa_ci_code/benchmarks/results/benchmark_analysis_final.json
 
     - name: Fix permissions
-      run: sudo chmod -R 755 ${{ runner.workspace }}/vllm-xpu/qa_ci_code/benchmarks/results/
+      run: sudo chmod -R 755 ${{ runner.workspace }}/applications.ai.gpu.vllm-xpu/qa_ci_code/benchmarks/results/
     
     - name: Debug path
-      run: ls -la ${{ runner.workspace }}/vllm-xpu/qa_ci_code/benchmarks/results/
+      run: ls -la ${{ runner.workspace }}/applications.ai.gpu.vllm-xpu/qa_ci_code/benchmarks/results/
 
     - name: Upload benchmark results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results
-        path: ${{ runner.workspace }}/vllm-xpu/qa_ci_code/benchmarks/results/
+        path: ${{ runner.workspace }}/applications.ai.gpu.vllm-xpu/qa_ci_code/benchmarks/results/
 
     - name: Analyze and validate benchmark results
       if: always()
       run: |
-        RESULTS_FILE="$HOME/actions-runner/_work/vllm-xpu/vllm-xpu/qa_ci_code/benchmarks/results/benchmark_analysis_final.json"
+        RESULTS_FILE="$HOME/actions-runner/_work/applications.ai.gpu.vllm-xpu/applications.ai.gpu.vllm-xpu/qa_ci_code/benchmarks/results/benchmark_analysis_final.json"
         if [ ! -f "$RESULTS_FILE" ]; then
           echo "❌ Benchmark analysis file not found!"
           exit 1
