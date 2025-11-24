@@ -26,12 +26,31 @@ if hasattr(torch.ops._xpu_C, "fp8_gemm_w8a16"):
     def _fp8_gemm_w8a16_fake(
         input: torch.Tensor,
         q_weight: torch.Tensor,
-        transpose: bool,
         weight_scale: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        N = q_weight.size(0) if transpose else q_weight.size(1)
-        return torch.empty((input.size(0), N), dtype=input.dtype, device=input.device)
+        input_2d = input.view(-1, input.shape[-1])
+        M = input_2d.size(0)
+        N = q_weight.size(1)
+        return torch.empty((M, N), dtype=input.dtype, device=input.device)
+
+
+if hasattr(torch.ops._xpu_C, "int4_gemm_w4a16"):
+
+    @register_fake("_xpu_C::int4_gemm_w4a16")
+    def _int4_gemm_w4a16_fake(
+        input: torch.Tensor,
+        q_weight: torch.Tensor,
+        bias: torch.Tensor | None,
+        weight_scale: torch.Tensor,
+        qzeros: torch.Tensor,
+        group_size: int,
+        group_idx: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        input_2d = input.view(-1, input.shape[-1])
+        M = input_2d.size(0)
+        N = q_weight.size(1)
+        return torch.empty((M, N), dtype=input.dtype, device=input.device)
 
 
 class ipex_ops:

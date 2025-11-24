@@ -183,7 +183,6 @@ class XPUGPTQLinearMethod(GPTQLinearMethod):
             layer.scales,
             layer.qzeros,
             layer.quant_config.group_size,
-            False,
             None,
         )
         return out
@@ -221,7 +220,6 @@ class XPUAWQLinearMethod(AWQLinearMethod):
             layer.scales,
             layer.qzeros,
             self.quant_config.group_size,
-            False,
             None,
         )
         out_shape = x.shape[:-1] + (layer.xpu_output_size,)

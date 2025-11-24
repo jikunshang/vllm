@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from collections.abc import Callable
 from typing import Any, Optional
 
 import torch
@@ -17,10 +16,8 @@ from vllm.model_executor.layers.quantization import (
     QuantizationMethods,
 )
 from vllm.model_executor.layers.quantization.awq import AWQLinearMethod
-from vllm.model_executor.layers.quantization.fp8 import Fp8Config, Fp8LinearMethod
 from vllm.model_executor.layers.quantization.gptq import GPTQLinearMethod
 from vllm.model_executor.layers.quantization.utils.quant_utils import is_layer_skipped
-from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 
 MIN_IPEX_VERSION = "2.6.0"
