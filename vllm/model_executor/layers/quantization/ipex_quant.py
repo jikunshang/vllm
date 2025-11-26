@@ -725,11 +725,15 @@ class XPUGPTQMarlinMoEMethod(FusedMoEMethodBase):
         import intel_extension_for_pytorch as ipex
 
         if self.quant_config.linear_quant_method == "gptq":
+            layer.w13_qweight.data = layer.w13_qweight.permute(0, 2, 1)
+            layer.w2_qweight.data = layer.w2_qweight.permute(0, 2, 1)
+            layer.w13_scales.data = layer.w13_scales.permute(0, 2, 1)
+            layer.w2_scales.data = layer.w2_scales.permute(0, 2, 1)
             layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-                layer.w13_qweight.permute(0, 2, 1),
-                layer.w2_qweight.permute(0, 2, 1),
-                w1_scale_inv=layer.w13_scales.permute(0, 2, 1),
-                w2_scale_inv=layer.w2_scales.permute(0, 2, 1),
+                layer.w13_qweight,
+                layer.w2_qweight,
+                w1_scale_inv=layer.w13_scales,
+                w2_scale_inv=layer.w2_scales,
                 is_int4=True,
             )
         else:
