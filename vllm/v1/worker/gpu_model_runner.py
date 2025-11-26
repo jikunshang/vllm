@@ -78,6 +78,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import group_mm_kwargs_by_modality
+from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
@@ -600,6 +601,9 @@ class GPUModelRunner(
         self.execute_model_state: ExecuteModelState | None = None
         self.kv_connector_output: KVConnectorOutput | None = None
 
+        if current_platform.is_xpu():
+            self.cascade_attn_enabled = False
+
     def reset_mm_cache(self) -> None:
         if self.mm_budget:
             self.mm_budget.reset_cache()
@@ -691,8 +695,11 @@ class GPUModelRunner(
     # Note: used for model runner override.
     def _init_device_properties(self) -> None:
         """Initialize attributes from torch.cuda.get_device_properties"""
-        self.device_properties = torch.cuda.get_device_properties(self.device)
-        self.num_sms = self.device_properties.multi_processor_count
+        if current_platform.is_cuda():
+            self.device_properties = torch.cuda.get_device_properties(self.device)
+            self.num_sms = self.device_properties.multi_processor_count
+        elif current_platform.is_xpu():
+            self.num_sms = 0
 
     # Note: used for model runner override.
     def _sync_device(self) -> None:
@@ -3169,7 +3176,7 @@ class GPUModelRunner(
         default_stream = torch.accelerator.current_stream()
         # Initialize a new stream to overlap the copy operation with
         # prepare_input of draft model.
-        with torch.accelerator.stream(self.valid_sampled_token_count_copy_stream):
+        with torch.cuda.stream(self.valid_sampled_token_count_copy_stream):
             self.valid_sampled_token_count_copy_stream.wait_stream(default_stream)  # type: ignore
             counts = valid_sampled_tokens_count
             counts_cpu = self.valid_sampled_token_count_cpu

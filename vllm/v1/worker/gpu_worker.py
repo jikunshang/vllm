@@ -159,7 +159,9 @@ class Worker(WorkerBase):
 
     def init_device(self):
         device = self.device_config.device
-        if isinstance(device, torch.device) and device.type == "cuda":
+        if isinstance(device, torch.device) and (
+            device.type == "cuda" or device.type == "xpu"
+        ):
             # This env var set by Ray causes exceptions with graph building.
             os.environ.pop("NCCL_ASYNC_ERROR_HANDLING", None)
             if (
@@ -198,7 +200,7 @@ class Worker(WorkerBase):
             self.device = torch.device(
                 f"{current_platform.device_name}:{self.local_rank}"
             )
-            current_platform.set_device(self.device)
+            torch.accelerator.set_device_index(self.device)
 
             current_platform.check_if_supports_dtype(self.model_config.dtype)
 

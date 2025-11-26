@@ -96,12 +96,12 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         self.dp_rank = self.parallel_config.data_parallel_rank
 
         self.use_async_scheduling = self.scheduler_config.async_scheduling
-        self.output_copy_stream = torch.cuda.Stream(self.device)
-        self.output_copy_event = torch.cuda.Event()
+        self.output_copy_stream = torch.Stream(self.device)
+        self.output_copy_event = torch.Event()
         if self.use_async_scheduling:
-            self.input_prep_event = torch.cuda.Event()
-            self.structured_outputs_event = torch.cuda.Event()
-            self.spec_decode_event = torch.cuda.Event()
+            self.input_prep_event = torch.Event()
+            self.structured_outputs_event = torch.Event()
+            self.spec_decode_event = torch.Event()
         else:
             self.input_prep_event = None
             self.structured_outputs_event = None
@@ -333,7 +333,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         self._dummy_sampler_run(sample_hidden_states)
         if self.do_spec_decode:
             self._dummy_speculator_run(hidden_states, None)
-        torch.cuda.synchronize()
+        torch.accelerator.synchronize()
         del hidden_states, sample_hidden_states
         gc.collect()
 
@@ -355,7 +355,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
 
         start_time = time.perf_counter()
         gc.collect()
-        torch.cuda.empty_cache()
+        torch.accelerator.empty_cache()
         start_free_gpu_memory = torch.cuda.mem_get_info()[0]
 
         with self.maybe_setup_dummy_loras(self.lora_config):
@@ -384,7 +384,7 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
         # to trigger JIT compilation.
         if all("FLASHINFER" in b.get_name() for b in self.attn_backends.values()):
             self._dummy_run(self.max_num_tokens, skip_attn=False)
-            torch.cuda.synchronize()
+            torch.accelerator.synchronize()
 
     def update_states(self, scheduler_output: SchedulerOutput) -> None:
         if scheduler_output.preempted_req_ids is not None:

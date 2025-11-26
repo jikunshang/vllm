@@ -18,8 +18,8 @@ class AsyncOutput(AsyncModelRunnerOutput):
         model_runner_output: ModelRunnerOutput,
         sampler_output: SamplerOutput,
         num_sampled_tokens: torch.Tensor,
-        copy_stream: torch.cuda.Stream,
-        copy_event: torch.cuda.Event,
+        copy_stream: torch.Stream,
+        copy_event: torch.Event,
     ):
         self.model_runner_output = model_runner_output
         self.sampler_output = sampler_output
@@ -27,7 +27,7 @@ class AsyncOutput(AsyncModelRunnerOutput):
         self.copy_stream = copy_stream
         self.copy_event = copy_event
 
-        default_stream = torch.cuda.current_stream()
+        default_stream = torch.accelerator.current_stream()
         with torch.cuda.stream(self.copy_stream):
             self.copy_stream.wait_stream(default_stream)
 
@@ -82,7 +82,7 @@ class AsyncOutput(AsyncModelRunnerOutput):
 
 
 @contextmanager
-def async_barrier(event: torch.cuda.Event | None):
+def async_barrier(event: torch.Event | None):
     if event is not None:
         event.synchronize()
     try:
