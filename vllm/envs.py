@@ -226,6 +226,7 @@ if TYPE_CHECKING:
     VLLM_XPU_USE_W8A8_GEMM: bool = False
     VLLM_XPU_ATTN_HEAD_SIZE_PAD: bool = False
     VLLM_XPU_MOE_USE_TRITON: bool = False
+    VLLM_XPU_REF_PAGE_ATTN: bool = False
 
 
 def get_default_cache_root():
@@ -1494,6 +1495,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_XPU_MOE_USE_TRITON": lambda: bool(
         int(os.getenv("VLLM_XPU_MOE_USE_TRITON", "0"))
     ),
+    "VLLM_XPU_REF_PAGE_ATTN": lambda: bool(
+        int(os.getenv("VLLM_XPU_REF_PAGE_ATTN", "0"))
+    ),
 }
 
 # --8<-- [end:env-vars-definition]
@@ -1623,6 +1627,7 @@ def compute_hash() -> str:
         "VLLM_XPU_USE_W8A8_GEMM",
         "VLLM_XPU_ATTN_HEAD_SIZE_PAD",
         "VLLM_XPU_MOE_USE_TRITON",
+        "VLLM_XPU_REF_PAGE_ATTN",
     ]
     for key in environment_variables_to_hash:
         # if this goes out of sync with environment_variables,
