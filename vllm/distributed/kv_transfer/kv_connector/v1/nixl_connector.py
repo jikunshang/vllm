@@ -1037,10 +1037,12 @@ class NixlConnectorWorker:
         NOT directly supported by NIXL (e.g., tpu)
         """
         xfer_buffers: dict[str, torch.Tensor] = {}
+        inv_order = [0, 1, 3, 2, 4]
         try:
             for layer_name, kv_cache in kv_caches.items():
                 kv_shape = kv_cache.shape
                 kv_dtype = kv_cache.dtype
+                permute_shape = False
                 if (
                     self.kv_cache_layout == "NHD"
                     and self.vllm_config.kv_transfer_config is not None
@@ -1054,10 +1056,20 @@ class NixlConnectorWorker:
                     # Since NHD will not support Decode/Prefill TP_ratio > 1,
                     # we can leverage host_buffer for permute
                     self.host_buffer_kv_cache_layout = "HND"
-                    kv_shape = tuple(kv_shape[i] for i in [0, 1, 3, 2, 4])
+                    kv_shape = (
+                        tuple(kv_shape[i] for i in inv_order)
+                        if not self.use_mla
+                        else kv_shape
+                    )
+                    permute_shape = not self.use_mla
+
                 xfer_buffers[layer_name] = torch.empty(
                     kv_shape, dtype=kv_dtype, device="cpu"
                 )
+                if permute_shape:
+                    xfer_buffers[layer_name] = xfer_buffers[layer_name].permute(
+                        inv_order
+                    )
         except MemoryError as e:
             logger.error("NIXLConnectorWorker gets %s.", e)
             raise
@@ -1156,6 +1168,14 @@ class NixlConnectorWorker:
         # to better exploit the memory layout (ie num_blocks is the first dim).
         split_k_and_v = self.kv_topo.split_k_and_v
         tensor_size_bytes = None
+
+        # TODO (NickLucche): Get kernel_block_size in a cleaner way
+        # NHD default "view" for non-MLA cache
+        if self.device_type == "cpu":
+            block_size_position = -2
+        else:
+            block_size_position = -2 if self.use_mla else -3
+
         # Enable different block lengths for different layers when MLA is used.
         self.block_len_per_layer = list[int]()
         self.slot_size_per_layer = list[int]()  # HD bytes in kv terms
@@ -1170,9 +1190,7 @@ class NixlConnectorWorker:
                 if base_addr in seen_base_addresses:
                     continue
 
-                # TODO (NickLucche): Get kernel_block_size in a cleaner way
-                # NHD default "view" for non-MLA cache
-                kernel_block_size = cache.shape[-2] if self.use_mla else cache.shape[-3]
+                kernel_block_size = cache.shape[block_size_position]
 
                 if self.block_size != kernel_block_size:
                     logger.info_once(
