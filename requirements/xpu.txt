@@ -14,5 +14,3 @@ numba == 0.61.2 # Required for N-gram speculative decoding
 torch==2.9.0+xpu
 torchaudio
 torchvision
-
-intel-extension-for-pytorch @ https://intel-extension-for-pytorch.s3.us-east-1.amazonaws.com/ipex_dev/xpu/intel_extension_for_pytorch-2.9.10.post0%2Bxpu-cp312-cp312-linux_x86_64.whl
