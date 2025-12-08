@@ -73,12 +73,17 @@ def maybe_get_vit_flash_attn_backend(
         else:
             return AttentionBackendEnum.TORCH_SDPA, None
     elif current_platform.is_cuda():
-        pass
-    elif current_platform.is_xpu():
-        assert attn_backend == AttentionBackendEnum.FLASH_ATTN, (
-            "XPU platform only supports FLASH_ATTN as vision attention backend."
-        )
-        pass
+        if attn_backend != _Backend.FLASH_ATTN and check_upstream_fa_availability(
+            torch.get_default_dtype()
+        ):
+            attn_backend = _Backend.FLASH_ATTN
+            use_upstream_fa = True
+    # TODO: revert back when flash_varlen_attn_func supports none block table case
+    # elif current_platform.is_xpu():
+    #    assert attn_backend == _Backend.FLASH_ATTN, (
+    #        "XPU platform only supports FLASH_ATTN as vision attention backend."
+    #    )
+    #    use_upstream_fa = False
     else:
         return AttentionBackendEnum.TORCH_SDPA, None
 

@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING
 
 import torch
 
+# import custom ops, trigger op registration
+import vllm_xpu_kernels._C  # noqa
+import vllm_xpu_kernels._moe_C  # noqa
+import vllm_xpu_kernels._xpu_C  # noqa
+
 import vllm.envs as envs
 from vllm.attention.backends.registry import AttentionBackendEnum
 from vllm.logger import init_logger
@@ -114,7 +119,9 @@ class XPUPlatform(Platform):
     def get_vit_attn_backend(
         cls, head_size: int, dtype: torch.dtype
     ) -> "AttentionBackendEnum":
-        return AttentionBackendEnum.FLASH_ATTN
+        # TODO: revert back when flash_varlen_attn_func supports none block table case
+        # return AttentionBackendEnum.FLASH_ATTN
+        return AttentionBackendEnum.TORCH_SDPA
 
     @classmethod
     def inference_mode(cls):
