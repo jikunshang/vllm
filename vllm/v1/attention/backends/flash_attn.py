@@ -21,6 +21,7 @@ from vllm.attention.ops.common import cp_lse_ag_out_rs
 from vllm.attention.ops.merge_attn_states import merge_attn_states
 from vllm.attention.utils.fa_utils import (
     flash_attn_supports_fp8,
+    flash_attn_supports_quant_query_input,
     get_flash_attn_version,
     is_flash_attn_varlen_func_available,
 )
@@ -533,7 +534,7 @@ class FlashAttentionImpl(AttentionImpl):
             )
 
     def supports_quant_query_input(self) -> bool:
-        return True
+        return flash_attn_supports_quant_query_input()
 
     def forward(
         self,

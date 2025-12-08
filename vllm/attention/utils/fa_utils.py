@@ -74,10 +74,16 @@ def get_flash_attn_version(requires_alibi: bool = False) -> int | None:
 
 
 def flash_attn_supports_fp8() -> bool:
+    if current_platform.is_xpu():
+        return True
     return (
         get_flash_attn_version() == 3
         and current_platform.get_device_capability().major == 9
     )
+
+
+def flash_attn_supports_quant_query_input() -> bool:
+    return not current_platform.is_xpu()
 
 
 def flash_attn_supports_sinks() -> bool:
