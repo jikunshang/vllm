@@ -38,6 +38,7 @@ class AutoRoundConfig(QuantizationConfig):
         "awq",
         "awq:marlin",
         "marlin",
+        "xpu_int4",
         "ipex",
     }
 
@@ -435,6 +436,38 @@ class AutoRoundConfig(QuantizationConfig):
         else:
             return None
 
+    def apply_xpu_int4_quant_layer(self, layer, prefix: str):
+        weight_bits, group_size, sym = self.get_layer_config(layer, prefix)
+        if not self.check_quantized(weight_bits):
+            if isinstance(layer, (LinearBase, ParallelLMHead)):
+                return UnquantizedLinearMethod()
+            else:
+                return None
+        from vllm.model_executor.layers.quantization.xpu_int4 import (
+            XPUAWQLinearMethod,
+            XPUGPTQLinearMethod,
+            XPUInt4Config,
+        )
+
+        if isinstance(layer, (LinearBase, ParallelLMHead)):
+            if "awq" in self.packing_format:
+                config = XPUInt4Config(
+                    method="awq", weight_bits=weight_bits, group_size=group_size
+                )
+                return XPUAWQLinearMethod(config)
+            elif "gptq" in self.packing_format:
+                config = XPUInt4Config(
+                    method="gptq", weight_bits=weight_bits, group_size=group_size
+                )
+                return XPUGPTQLinearMethod(config)
+            else:
+                raise ValueError(
+                    f"xpu_int4 backend only supports awq "
+                    f"and gtpq format,but got {self.packing_format}"
+                )
+        else:
+            return None
+
     def get_quant_method(self, layer: torch.nn.Module, prefix: str):
         if prefix and self.extra_config:
             for layer_name in self.extra_config:
@@ -442,11 +475,9 @@ class AutoRoundConfig(QuantizationConfig):
                     layer_name == prefix or layer_name == f"model.{prefix}"
                 ) and self.extra_config[layer_name].get("bits", 16) >= 16:
                     return UnquantizedLinearMethod()
-        if (
-            current_platform.is_cpu()
-            or current_platform.is_xpu()
-            or self.backend == "ipex"
-        ):
+        if current_platform.is_xpu() or self.backend == "xpu_int4":
+            return self.apply_xpu_int4_quant_layer(layer, prefix)
+        if current_platform.is_cpu() or self.backend == "ipex":
             return self.apply_ipex_quant_layer(layer, prefix)
         if "gptq" in self.packing_format or "gptq" in self.backend:
             return self.apply_gptq_quant_layer(layer, prefix)
