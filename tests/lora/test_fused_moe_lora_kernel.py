@@ -235,8 +235,9 @@ def use_torch(
     return torch.stack(outputs, dim=0)
 
 
+DEVICE_TYPE = current_platform.device_type
 DTYPES = [torch.float16, torch.bfloat16]
-DEVICES = [f"cuda:{0}"]
+DEVICES = [f"{DEVICE_TYPE}:{0}"]
 SEED = [42]
 
 

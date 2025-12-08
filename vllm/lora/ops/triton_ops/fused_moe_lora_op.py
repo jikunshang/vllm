@@ -30,6 +30,7 @@ def _get_ptr(lora_weights: list[torch.Tensor], device: torch.device):
     tensor_ptrs = []
     for lora_weight in lora_weights:
         tensor_ptrs.append(lora_weight.data_ptr())
+    # fix Overflow when unpacking long
     ptr_tensor = torch.tensor(tensor_ptrs, device=device, dtype=torch.uint64)
 
     _LORA_PTR_DICT[key] = ptr_tensor
