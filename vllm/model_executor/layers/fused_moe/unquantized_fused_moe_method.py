@@ -33,6 +33,13 @@ if current_platform.is_cuda_alike():
     from .fused_moe import TritonExperts, fused_experts
 else:
     fused_experts = None  # type: ignore
+    if envs.VLLM_XPU_MOE_USE_TRITON:
+        from .fused_moe import (
+            TritonExperts,
+            eplb_map_to_physical_and_record,
+            fused_experts,
+        )
+    from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 
 if current_platform.is_tpu():
     from .moe_pallas import fused_moe as fused_moe_pallas
@@ -224,17 +231,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             w13_weight_swapped = torch.cat([w3_w, w1_w], dim=1)
             layer.w13_weight.data = w13_weight_swapped.contiguous()
 
-        if current_platform.is_xpu():
-            import intel_extension_for_pytorch as ipex
-
-            ep_rank_start = self.moe.ep_rank * self.moe.num_local_experts
-            layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-                layer.w13_weight,
-                layer.w2_weight,
-                use_prepack=True,
-                experts_start_id=ep_rank_start,
-            )
-        elif current_platform.is_cpu():
+        if current_platform.is_cpu():
             from vllm.model_executor.layers.fused_moe import cpu_fused_moe
 
             if current_platform.get_cpu_architecture() == CpuArchEnum.X86:
@@ -390,15 +387,50 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
             or layer.logical_replica_count is not None
         ):
             raise NotImplementedError("Expert load balancing is not supported for XPU.")
-        return layer.ipex_fusion(
-            x,
-            layer.use_grouped_topk,
-            layer.top_k,
-            router_logits,
-            layer.renormalize,
-            layer.topk_group,
-            layer.num_expert_group,
-            custom_routing_function=layer.custom_routing_function,
+        if envs.VLLM_XPU_MOE_USE_TRITON:
+            return self.forward_cuda(
+                layer,
+                x,
+                router_logits,
+            )
+        M, _ = x.size()
+        routing_weights = torch.empty(M, layer.top_k, dtype=torch.float32, device=x.device)
+        selected_experts = torch.empty(M, layer.top_k, dtype=torch.int32, device=x.device)
+        token_expert_indices = torch.empty(M, layer.top_k, dtype=torch.int32, device=x.device)
+        if not layer.use_grouped_topk:
+            torch.ops._moe_C.topk_softmax(
+                routing_weights,
+                selected_experts,
+                token_expert_indices,
+                router_logits,
+                layer.renormalize,
+            )
+        elif layer.use_grouped_topk:
+            routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
+                x,
+                router_logits,
+                layer.top_k,
+                layer.renormalize,
+                n_expert_group=layer.num_expert_group,
+                n_topk_group=layer.topk_group,
+                scoring_func=layer.scoring_func,
+                routed_scaling_factor=layer.routed_scaling_factor,
+                bias=layer.e_score_correction_bias,
+            )
+        else:
+            raise ValueError("Invalid topk selection method.")
+            
+        return xpu_fused_moe(
+            hidden_states=x,
+            w13=layer.w13_weight,
+            w13_bias=layer.w13_bias if self.moe.has_bias else None,
+            w2=layer.w2_weight,
+            w2_bias=layer.w2_bias if self.moe.has_bias else None,
+            topk_weights=routing_weights,
+            topk_ids=selected_experts,
+            n_experts_per_token=layer.top_k,
+            activation=layer.activation,
+            num_experts=layer.global_num_experts,
         )
 
     def forward_tpu(
@@ -450,6 +482,8 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
     elif current_platform.is_cpu():
         forward_native = forward_cpu
     elif current_platform.is_xpu():
-        forward_native = forward_xpu
+        forward_native = (
+            forward_xpu if not envs.VLLM_XPU_MOE_USE_TRITON else forward_cuda
+        )
     else:
         forward_native = forward_cuda
