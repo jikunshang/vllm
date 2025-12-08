@@ -246,6 +246,8 @@ if TYPE_CHECKING:
     VLLM_COMPILE_CACHE_SAVE_FORMAT: Literal["binary", "unpacked"] = "binary"
     VLLM_USE_V2_MODEL_RUNNER: bool = False
     VLLM_DEBUG_MFU_METRICS: bool = False
+    VLLM_XPU_USE_W8A8_GEMM: bool = False
+    VLLM_XPU_MOE_USE_TRITON: bool = False
 
 
 def get_default_cache_root():
@@ -1577,6 +1579,13 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_DEBUG_MFU_METRICS": lambda: bool(
         int(os.getenv("VLLM_DEBUG_MFU_METRICS", "0"))
     ),
+    # If set to true, use onednn wf8af8 gemm on xpu.
+    "VLLM_XPU_USE_W8A8_GEMM": lambda: bool(
+        int(os.getenv("VLLM_XPU_USE_W8A8_GEMM", "0"))
+    ),
+    "VLLM_XPU_MOE_USE_TRITON": lambda: bool(
+        int(os.getenv("VLLM_XPU_MOE_USE_TRITON", "0"))
+    ),
 }
 
 # --8<-- [end:env-vars-definition]
@@ -1708,6 +1717,8 @@ def compile_factors() -> dict[str, object]:
         "LOCAL_RANK",
         "CUDA_VISIBLE_DEVICES",
         "NO_COLOR",
+        "VLLM_XPU_USE_W8A8_GEMM",
+        "VLLM_XPU_MOE_USE_TRITON",
     }
 
     from vllm.config.utils import normalize_value

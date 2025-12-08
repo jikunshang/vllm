@@ -246,6 +246,23 @@ def rocm_per_tensor_w8a8_scaled_mm(
     return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
 
 
+def xpu_w8a8_scaled_mm(
+    *,
+    qinput: torch.Tensor,
+    weight: torch.Tensor,
+    out_dtype: torch.dtype,
+    scale_a: torch.Tensor,
+    scale_b: torch.Tensor,
+    bias: torch.Tensor,
+    output_shape: list,
+    **kwargs,
+) -> torch.Tensor:
+    output = torch.ops._xpu_C.fp8_gemm(
+        qinput, weight, out_dtype, scale_a, scale_b, bias
+    )
+    return torch.narrow(output, 0, 0, qinput.shape[0]).view(*output_shape)
+
+
 direct_register_custom_op(
     op_name="rocm_per_tensor_w8a8_scaled_mm_impl",
     op_func=rocm_per_tensor_w8a8_scaled_mm_impl,
@@ -364,6 +381,9 @@ def torch_channelwise_w8a8_scaled_mm(
 def dispatch_w8a8_scaled_mm(
     preferred_backend: str, per_tensor_weights: bool, per_tensor_activations: bool
 ) -> Callable[..., torch.Tensor]:
+    if preferred_backend == "xpu":
+        return xpu_w8a8_scaled_mm
+
     if per_tensor_weights and per_tensor_activations:
         if preferred_backend == "rocm":
             return rocm_per_tensor_w8a8_scaled_mm
@@ -412,6 +432,8 @@ class Fp8LinearOp:
                 self.preferred_backend = "flashinfer"
             else:
                 self.preferred_backend = "cutlass"
+        elif current_platform.is_xpu():
+            self.preferred_backend = "xpu"
         else:
             self.preferred_backend = "torch"
 
