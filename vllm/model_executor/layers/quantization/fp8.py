@@ -163,7 +163,7 @@ def get_fp8_moe_backend(
         not current_platform.has_device_capability(89)
         or envs.VLLM_TEST_FORCE_FP8_MARLIN
     )
-    if current_platform.is_rocm():
+    if current_platform.is_rocm() or current_platform.is_xpu():
         use_marlin = False
     if use_marlin:
         logger.info_once("Using Marlin backend for FP8 MoE")
@@ -284,16 +284,10 @@ class Fp8Config(QuantizationConfig):
     def get_xpu_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["QuantizeMethodBase"]:
-        from vllm.model_executor.layers.quantization.ipex_quant import (
+        from vllm.attention.layer import Attention
+        from vllm.model_executor.layers.quantization.xpu_fp8 import (
             XPUFp8LinearMethod,
             XPUFp8MoEMethod,
-        )
-
-        fp8_config = Fp8Config(
-            is_checkpoint_fp8_serialized=self.is_checkpoint_fp8_serialized,
-            activation_scheme=self.activation_scheme,
-            ignored_layers=self.ignored_layers,
-            weight_block_size=self.weight_block_size,
         )
 
         if isinstance(layer, LinearBase):
@@ -303,9 +297,9 @@ class Fp8Config(QuantizationConfig):
                 fused_mapping=self.packed_modules_mapping,
             ):
                 return UnquantizedLinearMethod()
-            return XPUFp8LinearMethod(fp8_config)
+            return XPUFp8LinearMethod(self)
         elif isinstance(layer, FusedMoE):
-            return XPUFp8MoEMethod(fp8_config, layer)
+            return XPUFp8MoEMethod(self, layer)
         elif isinstance(layer, Attention):
             return Fp8KVCacheMethod(self)
         return None
@@ -313,7 +307,11 @@ class Fp8Config(QuantizationConfig):
     def get_quant_method(
         self, layer: torch.nn.Module, prefix: str
     ) -> Optional["QuantizeMethodBase"]:
-        if current_platform.is_xpu():
+        from vllm.attention.layer import Attention  # Avoid circular import
+
+        # for non-block quant on xpu, we use the xpu fp8 method,
+        # otherwise use triton
+        if current_platform.is_xpu() and self.weight_block_size is None:
             return self.get_xpu_quant_method(layer, prefix)
         if isinstance(layer, LinearBase):
             if is_layer_skipped(
@@ -390,8 +388,8 @@ class Fp8LinearMethod(LinearMethodBase):
             not current_platform.has_device_capability(89)
             or envs.VLLM_TEST_FORCE_FP8_MARLIN
         )
-        # Disable marlin for rocm
-        if current_platform.is_rocm():
+        # Disable marlin for rocm and xpu
+        if current_platform.is_rocm() or current_platform.is_xpu():
             self.use_marlin = False
         if vllm_is_batch_invariant():
             self.use_marlin = False
