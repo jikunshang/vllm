@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 
+# import custom ops, trigger op registration
+import vllm_xpu_kernels._C  # noqa
+import vllm_xpu_kernels._moe_C  # noqa
+import vllm_xpu_kernels._xpu_C  # noqa
+
 from vllm.attention.backends.registry import AttentionBackendEnum
 from vllm.logger import init_logger
 
@@ -71,9 +76,10 @@ class XPUPlatform(Platform):
 
     @classmethod
     def get_supported_vit_attn_backends(cls) -> list["AttentionBackendEnum"]:
-        # XPU only supports FLASH_ATTN for vision attention.
+        # XPU only supports TORCH_SDPA for vision attention.
         return [
-            AttentionBackendEnum.FLASH_ATTN,
+            # AttentionBackendEnum.FLASH_ATTN,
+            AttentionBackendEnum.TORCH_SDPA,
         ]
 
     @classmethod
@@ -93,9 +99,9 @@ class XPUPlatform(Platform):
             return backend
 
         logger.info_once(
-            f"Using backend {AttentionBackendEnum.FLASH_ATTN} for vit attention"
+            f"Using backend {AttentionBackendEnum.TORCH_SDPA} for vit attention"
         )
-        return AttentionBackendEnum.FLASH_ATTN
+        return AttentionBackendEnum.TORCH_SDPA
 
     @classmethod
     def set_device(cls, device: torch.device) -> None:

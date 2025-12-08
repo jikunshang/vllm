@@ -12,11 +12,13 @@ if current_platform.is_cuda():
     reshape_and_cache_flash = ops.reshape_and_cache_flash
     from vllm.vllm_flash_attn import flash_attn_varlen_func, get_scheduler_metadata
 elif current_platform.is_xpu():
-    from vllm._ipex_ops import ipex_ops as ops
+    from vllm import _custom_ops as ops
 
     reshape_and_cache_flash = ops.reshape_and_cache_flash
-    flash_attn_varlen_func = ops.flash_attn_varlen_func
-    get_scheduler_metadata = ops.get_scheduler_metadata
+    from vllm._ipex_ops import ipex_ops
+
+    flash_attn_varlen_func = ipex_ops.flash_attn_varlen_func
+    get_scheduler_metadata = ipex_ops.get_scheduler_metadata
 elif current_platform.is_rocm():
     try:
         from flash_attn import flash_attn_varlen_func  # noqa: F401
