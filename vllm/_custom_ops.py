@@ -328,7 +328,11 @@ def rotary_embedding(
 def rms_norm(
     out: torch.Tensor, input: torch.Tensor, weight: torch.Tensor, epsilon: float
 ) -> None:
-    torch.ops._C.rms_norm(out, input, weight, epsilon)
+    # TODO: Remove this contiguous call when the kernel is updated to support non-contiguous input
+    # If removed, also need to remove contiguous in MatcherRMSNorm
+    # Kunshang: revert back #28103.
+    input_contiguous = input.contiguous()
+    torch.ops._C.rms_norm(out, input_contiguous, weight, epsilon)
 
 
 def fused_add_rms_norm(
