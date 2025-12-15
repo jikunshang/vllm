@@ -2004,7 +2004,8 @@ def moe_align_block_size(
         sorted_token_ids,
         experts_ids,
         num_tokens_post_pad,
-        expert_map,
+        # FIXME: add this back when we support this in the sycl kernel code
+        # expert_map,
     )
 
 
