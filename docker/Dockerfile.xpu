@@ -1,4 +1,4 @@
-FROM intel/deep-learning-essentials:2025.2.2-0-devel-ubuntu24.04 AS vllm-base
+FROM intel/deep-learning-essentials:2025.3.0-0-devel-ubuntu24.04 AS vllm-base
 
 RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
     echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list && \
@@ -27,12 +27,12 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1
 
 RUN apt install -y libze1 libze-dev libze-intel-gpu1 intel-opencl-icd libze-intel-gpu-raytracing intel-ocloc
 
-RUN wget https://github.com/uxlfoundation/oneCCL/releases/download/2021.15.6/intel-oneccl-2021.15.6.9_offline.sh
-RUN bash intel-oneccl-2021.15.6.9_offline.sh -a --silent --eula accept && echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc
-RUN rm -f /opt/intel/oneapi/ccl/latest && \
-    ln -s /opt/intel/oneapi/ccl/2021.15 /opt/intel/oneapi/ccl/latest
-SHELL ["bash", "-c"]
-CMD ["bash", "-c", "source /root/.bashrc && exec bash"]
+# RUN wget https://github.com/uxlfoundation/oneCCL/releases/download/2021.15.6/intel-oneccl-2021.15.6.9_offline.sh
+# RUN bash intel-oneccl-2021.15.6.9_offline.sh -a --silent --eula accept && echo "source /opt/intel/oneapi/setvars.sh --force" >> /root/.bashrc
+# RUN rm -f /opt/intel/oneapi/ccl/latest && \
+#     ln -s /opt/intel/oneapi/ccl/2021.15 /opt/intel/oneapi/ccl/latest
+# SHELL ["bash", "-c"]
+# CMD ["bash", "-c", "source /root/.bashrc && exec bash"]
 
 WORKDIR /workspace/vllm
 COPY requirements/xpu.txt /workspace/vllm/requirements/xpu.txt
