@@ -428,8 +428,10 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         return xpu_fused_moe(
             hidden_states=x,
             w13=layer.w13_weight,
+            w13_scales=None,
             w13_bias=layer.w13_bias if self.moe.has_bias else None,
             w2=layer.w2_weight,
+            w2_scales=None,
             w2_bias=layer.w2_bias if self.moe.has_bias else None,
             topk_weights=routing_weights,
             topk_ids=selected_experts,
