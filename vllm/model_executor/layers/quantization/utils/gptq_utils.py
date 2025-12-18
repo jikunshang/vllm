@@ -87,6 +87,8 @@ def is_layer_gptq_quantized(
 ) -> bool:
     # prefix: model.layers.0.self_attn.q_proj
     # proj_name: q_proj
+    # FIXME: need figure out how to pass
+    quantized_layers = ["self_attn.qkv_proj", "self_attn.o_proj"]
 
     # GPTQ's `modules_in_block_to_quantize`:
     # Substr: ["self_attn.k_proj", "self_attn.v_proj", "self_attn.q_proj"]
@@ -141,6 +143,7 @@ def get_linear_quant_method(
             quantized_layers=cloned_config.modules_in_block_to_quantize,
             fused_mapping=cloned_config.packed_modules_mapping,
         )
+        print(f"layer quantized: {is_layer_quantized}")  # --- IGNORE ---
         # False = skip module, None = no override, else = Positive match
         if get_dynamic_override(  # noqa: E712
             cloned_config,  # noqa: E712
