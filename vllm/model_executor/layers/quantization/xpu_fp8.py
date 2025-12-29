@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from collections.abc import Callable
 
 import torch
 from torch.nn import Module
+from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 
 import vllm.envs as envs
 from vllm import _custom_ops as ops
 from vllm.model_executor.layers.fused_moe import (
+    FusedMoE,
     FusedMoEMethodBase,
     FusedMoeWeightScaleSupported,
 )
@@ -138,17 +139,6 @@ class XPUFp8MoEMethod(FusedMoEMethodBase):
                 )
             layer.w13_weight = torch.nn.Parameter(w13_weight, requires_grad=False)
             layer.w2_weight = torch.nn.Parameter(w2_weight, requires_grad=False)
-        import intel_extension_for_pytorch as ipex
-
-        layer.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-            layer.w13_weight,
-            layer.w2_weight,
-            w1_scale_inv=layer.w13_weight_scale,
-            w2_scale_inv=layer.w2_weight_scale,
-            a1_scale_inv=layer.w13_input_scale,
-            a2_scale_inv=layer.w2_input_scale,
-            use_prepack=True,
-        )
 
     def get_fused_moe_quant_config(
         self, layer: torch.nn.Module
@@ -157,34 +147,53 @@ class XPUFp8MoEMethod(FusedMoEMethodBase):
 
     def apply(
         self,
-        layer: torch.nn.Module,
+        layer: FusedMoE,
         x: torch.Tensor,
         router_logits: torch.Tensor,
-        top_k: int,
-        renormalize: bool,
-        use_grouped_topk: bool = False,
-        topk_group: int | None = None,
-        num_expert_group: int | None = None,
-        global_num_experts: int = -1,
-        expert_map: torch.Tensor | None = None,
-        custom_routing_function: Callable | None = None,
-        scoring_func: str = "softmax",
-        routed_scaling_factor: float = 1.0,
-        e_score_correction_bias: torch.Tensor | None = None,
-        apply_router_weight_on_input: bool = False,
-        activation: str = "silu",
-        enable_eplb: bool = False,
-        expert_load_view: torch.Tensor | None = None,
-        logical_to_physical_map: torch.Tensor | None = None,
-        logical_replica_count: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        return layer.ipex_fusion(
-            x,
-            use_grouped_topk,
-            top_k,
-            router_logits,
-            renormalize,
-            topk_group,
-            num_expert_group,
-            custom_routing_function=custom_routing_function,
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        M, _ = x.size()
+        routing_weights = torch.empty(
+            M, layer.top_k, dtype=torch.float32, device=x.device
+        )
+        selected_experts = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        token_expert_indices = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        if layer.use_grouped_topk:
+            routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
+                x,
+                router_logits,
+                layer.top_k,
+                layer.renormalize,
+                n_expert_group=layer.num_expert_group,
+                n_topk_group=layer.topk_group,
+                scoring_func=layer.scoring_func,
+                routed_scaling_factor=layer.routed_scaling_factor,
+                bias=layer.e_score_correction_bias,
+            )
+        else:
+            torch.ops._moe_C.topk_softmax(
+                routing_weights,
+                selected_experts,
+                token_expert_indices,
+                router_logits,
+                layer.renormalize,
+            )
+
+        return xpu_fused_moe(
+            hidden_states=x,
+            w13=layer.w13_weight,
+            w13_scales=layer.w13_weight_scale,
+            w13_bias=layer.w13_bias if self.moe.has_bias else None,
+            w2=layer.w2_weight,
+            w2_scales=layer.w2_weight_scale,
+            w2_bias=layer.w2_bias if self.moe.has_bias else None,
+            topk_weights=routing_weights,
+            topk_ids=selected_experts,
+            n_experts_per_token=layer.top_k,
+            activation=layer.activation,
+            num_experts=layer.global_num_experts,
+            is_fp8=True,
         )
