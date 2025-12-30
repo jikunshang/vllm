@@ -120,6 +120,8 @@ jobs:
         docker rm -f vllm_internal_ci || true
     
     - name: Run benchmark inside local Docker image
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         # Reuse the image_name from previous step
         if [ -n "${{ github.event.pull_request.number }}" ]; then
@@ -140,6 +142,7 @@ jobs:
           -e http_proxy=${http_proxy:-"http://proxy-dmz.intel.com:912"} \
           -e https_proxy=${http_proxy:-"http://proxy-dmz.intel.com:912"} \
           -e no_proxy=${no_proxy:-"127.0.0.1,localhost"} \
+          -e GITHUB_TOKEN=${GITHUB_TOKEN} \
           --device /dev/dri:/dev/dri \
           -w /workspace \
           --entrypoint='' \
