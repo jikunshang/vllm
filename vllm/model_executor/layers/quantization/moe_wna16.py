@@ -32,6 +32,9 @@ from vllm.model_executor.layers.quantization.utils.marlin_utils import (
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
 
+if current_platform.is_xpu():
+    from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe  # noqa
+
 
 class MoeWNA16Config(QuantizationConfig):
     """Config class for MOE WNA16 (W8A16/W4A16) quantization."""
@@ -367,6 +370,9 @@ class MoeWNA16Method(FusedMoEMethodBase):
         x: torch.Tensor,
         router_logits: torch.Tensor,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        if current_platform.is_xpu():
+            return self.forward_xpu(layer, x, router_logits)
+
         from vllm.model_executor.layers.fused_moe import fused_experts
 
         assert layer.activation == "silu", "Only SiLU activation is supported."
@@ -386,6 +392,58 @@ class MoeWNA16Method(FusedMoEMethodBase):
             global_num_experts=layer.global_num_experts,
             expert_map=layer.expert_map,
             quant_config=self.moe_quant_config,
+        )
+
+    def forward_xpu(
+        self, layer: torch.nn.Module, x: torch.Tensor, router_logits: torch.Tensor
+    ):
+        M, _ = x.size()
+        routing_weights = torch.empty(
+            M, layer.top_k, dtype=torch.float32, device=x.device
+        )
+        selected_experts = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        token_expert_indices = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        if not layer.use_grouped_topk:
+            torch.ops._moe_C.topk_softmax(
+                routing_weights,
+                selected_experts,
+                token_expert_indices,
+                router_logits,
+                layer.renormalize,
+            )
+        elif layer.use_grouped_topk:
+            routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
+                x,
+                router_logits,
+                layer.top_k,
+                layer.renormalize,
+                n_expert_group=layer.num_expert_group,
+                n_topk_group=layer.topk_group,
+                scoring_func=layer.scoring_func,
+                routed_scaling_factor=layer.routed_scaling_factor,
+                bias=layer.e_score_correction_bias,
+            )
+        else:
+            raise ValueError("Invalid topk selection method.")
+
+        return xpu_fused_moe(
+            hidden_states=x,
+            w13=layer.w13_qweight,
+            w13_bias=layer.w13_bias if self.moe.has_bias else None,
+            w13_scales=layer.w13_scales,
+            w2=layer.w2_qweight,
+            w2_bias=layer.w2_bias if self.moe.has_bias else None,
+            w2_scales=layer.w2_scales,
+            topk_weights=routing_weights,
+            topk_ids=selected_experts,
+            n_experts_per_token=layer.top_k,
+            activation=layer.activation,
+            num_experts=layer.global_num_experts,
+            is_int4=True,
         )
 
     @staticmethod

@@ -30,11 +30,9 @@ QuantizationMethods = Literal[
     "hqq",
     "experts_int8",
     "ipex",
-    "xpu_int4",
     "quark",
     "moe_wna16",
     "torchao",
-    "auto-round",
     "rtn",
     "inc",
     "mxfp4",
@@ -102,7 +100,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
     # lazy import to avoid triggering `torch.compile` too early
     from vllm.model_executor.layers.quantization.quark.quark import QuarkConfig
 
-    from .auto_round import AutoRoundConfig
+    # from .auto_round import AutoRoundConfig
     from .awq import AWQConfig
     from .awq_marlin import AWQMarlinConfig
     from .bitblas import BitBLASConfig
@@ -132,7 +130,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
     from .rtn import RTNConfig
     from .torchao import TorchAOConfig
     from .tpu_int8 import Int8TpuConfig
-    from .xpu_int4 import XPUInt4Config
+    # from .xpu_int4 import XPUInt4Config
 
     method_to_config: dict[str, type[QuantizationConfig]] = {
         "awq": AWQConfig,
@@ -156,11 +154,11 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
         "hqq": HQQMarlinConfig,
         "experts_int8": ExpertsInt8Config,
         "ipex": IPEXConfig,
-        "xpu_int4": XPUInt4Config,
+        # "xpu_int4": XPUInt4Config,
         "quark": QuarkConfig,
         "moe_wna16": MoeWNA16Config,
         "torchao": TorchAOConfig,
-        "auto-round": AutoRoundConfig,
+        # "auto-round": AutoRoundConfig,
         "rtn": RTNConfig,
         "inc": INCConfig,
         "mxfp4": Mxfp4Config,
