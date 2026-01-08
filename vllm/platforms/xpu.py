@@ -79,10 +79,9 @@ class XPUPlatform(Platform):
 
     @classmethod
     def get_supported_vit_attn_backends(cls) -> list["AttentionBackendEnum"]:
-        # XPU only supports TORCH_SDPA for vision attention.
         return [
-            # AttentionBackendEnum.FLASH_ATTN,
             AttentionBackendEnum.TORCH_SDPA,
+            AttentionBackendEnum.FLASH_ATTN,
         ]
 
     @classmethod
@@ -104,7 +103,7 @@ class XPUPlatform(Platform):
         logger.info_once(
             f"Using backend {AttentionBackendEnum.TORCH_SDPA} for vit attention"
         )
-        return AttentionBackendEnum.TORCH_SDPA
+        return AttentionBackendEnum.FLASH_ATTN
 
     @classmethod
     def set_device(cls, device: torch.device) -> None:

@@ -84,23 +84,30 @@ class ipex_ops:
         return_softmax_lse: bool | None = False,
         s_aux: torch.Tensor | None = None,
     ):
+        assert cu_seqlens_k is not None or seqused_k is not None, (
+            "cu_seqlens_k or seqused_k must be provided"
+        )
+        assert cu_seqlens_k is None or seqused_k is None, (
+            "cu_seqlens_k and seqused_k cannot be provided at the same time"
+        )
+        assert block_table is None or seqused_k is not None, (
+            "when enable block_table, seqused_k is needed"
+        )
+        assert block_table is not None or cu_seqlens_k is not None, (
+            "when block_table is disabled, cu_seqlens_k is needed"
+        )
         if out is None:
             out = torch.empty(q.shape, dtype=q.dtype, device=q.device)
-        if cu_seqlens_k is None:
-            # cu_seqlens_k is not used in ipex kernel.
-            cu_seqlens_k = torch.cumsum(seqused_k, dim=0)
-            cu_seqlens_k = torch.cat(
-                [
-                    torch.tensor([0], device=seqused_k.device, dtype=torch.int32),
-                    cu_seqlens_k,
-                ]
-            ).to(torch.int32)
         real_window_size: tuple[int, int]
         if window_size is None:
             real_window_size = (-1, -1)
         else:
             assert len(window_size) == 2
             real_window_size = (window_size[0], window_size[1])  # noqa: F841
+        # In encode attention, v maybe not contiguous and current
+        # kernel can't handle it
+        if block_table is None:
+            v = v.contiguous()
         return flash_attn_varlen_func(
             out=out,
             q=q.contiguous(),
@@ -108,6 +115,7 @@ class ipex_ops:
             v=v,
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_k=cu_seqlens_k,
+            seqused_k=seqused_k,
             max_seqlen_q=max_seqlen_q,
             max_seqlen_k=max_seqlen_k,
             softmax_scale=softmax_scale,
