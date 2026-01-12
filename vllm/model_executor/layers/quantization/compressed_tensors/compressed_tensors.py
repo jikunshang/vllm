@@ -40,6 +40,7 @@ from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensors24,
     CompressedTensorsScheme,
     CompressedTensorsW4A4Fp4,
+    CompressedTensorsW4A4MxFp4,
     CompressedTensorsW4A8Fp8,
     CompressedTensorsW4A8Int,
     CompressedTensorsW4A16Fp4,
@@ -361,6 +362,29 @@ class CompressedTensorsConfig(QuantizationConfig):
         )
 
     @staticmethod
+    def _is_fp4a4_mxfp4(weight_quant: QuantizationArgs, input_quant: QuantizationArgs):
+        print(f"weight_quant: {weight_quant}, input_quant: {input_quant}")
+        if weight_quant is None or input_quant is None:
+            return False
+
+        is_tensor_group_quant = (
+            weight_quant.strategy == QuantizationStrategy.GROUP.value
+            and input_quant.strategy == QuantizationStrategy.GROUP.value
+        )
+
+        is_group_size_32 = (
+            weight_quant.group_size == 32 and input_quant.group_size == 32
+        )
+        is_float_type = (
+            weight_quant.type == QuantizationType.FLOAT
+            and input_quant.type == QuantizationType.FLOAT
+        )
+        is_4_bits = weight_quant.num_bits == 4 and input_quant.num_bits == 4
+
+        ret = is_tensor_group_quant and is_float_type and is_4_bits and is_group_size_32
+        return ret
+
+    @staticmethod
     def _is_fp4a16_nvfp4(weight_quant: QuantizationArgs, input_quant: QuantizationArgs):
         is_weight_only = weight_quant is not None and input_quant is None
         is_tensor_group_quant = (
@@ -616,6 +640,18 @@ class CompressedTensorsConfig(QuantizationConfig):
 
         act_quant_format = is_activation_quantization_format(format)
         if act_quant_format:
+            if self._is_fp4a4_mxfp4(weight_quant, input_quant):
+                is_mxfp4_supported = True
+                if is_mxfp4_supported:
+                    return CompressedTensorsW4A4MxFp4()
+                else:
+                    logger.warning_once(
+                        "Current platform does not support MXFP4."
+                        " Please install fbgemm-gpu-genai."
+                        " Running CompressedTensorsW4A16Fp4."
+                    )
+                    return CompressedTensorsW4A16Fp4()
+
             if self._is_fp4a4_nvfp4(weight_quant, input_quant):
                 if cutlass_fp4_supported() or envs.VLLM_USE_NVFP4_CT_EMULATIONS:
                     return CompressedTensorsW4A4Fp4()

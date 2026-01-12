@@ -1546,6 +1546,76 @@ def permute_cols(a: torch.Tensor, perm: torch.Tensor) -> torch.Tensor:
     return torch.ops._C.permute_cols(a, perm)
 
 
+# mxfp4
+def mxfp4_quant_ref(
+    input: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize input tensor to MXFP4 and return quantized tensor and scale.
+    This function quantizes the last dimension of the given tensor `input`. For
+    every 32 consecutive elements, a single dynamically computed scaling factor
+    is shared. This scaling factor is stored in float8_e4m3fn format.
+
+    Args:
+        input: The input tensor to be quantized to MXFP4
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: The output tensor in MXFP4 but every
+            two values are packed into a uint8 and float8_e4m3fn scaling factors.
+    """
+    assert input.ndim >= 1, f"input.ndim needs to be >= 1, but got {input.ndim}."
+    other_dims = 1 if input.ndim == 1 else -1
+    input = input.reshape(other_dims, input.shape[-1])
+    m, n = input.shape
+    block_size = 32
+    device = input.device
+
+    assert n % block_size == 0, f"last dim has to be multiple of 32, but got {n}."
+    assert input.dtype in (torch.float16, torch.bfloat16), (
+        f"input.dtype needs to be fp16 or bf16 but got {input.dtype}."
+    )
+
+    # Two mxfp4 values will be packed into an uint8.
+    output = torch.empty((m, n // 2), device=device, dtype=torch.uint8)
+
+    # The scales are stored in float8_e4m3fn format.
+    output_scale = torch.empty(
+        (m, n // block_size), device=device, dtype=torch.float8_e4m3fn
+    )
+
+    return output, output_scale
+
+
+def mxfp4_gemm_ref(
+    a: torch.Tensor,
+    b: torch.Tensor,
+    a_scales: torch.Tensor,
+    b_scales: torch.Tensor,
+    out_dtype: torch.dtype,
+) -> torch.Tensor:
+    """
+    `mxfp4_gemm_ref` implements a reference version of
+        `output = torch.mm((a_scales * a), (b_scales * b)).to(out_dtype)`
+    where a_scales * a and b_scales * b are implemented using numpy-style
+    broadcasting.
+
+    Args:
+        a: The input tensor a in MXFP4 format.
+        b: The input tensor b in MXFP4 format.
+        a_scales: A tensor containing the scaling factors for tensor a.
+        b_scales: A tensor containing the scaling factors for tensor b.
+        out_dtype: The desired output data type (torch.bfloat16 or torch.float16).
+
+    Returns:
+        torch.Tensor: The result of the matrix multiplication in the specified output data type.
+    """
+    assert out_dtype is torch.bfloat16 or out_dtype is torch.float16
+    print(f"a.shape: {a.shape}, b.shape: {b.shape}")
+
+    output_shape = (*a.shape[:-1], b.shape[0])
+    out = torch.empty(output_shape, dtype=out_dtype, device=a.device)
+    return out
+
+
 # fp4
 def scaled_fp4_quant(
     input: torch.Tensor, input_global_scale: torch.Tensor
