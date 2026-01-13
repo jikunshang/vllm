@@ -11,7 +11,6 @@ from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
 from vllm.model_executor.parameter import (
     GroupQuantScaleParameter,
     ModelWeightParameter,
-    PerTensorScaleParameter,
 )
 
 logger = init_logger(__name__)
@@ -58,19 +57,12 @@ class CompressedTensorsW4A4MxFp4(CompressedTensorsScheme):
         )
         layer.register_parameter("weight_packed", weight)
 
-        # Global Weight Scale
-        weight_global_scale = PerTensorScaleParameter(
-            data=torch.empty(len(output_partition_sizes), dtype=torch.float32),
-            weight_loader=weight_loader,
-        )
-        layer.register_parameter("weight_global_scale", weight_global_scale)
-
         # Per Group Weight Scale (MXFP4 uses E8M0 format for scales)
         weight_scale = GroupQuantScaleParameter(
             data=torch.empty(
                 sum(output_partition_sizes),
                 input_size_per_partition // self.group_size,
-                dtype=torch.float8_e4m3fn,  # Using float8_e4m3fn to represent E8M0
+                dtype=torch.uint8,  # Using float8_e8m0fnu to represent E8M0
             ),
             input_dim=1,
             output_dim=0,
@@ -78,13 +70,6 @@ class CompressedTensorsW4A4MxFp4(CompressedTensorsScheme):
         )
 
         layer.register_parameter("weight_scale", weight_scale)
-
-        # Input Global Scale
-        input_global_scale = PerTensorScaleParameter(
-            data=torch.empty(len(output_partition_sizes), dtype=torch.float32),
-            weight_loader=weight_loader,
-        )
-        layer.register_parameter("input_global_scale", input_global_scale)
 
     def process_weights_after_loading(self, layer) -> None:
         pass
@@ -106,15 +91,19 @@ class CompressedTensorsW4A4MxFp4(CompressedTensorsScheme):
             ) from exc
         orig_dtype = x.dtype
         x_fp4, x_blockscale = mxfp4_quant_ref(x)
+        # if x.size(0) != 256:
+        #     print(f"origin x: {x}")
 
         out = mxfp4_gemm_ref(
             x_fp4,
-            layer.weight_packed,
+            layer.weight_packed.view(torch.float4_e2m1fn_x2),
             x_blockscale,
-            layer.weight_scale,
+            layer.weight_scale.view(torch.float8_e8m0fnu),
             orig_dtype,
         )
+        # if x.size(0) != 256:
+        #     exit(0)
 
-        # if bias is not None:
-        #     out = out + bias
+        if bias is not None:
+            out = out + bias
         return out
