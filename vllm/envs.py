@@ -252,6 +252,9 @@ if TYPE_CHECKING:
     VLLM_DEBUG_MFU_METRICS: bool = False
     VLLM_DISABLE_LOG_LOGO: bool = False
     VLLM_LORA_DISABLE_PDL: bool = False
+    VLLM_XPU_USE_W8A8_GEMM: bool = False
+    VLLM_XPU_MOE_USE_TRITON: bool = False
+    VLLM_XPU_REF_PAGE_ATTN: bool = False
 
 
 def get_default_cache_root():
@@ -1622,6 +1625,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Disable PDL for LoRA, as enabling PDL with LoRA on SM100 causes
     # Triton compilation to fail.
     "VLLM_LORA_DISABLE_PDL": lambda: bool(int(os.getenv("VLLM_LORA_DISABLE_PDL", "0"))),
+    # If set to true, use onednn wf8af8 gemm on xpu.
+    "VLLM_XPU_USE_W8A8_GEMM": lambda: bool(
+        int(os.getenv("VLLM_XPU_USE_W8A8_GEMM", "0"))
+    ),
+    "VLLM_XPU_MOE_USE_TRITON": lambda: bool(
+        int(os.getenv("VLLM_XPU_MOE_USE_TRITON", "0"))
+    ),
+    "VLLM_XPU_REF_PAGE_ATTN": lambda: bool(
+        int(os.getenv("VLLM_XPU_REF_PAGE_ATTN", "0"))
+    ),
 }
 
 
@@ -1755,6 +1768,9 @@ def compile_factors() -> dict[str, object]:
         "LOCAL_RANK",
         "CUDA_VISIBLE_DEVICES",
         "NO_COLOR",
+        "VLLM_XPU_USE_W8A8_GEMM",
+        "VLLM_XPU_MOE_USE_TRITON",
+        "VLLM_XPU_REF_PAGE_ATTN",
     }
 
     from vllm.config.utils import normalize_value
