@@ -92,7 +92,10 @@ def select_unquantized_moe_backend(
                 )
             backend = UnquantizedMoeBackend.TRITON
     if current_platform.is_xpu():
-        backend = UnquantizedMoeBackend.XPU
+        if envs.VLLM_XPU_MOE_USE_TRITON:
+            backend = UnquantizedMoeBackend.TRITON
+        else:
+            backend = UnquantizedMoeBackend.XPU
     if current_platform.is_cpu():
         backend = UnquantizedMoeBackend.CPU
     if current_platform.is_tpu():

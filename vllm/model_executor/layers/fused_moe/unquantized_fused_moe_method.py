@@ -40,7 +40,11 @@ if current_platform.is_cuda_alike():
     from .fused_batched_moe import BatchedTritonExperts
     from .fused_moe import TritonExperts
 else:
-    TritonExperts = None  # type: ignore
+    if envs.VLLM_XPU_MOE_USE_TRITON:
+        from .fused_moe import (
+            TritonExperts,
+        )
+    from vllm_xpu_kernels.fused_moe_interface import xpu_fused_moe
 
 
 logger = init_logger(__name__)
@@ -212,15 +216,7 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         layer.w2_weight.data = self._maybe_pad_weight(layer.w2_weight.data)
 
         if self.unquantized_backend == UnquantizedMoeBackend.XPU:
-            import intel_extension_for_pytorch as ipex
-
-            ep_rank_start = self.moe.ep_rank * self.moe.num_local_experts
-            self.ipex_fusion = ipex.llm.modules.GatedMLPMOE(
-                layer.w13_weight,
-                layer.w2_weight,
-                use_prepack=True,
-                experts_start_id=ep_rank_start,
-            )
+            self.ep_rank_start = self.moe.ep_rank * self.moe.num_local_experts
         elif self.unquantized_backend == UnquantizedMoeBackend.CPU:
             from vllm.model_executor.layers.fused_moe import cpu_fused_moe
 
@@ -252,7 +248,10 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
                     self.cpu_fused_moe = cpu_fused_moe.CPUFusedMOE(layer)
             else:
                 self.cpu_fused_moe = cpu_fused_moe.CPUFusedMOE(layer)
-        elif current_platform.is_cuda_alike():
+        elif (
+            current_platform.is_cuda_alike()
+            or self.unquantized_backend == UnquantizedMoeBackend.TRITON
+        ):
             self._setup_kernel(
                 layer=layer,
                 w13=layer.w13_weight,
@@ -334,22 +333,79 @@ class UnquantizedFusedMoEMethod(FusedMoEMethodBase, CustomOp):
         x: torch.Tensor,
         router_logits: torch.Tensor,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        return self.ipex_fusion(
-            x,
-            layer.use_grouped_topk,
-            layer.top_k,
-            router_logits,
-            layer.renormalize,
-            layer.topk_group,
-            layer.num_expert_group,
-            custom_routing_function=layer.custom_routing_function,
+        if (
+            layer.enable_eplb is not False
+            or layer.eplb_state.expert_load_view is not None
+            or layer.eplb_state.logical_to_physical_map is not None
+            or layer.eplb_state.logical_replica_count is not None
+        ):
+            raise NotImplementedError("Expert load balancing is not supported for XPU.")
+
+        M, _ = x.size()
+        routing_weights = torch.empty(
+            M, layer.top_k, dtype=torch.float32, device=x.device
+        )
+        selected_experts = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        token_expert_indices = torch.empty(
+            M, layer.top_k, dtype=torch.int32, device=x.device
+        )
+        if not layer.use_grouped_topk:
+            torch.ops._moe_C.topk_softmax(
+                routing_weights,
+                selected_experts,
+                token_expert_indices,
+                router_logits,
+                layer.renormalize,
+            )
+        elif layer.use_grouped_topk:
+            routing_weights, selected_experts = torch.ops._moe_C.fused_grouped_topk(
+                x,
+                router_logits,
+                layer.top_k,
+                layer.renormalize,
+                n_expert_group=layer.num_expert_group,
+                n_topk_group=layer.topk_group,
+                scoring_func=layer.scoring_func,
+                routed_scaling_factor=layer.routed_scaling_factor,
+                bias=layer.e_score_correction_bias,
+            )
+        else:
+            raise ValueError("Invalid topk selection method.")
+        if envs.VLLM_XPU_MOE_USE_TRITON:
+            return self.forward_cuda(
+                layer,
+                x,
+                topk_weights=routing_weights,
+                topk_ids=selected_experts,
+            )
+        return xpu_fused_moe(
+            hidden_states=x,
+            w13=layer.w13_weight,
+            w13_scales=None,
+            w13_bias=layer.w13_bias if self.moe.has_bias else None,
+            w2=layer.w2_weight,
+            w2_scales=None,
+            w2_bias=layer.w2_bias if self.moe.has_bias else None,
+            topk_weights=routing_weights,
+            topk_ids=selected_experts,
+            n_experts_per_token=layer.top_k,
+            activation=layer.activation,
+            num_experts=layer.global_num_experts
+            // self.moe.moe_parallel_config.ep_size,
+            ep_rank=self.moe.moe_parallel_config.ep_rank,
+            ep_size=self.moe.moe_parallel_config.ep_size,
         )
 
     if current_platform.is_cpu():
         forward_native: Callable = forward_monolithic_cpu
         apply_monolithic = forward_monolithic_cpu
     elif current_platform.is_xpu():
-        forward_native = forward_monolithic_xpu
-        apply_monolithic = forward_monolithic_xpu
+        if envs.VLLM_XPU_MOE_USE_TRITON:
+            forward_native = forward_cuda
+        else:
+            forward_native = forward_monolithic_xpu
+            apply_monolithic = forward_monolithic_xpu
     else:
         forward_native = forward_cuda
