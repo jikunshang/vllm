@@ -114,7 +114,7 @@ def test_triton_unified_attn(
     q_dtype: torch.dtype | None,
     seq_threshold_3D: int,
 ) -> None:
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
     set_random_seed(0)
     num_seqs = len(seq_lens)
@@ -249,7 +249,7 @@ def test_triton_unified_attn_fp16_input_fp8_output(
     seq_threshold_3D: int,
 ) -> None:
     """Test with fp16 input and fp8 output using output_scale."""
-    torch.set_default_device("cuda")
+    torch.set_default_device("xpu")
 
     set_random_seed(0)
     num_seqs = len(seq_lens)
