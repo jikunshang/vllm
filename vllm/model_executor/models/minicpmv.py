@@ -1277,8 +1277,14 @@ class MiniCPMV2_0(MiniCPMVBaseModel):
                 prefix=prefix,
             )
 
-        return resampler.to(
-            device=current_platform.device_type, dtype=torch.get_default_dtype()
+        return (
+            resampler.to_empty(device=current_platform.device_type).to(
+                dtype=torch.get_default_dtype()
+            )
+            if any(p.is_meta for p in resampler.parameters())
+            else resampler.to(
+                device=current_platform.device_type, dtype=torch.get_default_dtype()
+            )
         )
 
     def get_vision_hidden_states(self, data: MiniCPMVImagePixelInputs) -> torch.Tensor:
@@ -1359,8 +1365,14 @@ class MiniCPMV2_5(MiniCPMVBaseModel, SupportsLoRA):
                 prefix=prefix,
             )
 
-        return resampler.to(
-            device=current_platform.device_type, dtype=torch.get_default_dtype()
+        return (
+            resampler.to_empty(device=current_platform.device_type).to(
+                dtype=torch.get_default_dtype()
+            )
+            if any(p.is_meta for p in resampler.parameters())
+            else resampler.to(
+                device=current_platform.device_type, dtype=torch.get_default_dtype()
+            )
         )
 
     def get_vision_hidden_states(self, data: MiniCPMVImagePixelInputs) -> torch.Tensor:
@@ -1452,8 +1464,14 @@ class MiniCPMV2_6(MiniCPMVBaseModel, SupportsLoRA):
                 prefix=prefix,
             )
 
-        return resampler.to(
-            device=current_platform.device_type, dtype=torch.get_default_dtype()
+        return (
+            resampler.to_empty(device=current_platform.device_type).to(
+                dtype=torch.get_default_dtype()
+            )
+            if any(p.is_meta for p in resampler.parameters())
+            else resampler.to(
+                device=current_platform.device_type, dtype=torch.get_default_dtype()
+            )
         )
 
     def get_vision_hidden_states(self, data: MiniCPMVImagePixelInputs) -> torch.Tensor:
@@ -1549,8 +1567,14 @@ class MiniCPMV4_0(MiniCPMVBaseModel, SupportsLoRA):
                 prefix=prefix,
             )
 
-        return resampler.to(
-            device=current_platform.device_type, dtype=torch.get_default_dtype()
+        return (
+            resampler.to_empty(device=current_platform.device_type).to(
+                dtype=torch.get_default_dtype()
+            )
+            if any(p.is_meta for p in resampler.parameters())
+            else resampler.to(
+                device=current_platform.device_type, dtype=torch.get_default_dtype()
+            )
         )
 
     def get_vision_hidden_states(self, data: MiniCPMVImagePixelInputs) -> torch.Tensor:
@@ -1646,8 +1670,14 @@ class MiniCPMV4_5(MiniCPMVBaseModel, SupportsLoRA):
                 prefix=prefix,
             )
 
-        return resampler.to(
-            device=current_platform.device_type, dtype=torch.get_default_dtype()
+        return (
+            resampler.to_empty(device=current_platform.device_type).to(
+                dtype=torch.get_default_dtype()
+            )
+            if any(p.is_meta for p in resampler.parameters())
+            else resampler.to(
+                device=current_platform.device_type, dtype=torch.get_default_dtype()
+            )
         )
 
     def get_vision_hidden_states(self, data: MiniCPMVImagePixelInputs) -> torch.Tensor:
