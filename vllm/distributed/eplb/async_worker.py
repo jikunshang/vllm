@@ -28,7 +28,7 @@ def start_async_worker(
 ) -> threading.Thread:
     eplb_group = get_eplb_group().device_group
     rank = eplb_group.rank()
-    device_index = state.cuda_device_index
+    device_index = state.device_index
     assert state.is_async
 
     def thread_target() -> None:

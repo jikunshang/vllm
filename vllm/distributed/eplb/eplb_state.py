@@ -226,7 +226,7 @@ class EplbModelState:
     """
     intermediate variable between `move_to_buffer` and `move_to_workspace`.
     """
-    cuda_device_index: int | None
+    device_index: int | None
     """
     CUDA device index for the async EPLB worker thread.
     """
@@ -289,7 +289,7 @@ class EplbState:
         """
         Background thread handling async transfers.
         """
-        self.cuda_device_index: int | None = None
+        self.device_index: int | None = None
         """
         CUDA device index for the async EPLB worker thread.
         """
@@ -301,10 +301,9 @@ class EplbState:
         newly started EP ranks may not have physical experts
         mapped yet.
         """
-        if self.device.type == "cuda":
-            self.cuda_device_index = self.device.index
-            if self.cuda_device_index is None and torch.cuda.is_available():
-                self.cuda_device_index = torch.accelerator.current_device_index()
+        self.device_index = self.device.index
+        if self.device_index is None:
+            self.device_index = torch.accelerator.current_device_index()
 
     @staticmethod
     def build_initial_global_physical_to_logical_map(
@@ -496,7 +495,7 @@ class EplbState:
                 recv_expert_ids=np.array([]),
                 recv_dst_rows=np.array([]),
             ),
-            cuda_device_index=self.cuda_device_index,
+            device_index=self.device_index,
             new_physical_to_logical_map=None,
         )
         self.model_states[model_config.compute_hash()] = model_state
@@ -919,7 +918,7 @@ class EplbState:
             )
         try:
             assert model_state.new_physical_to_logical_map is not None
-            device_index = model_state.cuda_device_index or self.cuda_device_index
+            device_index = model_state.device_index or self.device_index
             if model_state.buffer_ready_event is not None and device_index is not None:
                 stream = torch.cuda.current_stream(device=device_index)
                 stream.wait_event(model_state.buffer_ready_event)
