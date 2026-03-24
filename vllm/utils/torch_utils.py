@@ -606,6 +606,9 @@ def _cuda_device_count_stateless(cuda_visible_devices: str | None = None) -> int
 
     if not torch.cuda._is_compiled():
         return 0
+    # (kunshang): I feel this may affect below init logic.
+    acc_count = torch.accelerator.device_count()
+
     if current_platform.is_rocm():
         # ROCm uses amdsmi instead of nvml for stateless device count
         # This requires a sufficiently modern version of Torch 2.4.0
@@ -617,6 +620,13 @@ def _cuda_device_count_stateless(cuda_visible_devices: str | None = None) -> int
     else:
         raw_count = torch.cuda._device_count_nvml()
     r = torch._C._cuda_getDeviceCount() if raw_count < 0 else raw_count
+    assert r == acc_count, (
+        f"Mismatch between torch.accelerator.device_count()={acc_count} and "
+        f"torch._C._cuda_getDeviceCount()={r}. This may indicate an issue "
+        f"with CUDA initialization or the environment variable "
+        f"CUDA_VISIBLE_DEVICES. Please check your CUDA setup and ensure that "
+        f"CUDA_VISIBLE_DEVICES is set correctly."
+    )
     return r
 
 
