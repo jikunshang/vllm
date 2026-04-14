@@ -147,7 +147,7 @@ uv pip compile \
     "${WORK_DIR}/llm-test-requirements.txt" \
     -c "${WORK_DIR}/vllm-constraints.txt" \
     --python-version 3.12 \
-    --python-platform x86_64-manylinux_2_31 \
+    --python-platform x86_64-manylinux_2_28 \
     "${EXTRA_INDEX_ARGS[@]}" \
     --index-strategy unsafe-best-match \
     --unsafe-package setuptools \

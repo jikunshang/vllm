@@ -5,6 +5,7 @@ job_dirs:
   - ".buildkite/hardware_tests"
 run_all_patterns:
   - "docker/Dockerfile"
+  - "docker/Dockerfile.manylinux"
   - "CMakeLists.txt"
   - "requirements/common.txt"
   - "requirements/cuda.txt"

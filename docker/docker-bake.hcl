@@ -104,3 +104,39 @@ target "openai-ubuntu2404" {
   }
   output = ["type=docker"]
 }
+
+# Manylinux build targets - produce wheels with glibc 2.28 compatibility
+# Uses PyTorch manylinux2_28-builder images: https://hub.docker.com/r/pytorch/manylinux2_28-builder/tags
+
+variable "MANYLINUX_CUDA_VERSION" {
+  default = "12.9"
+}
+
+target "_manylinux_common" {
+  dockerfile = "docker/Dockerfile.manylinux"
+  context    = "."
+  args = {
+    max_jobs             = MAX_JOBS
+    nvcc_threads         = NVCC_THREADS
+    torch_cuda_arch_list = TORCH_CUDA_ARCH_LIST
+    CUDA_VERSION         = MANYLINUX_CUDA_VERSION
+  }
+}
+
+target "manylinux-build" {
+  inherits = ["_manylinux_common", "_labels"]
+  target   = "build"
+  tags     = ["vllm:manylinux-build"]
+  output   = ["type=docker"]
+}
+
+target "manylinux-build-cuda13" {
+  inherits = ["_manylinux_common", "_labels"]
+  target   = "build"
+  tags     = ["vllm:manylinux-build-cuda13"]
+  args = {
+    CUDA_VERSION    = "13.0"
+    BUILD_BASE_IMAGE = "pytorch/manylinux2_28-builder:cuda13.0"
+  }
+  output = ["type=docker"]
+}

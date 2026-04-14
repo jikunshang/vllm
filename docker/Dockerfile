@@ -1,5 +1,10 @@
 # The vLLM Dockerfile is used to construct vLLM image that can be directly used
 # to run the OpenAI compatible server.
+#
+# For standalone wheel building with broader glibc compatibility (manylinux_2_28),
+# see docker/Dockerfile.manylinux which uses PyTorch manylinux2_28-builder images.
+# That Dockerfile is used for release wheel builds; this Dockerfile is used for
+# CI test images and production Docker images (Ubuntu-based).
 
 # Please update any changes made here to
 # docs/contributing/dockerfile/dockerfile.md and

@@ -21,10 +21,10 @@ if [[ ${#wheel_files[@]} -ne 1 ]]; then
 fi
 wheel="${wheel_files[0]}"
 
-# default build image uses ubuntu 20.04, which corresponds to manylinux_2_31
+# default manylinux version: manylinux_2_28 (matching pytorch/manylinux2_28-builder base image)
 # we also accept params as manylinux tag
 # refer to https://github.com/mayeut/pep600_compliance?tab=readme-ov-file#acceptable-distros-to-build-wheels
-manylinux_version="${1:-manylinux_2_31}"
+manylinux_version="${1:-manylinux_2_28}"
 
 # Rename 'linux' to the appropriate manylinux version in the wheel filename
 if [[ "$wheel" != *"linux"* ]]; then

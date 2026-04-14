@@ -13,12 +13,12 @@ ROCM_BASE_CACHE_KEY=$(.buildkite/scripts/cache-rocm-base-wheels.sh key)
 buildkite-agent annotate --style 'info' --context 'release-workflow' << EOF
 To download the wheel (by commit):
 \`\`\`
-aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}-cp38-abi3-manylinux_2_31_x86_64.whl .
-aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}-cp38-abi3-manylinux_2_31_aarch64.whl .
+aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}-cp38-abi3-manylinux_2_28_x86_64.whl .
+aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}-cp38-abi3-manylinux_2_28_aarch64.whl .
 
 (Optional) For CUDA 13.0:
-aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}+cu130-cp38-abi3-manylinux_2_35_x86_64.whl .
-aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}+cu130-cp38-abi3-manylinux_2_35_aarch64.whl .
+aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}+cu130-cp38-abi3-manylinux_2_28_x86_64.whl .
+aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}+cu130-cp38-abi3-manylinux_2_28_aarch64.whl .
 
 (Optional) For CPU:
 aws s3 cp s3://vllm-wheels/${BUILDKITE_COMMIT}/vllm-${RELEASE_VERSION}+cpu-cp38-abi3-manylinux_2_35_x86_64.whl .
