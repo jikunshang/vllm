@@ -336,6 +336,10 @@ class xpu_ops:
         return_softmax_lse: bool | None = False,
         s_aux: torch.Tensor | None = None,
         return_attn_probs: bool | None = False,
+        q_v: torch.Tensor | None = None,
+        cp_world_size: int = 1,
+        cp_rank: int = 0,
+        cp_tot_seqused_k: int | None = None,
     ):
         assert cu_seqlens_k is not None or seqused_k is not None, (
             "cu_seqlens_k or seqused_k must be provided"
@@ -384,6 +388,7 @@ class xpu_ops:
             q_descale=q_descale,
             k_descale=k_descale,
             v_descale=v_descale,
+            q_v=q_v,
         )
 
     @staticmethod

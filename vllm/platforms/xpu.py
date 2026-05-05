@@ -72,8 +72,8 @@ class XPUPlatform(Platform):
             logger.info_once("Using XPU MLA Sparse backend.")
             return AttentionBackendEnum.XPU_MLA_SPARSE.get_path()
         if attn_selector_config.use_mla:
-            logger.info_once("Using Triton MLA backend on V1 engine.")
-            return AttentionBackendEnum.TRITON_MLA.get_path()
+            logger.info_once("Using FLASH_ATTN_MLA backend on V1 engine.")
+            return AttentionBackendEnum.FLASH_ATTN_MLA.get_path()
         if selected_backend == AttentionBackendEnum.TRITON_ATTN:
             logger.info_once("Using Triton backend.")
             return AttentionBackendEnum.TRITON_ATTN.get_path()

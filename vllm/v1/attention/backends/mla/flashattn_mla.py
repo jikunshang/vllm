@@ -27,15 +27,13 @@ from vllm.v1.attention.backend import (
     AttentionType,
     MultipleOf,
 )
-from vllm.v1.attention.backends.fa_utils import (
+from vllm.v1.attention.backends.fa_utils import (  # type: ignore[attr-defined]
     flash_attn_supports_mla,
-    get_flash_attn_version,
-)
-from vllm.v1.kv_cache_interface import AttentionSpec
-from vllm.vllm_flash_attn import (  # type: ignore[attr-defined]
     flash_attn_varlen_func,
+    get_flash_attn_version,
     get_scheduler_metadata,
 )
+from vllm.v1.kv_cache_interface import AttentionSpec
 
 logger = init_logger(__name__)
 
