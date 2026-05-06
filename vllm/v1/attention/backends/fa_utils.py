@@ -31,13 +31,24 @@ elif current_platform.is_xpu():
     get_scheduler_metadata = xpu_ops.get_scheduler_metadata  # type: ignore[assignment]
 elif current_platform.is_rocm():
     try:
-        from flash_attn import flash_attn_varlen_func  # type: ignore[no-redef]
+        from flash_attn import flash_attn_varlen_func as _rocm_flash_attn_varlen_func
+
+        def flash_attn_varlen_func(
+            *args: Any,
+            min_seqlen_k: int | None = None,
+            **kwargs: Any,
+        ) -> Any:  # type: ignore[no-redef]
+            return _rocm_flash_attn_varlen_func(*args, **kwargs)
 
         # Mark that upstream flash-attn is available on ROCm
         _ROCM_FLASH_ATTN_AVAILABLE = True
     except ImportError:
 
-        def flash_attn_varlen_func(*args: Any, **kwargs: Any) -> Any:  # type: ignore[no-redef,misc]
+        def flash_attn_varlen_func(
+            *args: Any,
+            min_seqlen_k: int | None = None,
+            **kwargs: Any,
+        ) -> Any:  # type: ignore[no-redef,misc]
             raise ImportError(
                 "ROCm platform requires upstream flash-attn "
                 "to be installed. Please install flash-attn first."

@@ -365,6 +365,7 @@ class xpu_ops:
         return_softmax_lse: bool | None = False,
         s_aux: torch.Tensor | None = None,
         return_attn_probs: bool | None = False,
+        min_seqlen_k: int | None = None,
     ):
         assert cu_seqlens_k is not None or seqused_k is not None, (
             "cu_seqlens_k or seqused_k must be provided"
@@ -392,6 +393,9 @@ class xpu_ops:
         if block_table is None:
             k = k.contiguous()
             v = v.contiguous()
+        is_mix_batch = True
+        if min_seqlen_k is not None:
+            is_mix_batch = min_seqlen_k == 1
         return flash_attn_varlen_func(
             out=out,
             q=q.contiguous(),
@@ -413,6 +417,7 @@ class xpu_ops:
             q_descale=q_descale,
             k_descale=k_descale,
             v_descale=v_descale,
+            is_mix_batch=is_mix_batch,
         )
 
     @staticmethod

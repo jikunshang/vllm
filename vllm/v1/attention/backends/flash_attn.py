@@ -236,6 +236,7 @@ class FlashAttentionMetadata:
     max_query_len: int
     query_start_loc: torch.Tensor
     max_seq_len: int
+    min_seq_len: int
     seq_lens: torch.Tensor
     block_table: torch.Tensor
     slot_mapping: torch.Tensor
@@ -274,6 +275,20 @@ def _get_sliding_window_configs(
             continue
         sliding_window_configs.add(layer.impl.sliding_window)
     return sliding_window_configs
+
+
+def _get_min_seq_len(
+    common_attn_metadata: CommonAttentionMetadata,
+    num_reqs: int,
+) -> int:
+    if num_reqs == 0:
+        return 0
+
+    seq_lens_cpu = common_attn_metadata._seq_lens_cpu
+    if seq_lens_cpu is not None:
+        return int(seq_lens_cpu[:num_reqs].min().item())
+
+    return int(common_attn_metadata.seq_lens[:num_reqs].min().item())
 
 
 class FlashAttentionMetadataBuilder(AttentionMetadataBuilder[FlashAttentionMetadata]):
@@ -402,6 +417,7 @@ class FlashAttentionMetadataBuilder(AttentionMetadataBuilder[FlashAttentionMetad
         num_actual_tokens = common_attn_metadata.num_actual_tokens
         max_query_len = common_attn_metadata.max_query_len
         max_seq_len = common_attn_metadata.max_seq_len
+        min_seq_len = _get_min_seq_len(common_attn_metadata, num_reqs)
         query_start_loc = common_attn_metadata.query_start_loc
         seq_lens = common_attn_metadata.seq_lens
         block_table_tensor = common_attn_metadata.block_table_tensor
@@ -562,6 +578,7 @@ class FlashAttentionMetadataBuilder(AttentionMetadataBuilder[FlashAttentionMetad
             max_query_len=max_query_len,
             query_start_loc=query_start_loc,
             max_seq_len=max_seq_len,
+            min_seq_len=min_seq_len,
             seq_lens=seq_lens,
             block_table=block_table_tensor,
             slot_mapping=slot_mapping,
@@ -815,6 +832,7 @@ class FlashAttentionImpl(AttentionImpl):
                     max_seqlen_q=max_seqlen_q,
                     seqused_k=seqused_k,
                     max_seqlen_k=max_seqlen_k,
+                    min_seqlen_k=attn_metadata.min_seq_len,
                     softmax_scale=self.scale,
                     causal=attn_metadata.causal,
                     alibi_slopes=self.alibi_slopes,
@@ -843,6 +861,7 @@ class FlashAttentionImpl(AttentionImpl):
             prefix_kv_lens=attn_metadata.prefix_kv_lens,
             suffix_kv_lens=attn_metadata.suffix_kv_lens,
             max_kv_len=attn_metadata.max_seq_len,
+            min_kv_len=attn_metadata.min_seq_len,
             softmax_scale=self.scale,
             alibi_slopes=self.alibi_slopes,
             sliding_window=self.sliding_window,
@@ -1153,6 +1172,7 @@ def cascade_attention(
     prefix_kv_lens: torch.Tensor,
     suffix_kv_lens: torch.Tensor,
     max_kv_len: int,
+    min_kv_len: int,
     softmax_scale: float,
     alibi_slopes: torch.Tensor | None,
     sliding_window: tuple[int, int],
@@ -1173,6 +1193,7 @@ def cascade_attention(
     assert sliding_window == (-1, -1), (
         "Cascade attention does not support sliding window."
     )
+    assert min_kv_len >= common_prefix_len
 
     num_tokens = query.shape[0]
     block_size = key_cache.shape[-3]
@@ -1190,6 +1211,7 @@ def cascade_attention(
         seqused_k=prefix_kv_lens,
         max_seqlen_q=num_tokens,
         max_seqlen_k=common_prefix_len,
+        min_seqlen_k=common_prefix_len,
         softmax_scale=softmax_scale,
         causal=False,
         window_size=list(sliding_window),
@@ -1218,6 +1240,7 @@ def cascade_attention(
         seqused_k=suffix_kv_lens,
         max_seqlen_q=max_query_len,
         max_seqlen_k=max_kv_len - common_prefix_len,
+        min_seqlen_k=min_kv_len - common_prefix_len,
         softmax_scale=softmax_scale,
         causal=True,
         window_size=list(sliding_window),

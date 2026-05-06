@@ -139,6 +139,7 @@ def test_varlen_with_paged_kv(
     assert num_query_heads % num_kv_heads == 0
     max_query_len = max(query_lens)
     max_kv_len = max(kv_lens)
+    min_kv_len = min(kv_lens)
     window_size = (sliding_window - 1, 0) if sliding_window is not None else (-1, -1)
     scale = head_size**-0.5
 
@@ -185,6 +186,7 @@ def test_varlen_with_paged_kv(
         seqused_k=kv_lens,
         max_seqlen_q=max_query_len,
         max_seqlen_k=max_kv_len,
+        min_seqlen_k=min_kv_len,
         softmax_scale=scale,
         causal=True,
         window_size=window_size,

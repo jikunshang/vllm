@@ -206,6 +206,7 @@ def flash_attn_varlen_func(
     cp_world_size=1,
     cp_rank=0,
     cp_tot_seqused_k=None,
+    min_seqlen_k: int | None = None,
 ):
     """dropout_p should be set to 0.0 during evaluation
     Supports multi-query and grouped-query attention (MQA/GQA) by passing in K, V with fewer heads
@@ -239,6 +240,9 @@ def flash_attn_varlen_func(
            of the sequences in the batch, used to index into kv.
         max_seqlen_q: int. Maximum query sequence length in the batch.
         max_seqlen_k: int. Maximum key sequence length in the batch.
+        min_seqlen_k: Optional[int]. Minimum key sequence length in the batch.
+            This is plumbed through from higher-level attention metadata and
+            may be ignored by the underlying kernel implementation.
         dropout_p: float. Dropout probability.
         softmax_scale: float. The scaling of QK^T before applying softmax.
             Default to 1 / sqrt(headdim).

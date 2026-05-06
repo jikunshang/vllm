@@ -173,6 +173,7 @@ def test_cascade(
         prefix_kv_lens=prefix_kv_lens,
         suffix_kv_lens=suffix_kv_lens,
         max_kv_len=max_kv_len,
+        min_kv_len=min(kv_lens),
         softmax_scale=scale,
         alibi_slopes=None,
         sliding_window=window_size,
