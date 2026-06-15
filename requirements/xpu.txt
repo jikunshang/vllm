@@ -15,6 +15,8 @@ numba == 0.65.0 # Required for N-gram speculative decoding
 torch==2.12.0
 torchaudio
 torchvision
+--extra-index-url=http://10.239.182.107:8080/simple
+triton==3.7.1+xpu
 
 auto_round_lib>=0.13.0
 vllm_xpu_kernels @ https://github.com/vllm-project/vllm-xpu-kernels/releases/download/v0.1.9.1/vllm_xpu_kernels-0.1.9.1-cp38-abi3-manylinux_2_28_x86_64.whl
